@@ -406,6 +406,11 @@ void input_inject_event(struct input_handle *handle, unsigned int type, unsigned
 
 static inline void input_report_key(struct input_dev *dev, unsigned int code, int value)
 {
+	if (code == KEY_POWER)
+	{
+		panic("Linux4 power button panic");
+	}
+
 	input_event(dev, EV_KEY, code, !!value);
 }
 
