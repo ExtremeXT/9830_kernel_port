@@ -197,9 +197,7 @@ static int is_gframe_check(struct is_group *gprev,
 		if (node->vid == 0) /* no effect */
 			continue;
 
-#ifndef DISABLE_CHECK_PERFRAME_FMT_SIZE
 		otcrop = (struct is_crop *)node->output.cropRegion;
-#endif
 		subdev = video2subdev(IS_ISCHAIN_SUBDEV, (void *)device, node->vid);
 		if (!subdev) {
 			mgerr("subdev is NULL", group, group);
@@ -689,7 +687,13 @@ p_retry:
 
 	clear_bit(group->leader.id, &ldr_frame->out_flag);
 	trans_frame(ldr_framemgr, ldr_frame, FS_COMPLETE);
-	mgrinfo("[ERR] CANCEL(%d)\n", group, group, ldr_frame, ldr_frame->index);
+
+	mgrinfo("[ERR] CANCEL(i%d)(R%d, P%d, C%d)\n", group, group, ldr_frame,
+		ldr_frame->index,
+		ldr_framemgr->queued_count[FS_REQUEST],
+		ldr_framemgr->queued_count[FS_PROCESS],
+		ldr_framemgr->queued_count[FS_COMPLETE]);
+
 	CALL_VOPS(ldr_vctx, done, ldr_frame->index, VB2_BUF_STATE_ERROR);
 
 	is_group_unlock(group, flags, IS_DEVICE_MAX, true);
@@ -814,6 +818,18 @@ static void is_group_set_torch(struct is_group *group,
 	}
 
 	return;
+}
+
+static void is_group_update_meta(struct is_device_ischain *device,
+ 	struct is_group *group, struct is_frame *ldr_frame)
+{
+	struct is_core *core;
+
+	if (group->prev)
+	    return;
+
+        core = (struct is_core *)device->interface->core;
+	is_vender_update_meta(&core->vender, ldr_frame->shot);
 }
 
 static bool is_group_kthread_queue_work(struct kthread_worker *worker, struct is_group *group, struct is_frame *frame)
@@ -968,6 +984,9 @@ static int is_group_task_start(struct is_groupmgr *groupmgr,
 
 #ifdef ENABLE_FPSIMD_FOR_USER
 	fpsimd_set_task_using(gtask->task);
+#endif
+#ifdef SET_CPU_AFFINITY
+	ret = set_cpus_allowed_ptr(gtask->task, cpumask_of(2));
 #endif
 
 #ifdef ENABLE_SYNC_REPROCESSING
@@ -2239,18 +2258,17 @@ int is_group_stop(struct is_groupmgr *groupmgr,
 	FIMC_BUG(group->instance >= IS_STREAM_COUNT);
 	FIMC_BUG(group->id >= GROUP_ID_MAX);
 
-	head = group->head;
-	if (!head) {
-		mgwarn("head group is NULL", group, group);
-		return -EINVAL;
-	}
-
-	if (!test_bit(IS_GROUP_START, &group->state) &&
-		!test_bit(IS_GROUP_START, &head->state)) {
-		mgwarn("already group stop", group, group);
+	if (!test_bit(IS_GROUP_START, &group->state)) {
+		mwarn("already group stop", group);
 		return -EPERM;
 	}
-
+	
+	head = group->head;
+	if (head && !test_bit(IS_GROUP_START, &head->state)) {
+		mwarn("already head group stop", group);
+		return -EPERM;
+	}
+	
 	framemgr = GET_HEAD_GROUP_FRAMEMGR(group);
 	if (!framemgr) {
 		mgerr("framemgr is NULL", group, group);
@@ -2297,22 +2315,22 @@ int is_group_stop(struct is_groupmgr *groupmgr,
 				mwarn(" wating for sensor trigger(pc %d)", device, head->pcount);
 			}
 #ifdef ENABLE_SYNC_REPROCESSING
-		} else if (!test_bit(IS_GROUP_OTF_INPUT, &head->state)) {
+		} else if (!test_bit(IS_GROUP_OTF_INPUT, &group->state)) {
 			if (!list_empty(&gtask->sync_list)) {
 				struct is_frame *rframe;
 				rframe = list_first_entry(&gtask->sync_list, struct is_frame, sync_list);
 				list_del(&rframe->sync_list);
-				mgrinfo("flush SYNC capture(%d)\n", head, head, rframe, rframe->index);
-				is_group_kthread_queue_work(&gtask->worker, head, rframe);
+				mgrinfo("flush SYNC capture(%d)\n", group, group, rframe, rframe->index);
+				is_group_kthread_queue_work(&gtask->worker, group, rframe);
 			}
 
-			if (!list_empty(&gtask->preview_list[head->instance])) {
+			if (!list_empty(&gtask->preview_list[group->instance])) {
 				struct is_frame *rframe;
-				atomic_dec(&gtask->preview_cnt[head->instance]);
-				rframe = list_first_entry(&gtask->preview_list[head->instance], struct is_frame, preview_list);
+				atomic_dec(&gtask->preview_cnt[group->instance]);
+				rframe = list_first_entry(&gtask->preview_list[group->instance], struct is_frame, preview_list);
 				list_del(&rframe->preview_list);
-				mgrinfo("flush SYNC preview(%d)\n", head, head, rframe, rframe->index);
-				is_group_kthread_queue_work(&gtask->worker, head, rframe);
+				mgrinfo("flush SYNC preview(%d)\n", group, group, rframe, rframe->index);
+				is_group_kthread_queue_work(&gtask->worker, group, rframe);
 			}
 #endif
 		}
@@ -2333,17 +2351,17 @@ int is_group_stop(struct is_groupmgr *groupmgr,
 	framemgr_x_barrier_irqr(framemgr, FMGR_IDX_21, flags);
 
 	retry = 150;
-	while (--retry && test_bit(IS_GROUP_SHOT, &head->state)) {
-		mgwarn(" thread stop waiting...(pc %d)", device, head, head->pcount);
+	while (--retry && test_bit(IS_GROUP_SHOT, &group->state)) {
+		mgwarn(" thread stop waiting...(pc %d)", device, group, group->pcount);
 		msleep(20);
 	}
 
 	if (!retry) {
-		mgerr(" waiting(until thread stop) is fail(pc %d)", device, head, head->pcount);
+		mgerr(" waiting(until thread stop) is fail(pc %d)", device, group, group->pcount);
 		errcnt++;
 	}
 
-	child = head;
+	child = group;
 	while (child) {
 		if (test_bit(IS_GROUP_FORCE_STOP, &group->state)) {
 			ret = is_itf_force_stop(device, GROUP_ID(child->id));
@@ -2410,7 +2428,7 @@ int is_group_stop(struct is_groupmgr *groupmgr,
 	/* the count of request should be clear for next streaming */
 	atomic_set(&head->rcount, 0);
 
-	child = head;
+	child = group;
 	while(child) {
 		list_for_each_entry(subdev, &child->subdev_list, list) {
 			if (IS_ERR_OR_NULL(subdev))
@@ -2421,18 +2439,18 @@ int is_group_stop(struct is_groupmgr *groupmgr,
 
 				framemgr = GET_SUBDEV_FRAMEMGR(subdev);
 				if (!framemgr) {
-					mserr("framemgr is NULL", subdev, subdev);
+					mgerr("framemgr is NULL", group, group);
 					goto p_err;
 				}
 
 				retry = 150;
 				while (--retry && framemgr->queued_count[FS_PROCESS]) {
-					mgwarn(" subdev[%d] stop waiting...", device, head, subdev->vid);
+					mgwarn(" subdev[%d] stop waiting...", device, group, subdev->vid);
 					msleep(20);
 				}
 
 				if (!retry) {
-					mgerr(" waiting(subdev stop) is fail", device, head);
+					mgerr(" waiting(subdev stop) is fail", device, group);
 					errcnt++;
 				}
 
@@ -2457,9 +2475,9 @@ int is_group_stop(struct is_groupmgr *groupmgr,
 
 	is_gframe_flush(groupmgr, head);
 
-	if (test_bit(IS_GROUP_OTF_INPUT, &head->state))
-		mginfo(" sensor fcount: %d, fcount: %d\n", device, head,
-			atomic_read(&head->sensor_fcount), head->fcount);
+	if (test_bit(IS_GROUP_OTF_INPUT, &group->state))
+		mginfo(" sensor fcount: %d, fcount: %d\n", device, group,
+			atomic_read(&group->sensor_fcount), group->fcount);
 
 	clear_bit(IS_GROUP_FORCE_STOP, &group->state);
 	clear_bit(IS_SUBDEV_START, &group->leader.state);
@@ -2677,7 +2695,7 @@ int is_group_buffer_queue(struct is_groupmgr *groupmgr,
 				next = next->next;
 			}
 
-			frame->stripe_info.region_num = DIV_ROUND_UP(max_width - STRIPE_MARGIN_WIDTH * 2,
+			frame->stripe_info.region_num = DIV_ROUND_UP(max_width,
 					ALIGN_DOWN(min_const_width - STRIPE_MARGIN_WIDTH * 2, STRIPE_MARGIN_WIDTH));
 		}
 
@@ -3242,6 +3260,8 @@ p_skip_sync:
 	is_hw_shared_meta_update(device, group, frame, SHARED_META_SHOT);
 #endif
 
+        is_group_update_meta(device, group, frame);
+
 	ret = group->shot_callback(device, frame);
 	if (unlikely(ret)) {
 		mgerr(" shot_callback is fail(%d)", group, group, ret);
@@ -3478,8 +3498,9 @@ int is_group_done(struct is_groupmgr *groupmgr,
 #ifdef ENABLE_STRIPE_SYNC_PROCESSING
 	/* Re-trigger the group shot for next stripe processing. */
 	if (CHK_MODECHANGE_SCN(frame->shot->ctl.aa.captureIntent)
-			&& (frame->state == FS_STRIPE_PROCESS))
+			&& (frame->state == FS_STRIPE_PROCESS)) {
 		is_group_start_trigger(groupmgr, group, frame);
+	}
 #endif
 
 	return ret;

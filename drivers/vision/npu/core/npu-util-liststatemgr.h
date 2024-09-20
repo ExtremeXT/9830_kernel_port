@@ -76,6 +76,7 @@ struct lsm_internal_data {
 	int is_ast_enabled;		/* True if the LSM incorporates AST */
 
 	lsm_comparator_t compare;	/* Entry compare function (optional) */
+	lsm_hook_t	preprocess;	/* A preprocess function called before an entry is put */
 	lsm_hook_t	put_hook;	/* A hook function called when an entry is put */
 	struct list_head list_for_state[LSM_LIST_TYPE_INVALID];
 };
@@ -103,7 +104,9 @@ struct lsm_base_entry *__lsm_get_entry(struct lsm_internal_data *lsm, lsm_list_t
 int __lsm_put_entry(struct lsm_internal_data *lsm, lsm_list_type_e type, struct lsm_base_entry *new_entry);
 int __lsm_move_entry(struct lsm_internal_data *lsm, lsm_list_type_e to, struct lsm_base_entry *entry);
 void __lsm_send_signal(struct lsm_internal_data *lsm);
+void __lsm_set_preprocess(struct lsm_internal_data *lsm, lsm_hook_t preprocess);
 void __lsm_set_hook(struct lsm_internal_data *lsm, lsm_hook_t put_hook);
+int __lsm_is_empty(struct lsm_internal_data *lsm, lsm_list_type_e type);
 
 /* Big definition of LSM instance */
 #define LSM_DECLARE(LSM_NAME, D_TYPE, SIZE, PRINT_NAME) \
@@ -131,7 +134,9 @@ struct LSM_NAME##_type {											\
 	int (*lsm_put_entry)(lsm_list_type_e type, D_TYPE *entry);						\
 	int (*lsm_move_entry)(lsm_list_type_e to, D_TYPE *entry);						\
 	void (*lsm_send_signal)(void);										\
+	void (*lsm_set_preprocess)(void (*preprocess)(lsm_list_type_e state, void *new_entry));			\
 	void (*lsm_set_hook)(void (*put_hook)(lsm_list_type_e state, void *new_entry));				\
+	int (*lsm_is_empty)(lsm_list_type_e type);				\
 };														\
 														\
 /* Forward declaration */											\
@@ -140,7 +145,9 @@ static D_TYPE *LSM_NAME##__lsm_get_entry(lsm_list_type_e type);							\
 static int LSM_NAME##__lsm_put_entry(lsm_list_type_e type, D_TYPE *entry);					\
 static int LSM_NAME##__lsm_move_entry(lsm_list_type_e to, D_TYPE *entry);					\
 static void LSM_NAME##__lsm_send_signal(void);									\
+static void LSM_NAME##__lsm_set_preprocess(void (*preprocess)(lsm_list_type_e state, void *new_entry));		\
 static void LSM_NAME##__lsm_set_hook(void (*put_hook)(lsm_list_type_e state, void *new_entry));			\
+static int LSM_NAME##__lsm_is_empty(lsm_list_type_e type);							\
 static int LSM_NAME##__lsm_init(										\
 	int (*do_task)(struct auto_sleep_thread_param *data),							\
 	int (*check_work)(struct auto_sleep_thread_param *data),						\
@@ -156,7 +163,9 @@ struct LSM_NAME##_type LSM_NAME = {										\
 	.lsm_put_entry = LSM_NAME##__lsm_put_entry,								\
 	.lsm_move_entry = LSM_NAME##__lsm_move_entry,								\
 	.lsm_send_signal = LSM_NAME##__lsm_send_signal,								\
+	.lsm_set_preprocess = LSM_NAME##__lsm_set_preprocess,							\
 	.lsm_set_hook = LSM_NAME##__lsm_set_hook,								\
+	.lsm_is_empty = LSM_NAME##__lsm_is_empty,								\
 };														\
 														\
 														\
@@ -219,6 +228,13 @@ static void LSM_NAME##__lsm_send_signal(void) \
 	__lsm_send_signal(&this->lsm_data);									\
 }														\
 														\
+static void LSM_NAME##__lsm_set_preprocess(void (*preprocess)(lsm_list_type_e state, void *new_entry))		\
+{	\
+	typeof(LSM_NAME) *this = &LSM_NAME;									\
+	__lsm_set_preprocess(&this->lsm_data, (lsm_hook_t)preprocess);						\
+	return;													\
+}														\
+														\
 static void LSM_NAME##__lsm_set_hook(void (*put_hook)(lsm_list_type_e state, void *new_entry)) \
 {	\
 	typeof(LSM_NAME) *this = &LSM_NAME;									\
@@ -266,7 +282,7 @@ static int LSM_NAME##__lsm_init(										\
 														\
 		/* Initialize Auto sleep thread */								\
 		ret = auto_sleep_thread_create(									\
-			&(this->lsm_data.ast_worker),ast_name, do_task, check_work, NULL);			\
+			&(this->lsm_data.ast_worker), ast_name, do_task, check_work, NULL, 0);			\
 		if (ret) {											\
 			npu_err("fail(%d) in auto_sleep_thread_create LSM(%s)\n",			\
 				ret, this->lsm_data.name);							\
@@ -297,6 +313,12 @@ ok_exit:													\
 	return ret;												\
 }														\
 														\
-
+static int LSM_NAME##__lsm_is_empty(lsm_list_type_e type) \
+{	\
+	/* The list for specified type */									\
+	typeof(LSM_NAME) *this = &LSM_NAME;									\
+	return __lsm_is_empty(&this->lsm_data, type);				\
+}														\
+														\
 
 #endif	/* _NPU_UTIL_LISTSTATEMGR_H */

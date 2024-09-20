@@ -24,9 +24,12 @@
 #include <linux/extcon-provider.h>
 #endif
 #if defined(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
-#include <linux/usb/manager/usb_typec_manager_notifier.h>
-#include <linux/notifier.h>
-#include <linux/ccic/ccic_notifier.h>
+#include <linux/usb/typec/manager/usb_typec_manager_notifier.h>
+#include <linux/usb/typec/common/pdic_notifier.h>
+#endif
+#include <linux/dp_logger.h>
+#ifdef CONFIG_SEC_DISPLAYPORT_BIGDATA
+#include <linux/displayport_bigdata.h>
 #endif
 
 #if defined(CONFIG_SOC_EXYNOS9810)
@@ -42,6 +45,21 @@
 #include "displayport_aux_client.h"
 #include "displayport_topology.h"
 
+#include "secdp_unit_test.h"
+
+#define FEATURE_SUPPORT_DISPLAYID
+/*#define FEATURE_USE_PREFERRED_DISPLAYID*/
+#define DISPLAYID_EXT 0x70
+#define FEATURE_USE_PREFERRED_TIMING_1ST
+#define FEATURE_MANAGE_HMD_LIST
+/*#define FEATURE_IGNORE_PREFER_IF_DEX_RES_EXIST*/
+#define FEATURE_DEX_ADAPTER_TWEAK
+
+#define MST_MAX_VIDEO_FOR_DEX V2560X1600P60
+#define MST_MAX_VIDEO_FOR_MIRROR V4096X2160P30
+
+#define MAX_POOR_CONNECT_EVENT 10
+
 extern int displayport_log_level;
 extern int forced_resolution;
 
@@ -50,26 +68,29 @@ extern int forced_resolution;
 #define displayport_err(fmt, ...)						\
 	do {									\
 		if (displayport_log_level >= 3) {				\
-			pr_err("Displayport: " pr_fmt(fmt), ##__VA_ARGS__);			\
+			pr_err("Displayport: " pr_fmt(fmt), ##__VA_ARGS__);	\
+			dp_logger_print(fmt, ##__VA_ARGS__);                    \
 		}								\
 	} while (0)
 
 #define displayport_warn(fmt, ...)						\
 	do {									\
 		if (displayport_log_level >= 4) {				\
-			pr_warn("Displayport: " pr_fmt(fmt), ##__VA_ARGS__);			\
+			pr_warn("Displayport: " pr_fmt(fmt), ##__VA_ARGS__);	\
+			dp_logger_print(fmt, ##__VA_ARGS__);                    \
 		}								\
 	} while (0)
 
 #define displayport_info(fmt, ...)						\
 	do {									\
-		if (displayport_log_level >= 6)					\
-			pr_info("Displayport: " pr_fmt(fmt), ##__VA_ARGS__);			\
+		if (displayport_log_level >= 6) {				\
+			pr_info("Displayport: " pr_fmt(fmt), ##__VA_ARGS__);	\
+			dp_logger_print(fmt, ##__VA_ARGS__);                    \
+		}								\
 	} while (0)
 
 #define displayport_dbg(fmt, ...)						\
 	do {									\
-		if (displayport_log_level >= 7)					\
 			pr_info("Displayport: " pr_fmt(fmt), ##__VA_ARGS__);			\
 	} while (0)
 
@@ -92,6 +113,7 @@ struct displayport_resources {
 	int irq;
 	void __iomem *link_regs;
 	void __iomem *phy_regs;
+	void __iomem *usbdp_regs;
 	struct clk *aclk;
 };
 
@@ -107,6 +129,7 @@ typedef enum {
 	TRAINING_PATTERN_1 = 1,
 	TRAINING_PATTERN_2 = 2,
 	TRAINING_PATTERN_3 = 3,
+	TRAINING_PATTERN_4 = 5,
 } displayport_training_pattern;
 
 typedef enum {
@@ -222,6 +245,7 @@ struct fb_vendor {
 
 #define DPCD_ADD_MAX_DOWNSPREAD 0x00003
 #define NO_AUX_HANDSHAKE_LINK_TRANING (1 << 6)
+#define TPS4_SUPPORTED (1 << 7)
 
 #define DPCD_ADD_DOWN_STREAM_PORT_PRESENT 0x00005
 #define BIT_DFP_TYPE 0x6
@@ -351,6 +375,10 @@ struct fb_vendor {
 #define TEST_LANE_COUNT (0x1F << 0)
 
 #define DPCD_TEST_PATTERN 0x00221
+#define DPCD_TEST_PATTERN_COLOR_RAMPS 0x01
+#define DPCD_TEST_PATTERN_BW_VERTICAL_LINES 0x02
+#define DPCD_TEST_PATTERN_COLOR_SQUARE 0x03
+
 
 #define DPCD_TEST_H_TOTAL_1 0x00222	//[15:8]
 #define DPCD_TEST_H_TOTAL_2 0x00223	//[7:0]
@@ -473,33 +501,52 @@ typedef enum {
 	V720X576P50,
 	V1280X800P60RB,
 	V1280X720P50,
+	V1280X720P60EXT,
 	V1280X720P60,
 	V1366X768P60,
 	V1280X1024P60,
 	V1920X1080P24,
 	V1920X1080P25,
 	V1920X1080P30,
+	V1600X900P60DTD,
 	V1600X900P59,
 	V1600X900P60RB,
 	V1920X1080P50,
+	V1920X1080P60DTD,
+	V1920X1080P60EXT,
 	V1920X1080P59,
 	V1920X1080P60,
+	V1920X1200P60RB,
+	V1920X1200P60,
+	V2560X1080P60,
 	V2048X1536P60,
 	V1920X1440P60,
+	V2400X1200P90RELU,
+	V2560X1440P60DTD,
+	V2560X1440P60EXT,
 	V2560X1440P59,
 	V1440x2560P60,
 	V1440x2560P75,
 	V2560X1440P60,
+	V2560X1600P60,
+	V3440X1440P50,
+	V3840X1080P60,
+	V3840X1200P60,
+	V3440X1440P60,
+/*	V3440X1440P100,*/
 	V3840X2160P24,
 	V3840X2160P25,
 	V3840X2160P30,
 	V4096X2160P24,
 	V4096X2160P25,
 	V4096X2160P30,
-	V3840X2160P59RB,
 	V3840X2160P50,
+	V3840X2160P60DTD,
+	V3840X2160P60EXT,
+	V3840X2160P59RB,
 	V3840X2160P60,
 	V4096X2160P50,
+	V4096X2160P60DTD,
 	V4096X2160P60,
 	V640X10P60SACRC,
 	VDUMMYTIMING,
@@ -587,6 +634,15 @@ static const unsigned int extcon_id[] = {
 };
 #endif
 
+#define MAX_EDID_BLOCK 4
+#define EDID_BLOCK_SIZE 128
+#if defined(CONFIG_USE_DISPLAYPORT_CCIC_EVENT_QUEUE)
+struct ccic_event {
+	struct list_head list;
+	CC_NOTI_TYPEDEF event;
+};
+#endif
+
 struct edid_data {
 	int max_support_clk;
 	bool support_10bpc;
@@ -599,12 +655,17 @@ struct edid_data {
 	u8 edid_manufacturer[4];
 	u32 edid_product;
 	u32 edid_serial;
-	u8 *edid_buf;
+
+	int edid_data_size;
+	u8 edid_buf[MAX_EDID_BLOCK * EDID_BLOCK_SIZE];
 };
 
 struct displayport_sst {
 	u32 id;
+
 	u32 decon_id; /* connected decon id */
+	bool decon_run;
+
 	enum displayport_state state;
 	enum hotplug_state hpd_state; /* each SST RX port status */
 
@@ -624,6 +685,48 @@ struct displayport_sst {
 
 	struct displayport_vc_config *vc_config;
 };
+
+enum dp_state {
+	DP_DISCONNECT,
+	DP_CONNECT,
+	DP_HDCP_READY,
+};
+
+enum dex_state {
+	DEX_OFF,
+	DEX_ON,
+	DEX_RECONNECTING,
+};
+enum wait_state {
+	DP_READY_NO,
+	DP_READY_YES,
+};
+enum dex_support_type {
+	DEX_NOT_SUPPORT = 0,
+	DEX_FHD_SUPPORT,
+	DEX_WQHD_SUPPORT,
+	DEX_UHD_SUPPORT
+};
+
+#define MON_NAME_LEN	14	/* monitor name */
+
+#ifdef FEATURE_MANAGE_HMD_LIST
+#define MAX_NUM_HMD	32
+#define DEX_TAG_HMD	"HMD"
+
+enum dex_hmd_type {
+	DEX_HMD_MON = 0,	/* monitor name field */
+	DEX_HMD_VID,		/* vid field */
+	DEX_HMD_PID,		/* pid field */
+	DEX_HMD_FIELD_MAX,
+};
+
+struct secdp_sink_dev {
+	u32 ven_id;		/* vendor id from CCIC */
+	u32 prod_id;		/* product id from CCIC */
+	char monitor_name[MON_NAME_LEN];	/* max 14 bytes, from EDID */
+};
+#endif
 
 struct displayport_device {
 	struct device *dev;
@@ -654,6 +757,7 @@ struct displayport_device {
 	struct mutex aux_lock;
 	struct mutex training_lock;
 	struct mutex hdcp2_lock;
+	spinlock_t spinlock_sfr;
 
 #if defined(CONFIG_USB_TYPEC_MANAGER_NOTIFIER)
 	struct delayed_work notifier_register_work;
@@ -662,6 +766,12 @@ struct displayport_device {
 	int notifier_registered;
 	bool ccic_link_conf;
 	bool ccic_hpd;
+	uint64_t ccic_cable_state;
+#if defined(CONFIG_USE_DISPLAYPORT_CCIC_EVENT_QUEUE)
+	struct list_head list_cc;
+	struct delayed_work ccic_event_proceed_work;
+	struct mutex ccic_lock;
+#endif
 #endif
 	int hpd_current_state;
 	int dp_sw_sel;
@@ -670,6 +780,8 @@ struct displayport_device {
 	int gpio_usb_dir;
 	int dfp_type;
 	const char *aux_vdd;
+
+	int poor_connect_count;
 
 	int auto_test_mode;
 
@@ -681,6 +793,34 @@ struct displayport_device {
 	struct displayport_sst *sst[MAX_SST_CNT];
 
 	int mst_cap;
+
+	u32 dex_setting;
+	int mst_mode;
+	enum dex_state dex_state;
+	u8 dex_ver[2];
+	enum dex_support_type dex_adapter_type;
+	videoformat dex_video_pick;
+#ifdef FEATURE_DEX_ADAPTER_TWEAK
+	bool dex_skip_adapter_check;
+#endif
+
+#ifdef FEATURE_MANAGE_HMD_LIST
+	struct secdp_sink_dev hmd_list[MAX_NUM_HMD];  /*list of supported HMD device*/
+	struct mutex hmd_lock;
+#endif
+	bool is_hmd_dev;
+
+	uint64_t ven_id;
+	uint64_t prod_id;
+	char mon_name[MON_NAME_LEN];
+
+	u8 *edid_test_buf;
+	int do_unit_test;
+	enum wait_state dp_ready_wait_state;
+	wait_queue_head_t dp_ready_wait;
+#ifdef CONFIG_SEC_DISPLAYPORT_SELFTEST
+	void (*hpd_changed)(int);
+#endif
 };
 
 struct displayport_debug_param {
@@ -700,8 +840,6 @@ struct displayport_debug_param {
 #define AUX_RETRY_COUNT 3
 #define AUX_TIMEOUT_1800us 0x03
 
-#define MAX_EDID_BLOCK 4
-#define EDID_BLOCK_SIZE 128
 #define DATA_BLOCK_TAG_CODE_MASK 0xE0
 #define DATA_BLOCK_LENGTH_MASK 0x1F
 #define DATA_BLOCK_TAG_CODE_BIT_POSITION 5
@@ -744,6 +882,14 @@ struct displayport_debug_param {
 #define SPEAKER_DATA_BLOCK 4
 #define SVD_VIC_MASK 0x7F
 
+enum video_ratio_t {
+	RATIO_16_9 = 0,
+	RATIO_16_10,
+	RATIO_21_9,
+	RATIO_4_3,
+	RATIO_ETC = 99,
+};
+
 struct displayport_supported_preset {
 	videoformat video_format;
 	struct v4l2_dv_timings dv_timings;
@@ -751,8 +897,11 @@ struct displayport_supported_preset {
 	u32 v_sync_pol;
 	u32 h_sync_pol;
 	u8 vic;
+	enum video_ratio_t ratio;
 	char *name;
+	enum dex_support_type dex_support;
 	bool pro_audio_support;
+	u8 timing_type;
 	bool edid_support_match;
 };
 
@@ -775,6 +924,14 @@ struct displayport_supported_preset {
 	.type = V4L2_DV_BT_656_1120, \
 	V4L2_INIT_BT_TIMINGS(2560, 1440, 0, V4L2_DV_HSYNC_POS_POL, \
 		241500000, 48, 32, 80, 3, 5, 33, 0, 0, 0, \
+		V4L2_DV_BT_STD_DMT | V4L2_DV_BT_STD_CVT, 0) \
+}
+
+#define V4L2_DV_BT_CVT_2560X1600P60_ADDED { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(2560, 1600, 0, \
+		V4L2_DV_HSYNC_POS_POL | V4L2_DV_VSYNC_POS_POL, \
+		268500000, 48, 32, 80, 3, 9, 37, 0, 0, 0, \
 		V4L2_DV_BT_STD_DMT | V4L2_DV_BT_STD_CVT, 0) \
 }
 
@@ -814,11 +971,104 @@ struct displayport_supported_preset {
 		V4L2_DV_BT_STD_DMT | V4L2_DV_BT_STD_CVT, 0) \
 }
 
+#define V4L2_DV_BT_CVT_3440X1440P50_ADDED { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(3440, 1440, 0, V4L2_DV_HSYNC_POS_POL, \
+		265250000, 48, 32, 80, 3, 10, 21, 0, 0, 0, \
+		V4L2_DV_BT_STD_DMT | V4L2_DV_BT_STD_CVT, 0) \
+}
+
+#define V4L2_DV_BT_CVT_3440X1440P60_ADDED { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(3440, 1440, 0, V4L2_DV_HSYNC_POS_POL, \
+		319750000, 48, 32, 80, 3, 10, 28, 0, 0, 0, \
+		V4L2_DV_BT_STD_DMT | V4L2_DV_BT_STD_CVT, 0) \
+}
+/*
+#define V4L2_DV_BT_CVT_3440X1440P100_ADDED { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(3440, 1440, 0, V4L2_DV_HSYNC_POS_POL, \
+		543500000, 48, 32, 80, 3, 10, 57, 0, 0, 0, \
+		V4L2_DV_BT_STD_DMT | V4L2_DV_BT_STD_CVT, 0) \
+}
+*/
+#define V4L2_DV_BT_CEA_3840X1080P60_ADDED { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(3840, 1080, 0, V4L2_DV_HSYNC_POS_POL, \
+		266500000, 48, 32, 80, 3, 10, 18, 0, 0, 0, \
+		V4L2_DV_BT_STD_DMT | V4L2_DV_BT_STD_CVT, 0) \
+}
+
+#define V4L2_DV_BT_CEA_3840X1200P60_ADDED { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(3840, 1200, 0, V4L2_DV_HSYNC_POS_POL, \
+		296250000, 48, 32, 80, 3, 10, 22, 0, 0, 0, \
+		V4L2_DV_BT_STD_DMT | V4L2_DV_BT_STD_CVT, 0) \
+}
+
+#define V4L2_DV_BT_CVT_2560x1080P60_ADDED { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(2560, 1080, 0, \
+		V4L2_DV_HSYNC_POS_POL | V4L2_DV_VSYNC_POS_POL, \
+		198000000, 248, 44, 148, 4, 5, 11, 0, 0, 0, \
+		V4L2_DV_BT_STD_DMT | V4L2_DV_BT_STD_CVT, 0) \
+}
+
 #define V4L2_DV_BT_CVT_640x10P60_ADDED { \
 	.type = V4L2_DV_BT_656_1120, \
 	V4L2_INIT_BT_TIMINGS(640, 10, 0, V4L2_DV_HSYNC_POS_POL, \
 		27000000, 16, 96, 48, 2, 2, 12, 0, 0, 0, \
 		V4L2_DV_BT_STD_DMT | V4L2_DV_BT_STD_CVT, 0) \
+}
+
+#define DISPLAYID_720P_EXT { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(1280, 720, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) \
+}
+
+#define DISPLAYID_1080P_EXT { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(1920, 1080, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) \
+}
+
+#define DISPLAYID_1440P_EXT { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(2560, 1440, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) \
+}
+
+#define DISPLAYID_2160P_EXT { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(3840, 2160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) \
+}
+
+#define DISPLAYID_2400X1200P90_RELUMINO { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(2400, 1200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) \
+}
+
+#define VIDEO_DTD_1600X900P60 { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(1600, 900, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) \
+}
+
+#define VIDEO_DTD_1080P60 { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(1920, 1080, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) \
+}
+
+#define VIDEO_DTD_1440P60 { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(2560, 1440, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) \
+}
+
+#define VIDEO_DTD_3840X2160P60 { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(3840, 2160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) \
+}
+
+#define VIDEO_DTD_4096X2160P60 { \
+	.type = V4L2_DV_BT_656_1120, \
+	V4L2_INIT_BT_TIMINGS(4096, 2160, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) \
 }
 
 extern const int supported_videos_pre_cnt;
@@ -988,6 +1238,8 @@ extern struct hdcp13_info hdcp13_info;
 #define BINFO_SIZE 2
 #define V_READ_RETRY_CNT 3
 
+#define USBDP_PHY_CONTROL 0x15860704
+
 enum{
 	LINK_CHECK_PASS = 0,
 	LINK_CHECK_NEED = 1,
@@ -1004,10 +1256,29 @@ static inline struct displayport_device *get_displayport_drvdata(void)
 	return displayport_drvdata;
 }
 
+static inline int displayport_phy_enabled(void)
+{
+	/* USBDP_PHY_CONTROL register */
+	struct displayport_device *displayport = get_displayport_drvdata();
+	int en = 0;
+
+	if (displayport->res.usbdp_regs) {
+		en = readl(displayport->res.usbdp_regs) & 0x1;
+
+		if (!en)
+			displayport_info("combo phy disabled\n");
+	}
+
+	return en;
+}
+
 /* register access subroutines */
 static inline u32 displayport_read(u32 reg_id)
 {
 	struct displayport_device *displayport = get_displayport_drvdata();
+
+	if (!displayport_phy_enabled())
+		return 0;
 
 	return readl(displayport->res.link_regs + reg_id);
 }
@@ -1015,6 +1286,9 @@ static inline u32 displayport_read(u32 reg_id)
 static inline u32 displayport_read_mask(u32 reg_id, u32 mask)
 {
 	u32 val = displayport_read(reg_id);
+
+	if (!displayport_phy_enabled())
+		return 0;
 
 	val &= (mask);
 	return val;
@@ -1024,15 +1298,24 @@ static inline void displayport_write(u32 reg_id, u32 val)
 {
 	struct displayport_device *displayport = get_displayport_drvdata();
 
+	if (!displayport_phy_enabled())
+		return;
+
 	writel(val, displayport->res.link_regs + reg_id);
 }
 
 static inline void displayport_write_mask(u32 reg_id, u32 val, u32 mask)
 {
 	struct displayport_device *displayport = get_displayport_drvdata();
-	u32 old = displayport_read(reg_id);
+	u32 old;
 	u32 bit_shift;
+	unsigned long flags;
 
+	if (!displayport_phy_enabled())
+		return;
+
+	spin_lock_irqsave(&displayport->spinlock_sfr, flags);
+	old = displayport_read(reg_id);
 	for (bit_shift = 0; bit_shift < 32; bit_shift++) {
 		if ((mask >> bit_shift) & 0x00000001)
 			break;
@@ -1040,18 +1323,27 @@ static inline void displayport_write_mask(u32 reg_id, u32 val, u32 mask)
 
 	val = ((val<<bit_shift) & mask) | (old & ~mask);
 	writel(val, displayport->res.link_regs + reg_id);
+	spin_unlock_irqrestore(&displayport->spinlock_sfr, flags);
 }
 
 static inline u32 displayport_phy_read(u32 reg_id)
 {
 	struct displayport_device *displayport = get_displayport_drvdata();
 
+	if (!displayport_phy_enabled())
+		return 0;
+
 	return readl(displayport->res.phy_regs + reg_id);
 }
 
 static inline u32 displayport_phy_read_mask(u32 reg_id, u32 mask)
 {
-	u32 val = displayport_phy_read(reg_id);
+	u32 val;
+
+	if (!displayport_phy_enabled())
+		return 0;
+
+	val = displayport_phy_read(reg_id);
 
 	val &= (mask);
 	return val;
@@ -1061,14 +1353,21 @@ static inline void displayport_phy_write(u32 reg_id, u32 val)
 {
 	struct displayport_device *displayport = get_displayport_drvdata();
 
+	if (!displayport_phy_enabled())
+		return;
+
 	writel(val, displayport->res.phy_regs + reg_id);
 }
 
 static inline void displayport_phy_write_mask(u32 reg_id, u32 val, u32 mask)
 {
 	struct displayport_device *displayport = get_displayport_drvdata();
-	u32 old = displayport_phy_read(reg_id);
+	u32 old;
 	u32 bit_shift;
+
+	if (!displayport_phy_enabled())
+		return;
+	old = displayport_phy_read(reg_id);
 
 	for (bit_shift = 0; bit_shift < 32; bit_shift++) {
 		if ((mask >> bit_shift) & 0x00000001)
@@ -1123,7 +1422,7 @@ int displayport_reg_dpcd_read(u32 address, u32 length, u8 *data);
 int displayport_reg_dpcd_write_burst(u32 address, u32 length, u8 *data);
 int displayport_reg_dpcd_read_burst(u32 address, u32 length, u8 *data);
 int displayport_reg_edid_write(u8 edid_addr_offset, u32 length, u8 *data);
-int displayport_reg_edid_read(u8 edid_addr_offset, u32 length, u8 *data);
+int displayport_reg_edid_read(u8 block_cnt, u32 length, u8 *data);
 int displayport_reg_i2c_read(u32 address, u32 length, u8 *data);
 int displayport_reg_i2c_write(u32 address, u32 length, u8 *data);
 void displayport_reg_phy_reset(u32 en);
@@ -1155,13 +1454,13 @@ void displayport_audio_enable(u32 sst_id,
 		struct displayport_audio_config_data *audio_config_data);
 void displayport_audio_disable(u32 sst_id);
 void displayport_audio_wait_buf_full(u32 sst_id);
-void displayport_audio_dma_force_req_release(u32 sst_id);
 void displayport_audio_bist_enable(u32 sst_id,
 		struct displayport_audio_config_data audio_config_data);
 void displayport_audio_init_config(u32 sst_id);
 void displayport_audio_bist_config(u32 sst_id,
 		struct displayport_audio_config_data audio_config_data);
 void displayport_reg_print_audio_state(u32 sst_id);
+void displayport_reg_set_dma_req_gen(u32 sst_id, u32 en);
 
 void displayport_reg_set_hdcp22_system_enable(u32 en);
 void displayport_reg_set_hdcp22_mode(u32 en);
@@ -1181,7 +1480,7 @@ void displyaport_reg_set_vc_payload_id_timeslot_delete(u32 ch,
 
 int displayport_reg_stand_alone_crc_sorting(void);
 
-int edid_read(u32 sst_id, struct displayport_device *displayport, u8 **data);
+int edid_read(u32 sst_id, struct displayport_device *displayport);
 int edid_update(u32 sst_id, struct displayport_device *displayport);
 struct v4l2_dv_timings edid_preferred_preset(void);
 void edid_set_preferred_preset(int mode);
@@ -1189,6 +1488,7 @@ int edid_find_resolution(u16 xres, u16 yres, u16 refresh);
 u8 edid_read_checksum(void);
 u32 edid_audio_informs(void);
 bool edid_support_pro_audio(void);
+bool displayport_check_dex_ratio(enum video_ratio_t ratio);
 
 void displayport_reg_set_avi_infoframe(u32 sst_id, struct infoframe avi_infofrmae);
 void displayport_reg_set_spd_infoframe(u32 sst_id, struct infoframe spd_infofrmae);

@@ -58,7 +58,6 @@ struct f_ncm {
 	struct usb_ep			*notify;
 	struct usb_request		*notify_req;
 	u8				notify_state;
-	atomic_t			notify_count;
 	bool				is_open;
 
 	const struct ndp_parser_opts	*parser_opts;
@@ -100,8 +99,8 @@ static inline unsigned ncm_bitrate(struct usb_gadget *g)
  * because it's used by default by the current linux host driver
  */
 #ifdef CONFIG_USB_NCM_SUPPORT_MTU_CHANGE
-#define NTB_DEFAULT_IN_SIZE	(16384 * 4)
-#define NCM_MAX_DGRAM_SIZE	(16384 * 4 - 1 - NCM_HEADER_SIZE - 1)
+#define NTB_DEFAULT_IN_SIZE	16384
+#define NCM_MAX_DGRAM_SIZE	9014
 #define MAX_NDP_DATAGRAMS	1
 #define NTH_NDP_OUT_TOTAL_SIZE	\
 		(ALIGN(sizeof(struct usb_cdc_ncm_nth16),	\
@@ -111,7 +110,7 @@ static inline unsigned ncm_bitrate(struct usb_gadget *g)
 #else
 #define NTB_DEFAULT_IN_SIZE	USB_CDC_NCM_NTB_MIN_IN_SIZE
 #endif
-#define NTB_OUT_SIZE		(16384 * 4)
+#define NTB_OUT_SIZE		16384
 
 /*
  * skbs of size less than that will not be aligned
@@ -579,7 +578,7 @@ static void ncm_do_notify(struct f_ncm *ncm)
 	int				status;
 
 	/* notification already in flight? */
-	if (atomic_read(&ncm->notify_count))
+	if (!req)
 		return;
 
 	event = req->buf;
@@ -612,15 +611,14 @@ static void ncm_do_notify(struct f_ncm *ncm)
 		data[0] = cpu_to_le32(ncm_bitrate(cdev->gadget));
 		data[1] = data[0];
 
-		DBG(cdev, "notify speed %u\n", ncm_bitrate(cdev->gadget));
+		DBG(cdev, "notify speed %d\n", ncm_bitrate(cdev->gadget));
 		ncm->notify_state = NCM_NOTIFY_CONNECT;
 		break;
 	}
 	event->bmRequestType = 0xA1;
 	event->wIndex = cpu_to_le16(ncm->ctrl_id);
 
-	atomic_inc(&ncm->notify_count);
-
+	ncm->notify_req = NULL;
 	/*
 	 * In double buffering if there is a space in FIFO,
 	 * completion callback can be called right after the call,
@@ -630,7 +628,7 @@ static void ncm_do_notify(struct f_ncm *ncm)
 	status = usb_ep_queue(ncm->notify, req, GFP_ATOMIC);
 	spin_lock(&ncm->lock);
 	if (status < 0) {
-		atomic_dec(&ncm->notify_count);
+		ncm->notify_req = req;
 		DBG(cdev, "notify --> %d\n", status);
 	}
 }
@@ -665,19 +663,17 @@ static void ncm_notify_complete(struct usb_ep *ep, struct usb_request *req)
 	case 0:
 		VDBG(cdev, "Notification %02x sent\n",
 		     event->bNotificationType);
-		atomic_dec(&ncm->notify_count);
 		break;
 	case -ECONNRESET:
 	case -ESHUTDOWN:
-		atomic_set(&ncm->notify_count, 0);
 		ncm->notify_state = NCM_NOTIFY_NONE;
 		break;
 	default:
 		DBG(cdev, "event %02x --> %d\n",
 			event->bNotificationType, req->status);
-		atomic_dec(&ncm->notify_count);
 		break;
 	}
+	ncm->notify_req = req;
 	ncm_do_notify(ncm);
 	spin_unlock(&ncm->lock);
 }
@@ -734,7 +730,7 @@ static void ncm_setdgram_complete(struct usb_ep *ep, struct usb_request *req)
 	}
 
 	if (dgram_size + NTH_NDP_OUT_TOTAL_SIZE > ntb_min_size) {
-		printk(KERN_ERR"usb:%s * MTU(%d) SIZE is larger than NTB SIZE (%d + %d) from host * \n",
+		printk(KERN_ERR"usb:%s * MTU(%d) SIZE is larger than NTB SIZE (%d + %lu) from host * \n",
 			__func__, ntb_min_size, dgram_size, NTH_NDP_OUT_TOTAL_SIZE);
 		printk(KERN_ERR"*************************************************\n");
 		goto invalid;
@@ -743,7 +739,7 @@ static void ncm_setdgram_complete(struct usb_ep *ep, struct usb_request *req)
 	ncm->dgramsize = dgram_size;
 
 	if (ncm->net)
-		ncm->net->mtu = NCM_MTU_SIZE; //ncm->dgramsize - ETH_HLEN;
+		ncm->net->mtu = ncm->dgramsize - ETH_HLEN;
 
 	printk(KERN_ERR"usb:%s * Set MTU SIZE %d *\n", __func__, dgram_size);
 
@@ -1034,7 +1030,7 @@ static int ncm_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 				return PTR_ERR(net);
 #ifdef CONFIG_USB_NCM_SUPPORT_MTU_CHANGE
 			ncm->net = net;
-			ncm->net->mtu = NCM_MTU_SIZE; //ncm->dgramsize - ETH_HLEN;
+			ncm->net->mtu = ncm->dgramsize - ETH_HLEN;
 			printk(KERN_DEBUG "activate ncm setting MTU size (%d)\n", ncm->net->mtu);
 #endif
 		}
@@ -1097,7 +1093,8 @@ int ncm_add_datagram(struct gether *port, __le16 *tmp, int length, int holdcnt)
 	int tmp_val;
 	__le16 *tmp_addr;
 	u32 prev_index, prev_len;
-	int i;
+	/* fix prevent */
+	int i = 0;
 
 	tmp += 4;
 	tmp_val = get_unaligned_le16(tmp);
@@ -1150,7 +1147,7 @@ static struct sk_buff *ncm_wrap_ntb(struct gether *port,
 	ndp_pad = ALIGN(ncb_len, ndp_align) - ncb_len;
 	ncb_len += ndp_pad;
 	ncb_len += opts->ndp_size;
-	ncb_len += 2 * 2 * opts->dgram_item_len * NCM_MAX_DATAGRAM; /* Datagram entry */
+	ncb_len += 2 * 2 * opts->dgram_item_len; /* Datagram entry */
 	ncb_len += 2 * 2 * opts->dgram_item_len; /* Zero datagram entry */
 	pad = ALIGN(ncb_len, div) + rem - ncb_len;
 	ncb_len += pad;
@@ -1260,11 +1257,9 @@ static int ncm_unwrap_ntb(struct gether *port,
 	unsigned	index, index2;
 	unsigned	dg_len, dg_len2;
 	unsigned	ndp_len;
-	unsigned	block_len;
 	struct sk_buff	*skb2;
 	int		ret = -EINVAL;
-	unsigned	ntb_max = le32_to_cpu(ntb_parameters.dwNtbOutMaxSize);
-	unsigned	frame_max = le16_to_cpu(ecm_desc.wMaxSegmentSize);
+	unsigned	max_size = le32_to_cpu(ntb_parameters.dwNtbOutMaxSize);
 	const struct ndp_parser_opts *opts = ncm->parser_opts;
 	unsigned	crc_len = ncm->is_crc ? sizeof(uint32_t) : 0;
 	int		dgram_counter;
@@ -1286,9 +1281,8 @@ static int ncm_unwrap_ntb(struct gether *port,
 	}
 	tmp++; /* skip wSequence */
 
-	block_len = get_ncm(&tmp, opts->block_length);
 	/* (d)wBlockLength */
-	if (block_len > ntb_max) {
+	if (get_ncm(&tmp, opts->block_length) > max_size) {
 		INFO(port->func.config->cdev, "OUT size exceeded\n");
 		goto err;
 	}
@@ -1665,7 +1659,10 @@ extern int uether_queue_index;
 static ssize_t terminal_version_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	int ret, i;
+	int ret;
+#ifdef CHECK_ETHER_TX_LEN
+	int i;
+#endif
 	ret = sprintf(buf, "major %x minor %x vendor %x\n",
 			terminal_mode_version & 0xff,
 			(terminal_mode_version >> 8 & 0xff),
@@ -1689,14 +1686,19 @@ static ssize_t terminal_version_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
 	int value;
-	sscanf(buf, "%x", &value);
-	terminal_mode_version = (u16)value;
-	printk(KERN_DEBUG "usb: %s buf=%s\n", __func__, buf);
-	/* only set ncm ready when terminal verision value is not zero */
-	if (value)
-		set_ncm_ready(true);
-	else
-		set_ncm_ready(false);
+
+	if (sscanf(buf, "%x", &value) == 1) {
+		terminal_mode_version = (u16)value;
+		printk(KERN_DEBUG "usb: %s buf=%s\n", __func__, buf);
+		/* only set ncm ready when terminal verision value is not zero */
+		if (value)
+			set_ncm_ready(true);
+		else
+			set_ncm_ready(false);
+	} else {
+		printk(KERN_DEBUG "usb: %s Bad format\n", __func__);
+	}
+
 	return size;
 }
 
@@ -1895,11 +1897,6 @@ static void ncm_unbind(struct usb_configuration *c, struct usb_function *f)
 	ncm_string_defs[0].id = 0;
 	usb_free_all_descriptors(f);
 
-	if (atomic_read(&ncm->notify_count)) {
-		usb_ep_dequeue(ncm->notify, ncm->notify_req);
-		atomic_set(&ncm->notify_count, 0);
-	}
-
 	kfree(ncm->notify_req->buf);
 	usb_ep_free_request(ncm->notify, ncm->notify_req);
 
@@ -1947,14 +1944,6 @@ static struct usb_function *ncm_alloc(struct usb_function_instance *fi)
 
 	ncm->port.wrap = ncm_wrap_ntb;
 	ncm->port.unwrap = ncm_unwrap_ntb;
-
-	ncm->port.is_fixed = false;
-	ncm->port.multi_pkt_xfer = 1;
-	ncm->port.ul_max_pkts_per_xfer = 1;
-	ncm->port.dl_max_pkts_per_xfer = NCM_MAX_DATAGRAM;
-
-	if (ncm->port.multi_pkt_xfer == 1)
-		ncm->port.wrap = NULL;
 
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 	ncm_function_init();

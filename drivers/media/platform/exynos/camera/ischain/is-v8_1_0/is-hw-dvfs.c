@@ -55,8 +55,8 @@ DECLARE_DVFS_DT(IS_SN_END,
 		{"front_video_"				, IS_SN_FRONT_CAMCORDING},
 		{"front_video_whd_"			, IS_SN_FRONT_CAMCORDING_WHD},
 		{"front_video_uhd_"			, IS_SN_FRONT_CAMCORDING_UHD},
-		{"front_video_fhd_60fps"		, IS_SN_FRONT_CAMCORDING_FHD_60FPS},
-		{"front_video_uhd_60fps"		, IS_SN_FRONT_CAMCORDING_UHD_60FPS},
+		{"front_video_fhd_60fps_"		, IS_SN_FRONT_CAMCORDING_FHD_60FPS},
+		{"front_video_uhd_60fps_"		, IS_SN_FRONT_CAMCORDING_UHD_60FPS},
 		{"front_video_capture_"			, IS_SN_FRONT_CAMCORDING_CAPTURE},
 		{"front_video_whd_capture_"		, IS_SN_FRONT_CAMCORDING_WHD_CAPTURE},
 		{"front_video_uhd_capture_"		, IS_SN_FRONT_CAMCORDING_UHD_CAPTURE},
@@ -71,6 +71,7 @@ DECLARE_DVFS_DT(IS_SN_END,
 		{"front_vt2_"				, IS_SN_FRONT_VT2},
 		{"front_vt4_"				, IS_SN_FRONT_VT4},
 		{"front_preview_high_speed_fps_"	, IS_SN_FRONT_PREVIEW_HIGH_SPEED_FPS},
+		{"front_video_high_speed_120fps_"       , IS_SN_FRONT_VIDEO_HIGH_SPEED_120FPS},
 		{"rear3_preview_fhd_"			, IS_SN_REAR3_PREVIEW_FHD},
 		{"rear3_capture_"			, IS_SN_REAR3_CAPTURE},
 		{"rear3_video_fhd_"			, IS_SN_REAR3_CAMCORDING_FHD},
@@ -127,6 +128,7 @@ DECLARE_DVFS_DT(IS_SN_END,
 		{"ext_rear_"				, IS_SN_EXT_REAR},
 		{"ext_front_"				, IS_SN_EXT_FRONT},
 		{"ext_secure_"				, IS_SN_EXT_SECURE},
+		{"thermal_8k_"				, IS_SN_THERMAL_8K},
 		{"max_"					, IS_SN_MAX});
 
 /* dvfs scenario check logic data */
@@ -160,6 +162,7 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_VT1);
 DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_VT2);
 DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_VT4);
 DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_PREVIEW_HIGH_SPEED_FPS);
+DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_VIDEO_HIGH_SPEED_120FPS);
 
 DECLARE_DVFS_CHK_FUNC(IS_SN_REAR3_PREVIEW_FHD);
 DECLARE_DVFS_CHK_FUNC(IS_SN_REAR3_CAPTURE);
@@ -228,6 +231,8 @@ DECLARE_EXT_DVFS_CHK_FUNC(IS_SN_EXT_REAR);
 DECLARE_EXT_DVFS_CHK_FUNC(IS_SN_EXT_FRONT);
 DECLARE_EXT_DVFS_CHK_FUNC(IS_SN_EXT_SECURE);
 
+/* Thermal */
+DECLARE_DVFS_CHK_FUNC(IS_SN_THERMAL_8K);
 
 #if defined(ENABLE_DVFS)
 /*
@@ -244,6 +249,7 @@ struct is_dvfs_scenario static_scenarios[] = {
 	}, {
 		.scenario_id		= IS_SN_PREVIEW_HIGH_SPEED_FPS,
 		.scenario_nm		= DVFS_SN_STR(IS_SN_PREVIEW_HIGH_SPEED_FPS),
+		.keep_frame_tick	= KEEP_FRAME_TICK_FASTAE,
 		.check_func		= GET_DVFS_CHK_FUNC(IS_SN_PREVIEW_HIGH_SPEED_FPS),
 	}, {
 		.scenario_id		= IS_SN_SECURE_FRONT,
@@ -397,7 +403,12 @@ struct is_dvfs_scenario static_scenarios[] = {
 	}, {
 		.scenario_id		= IS_SN_FRONT_PREVIEW_HIGH_SPEED_FPS,
 		.scenario_nm		= DVFS_SN_STR(IS_SN_FRONT_PREVIEW_HIGH_SPEED_FPS),
+		.keep_frame_tick	= KEEP_FRAME_TICK_FASTAE,
 		.check_func		= GET_DVFS_CHK_FUNC(IS_SN_FRONT_PREVIEW_HIGH_SPEED_FPS),
+	}, {
+		.scenario_id            = IS_SN_FRONT_VIDEO_HIGH_SPEED_120FPS,
+		.scenario_nm            = DVFS_SN_STR(IS_SN_FRONT_VIDEO_HIGH_SPEED_120FPS),
+		.check_func             = GET_DVFS_CHK_FUNC(IS_SN_FRONT_VIDEO_HIGH_SPEED_120FPS),
 	}, {
 		.scenario_id		= IS_SN_FRONT_CAMCORDING_FHD_60FPS,
 		.scenario_nm		= DVFS_SN_STR(IS_SN_FRONT_CAMCORDING_FHD_60FPS),
@@ -444,6 +455,12 @@ struct is_dvfs_scenario static_scenarios[] = {
  */
 static struct is_dvfs_scenario dynamic_scenarios[] = {
 	{
+		/* Do not insert above this. Thermal scenario has first high priority. */
+		.scenario_id		= IS_SN_THERMAL_8K,
+		.scenario_nm		= DVFS_SN_STR(IS_SN_THERMAL_8K),
+		.keep_frame_tick	= IS_DVFS_CAPTURE_TICK,
+		.check_func		= GET_DVFS_CHK_FUNC(IS_SN_THERMAL_8K),
+	}, {
 		.scenario_id		= IS_SN_DUAL_SYNC_FHD_CAMCORDING_CAPTURE,
 		.scenario_nm		= DVFS_SN_STR(IS_SN_DUAL_SYNC_FHD_CAMCORDING_CAPTURE),
 		.keep_frame_tick	= IS_DVFS_DUAL_CAPTURE_TICK,
@@ -702,6 +719,21 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_PREVIEW_HIGH_SPEED_FPS)
 		return 0;
 }
 
+/* front 120fps recording */
+DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_VIDEO_HIGH_SPEED_120FPS)
+{
+	u32 mask = (device->setfile & IS_SETFILE_MASK);
+	bool setfile_flag = (mask == ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED);
+
+	if (IS_FRONT_SENSOR(position) &&
+			(fps > 60) &&
+			(fps <= 120) &&
+			setfile_flag)
+		return 1;
+	else
+		return 0;
+}
+
 /* secure front */
 DECLARE_DVFS_CHK_FUNC(IS_SN_SECURE_FRONT)
 {
@@ -720,7 +752,8 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_DUAL_SYNC_FHD_CAMCORDING)
 	u32 mask = (device->setfile & IS_SETFILE_MASK);
 	bool setfile_flag = ((mask == ISS_SUB_SCENARIO_VIDEO) ||
 			(mask == ISS_SUB_SCENARIO_VIDEO_WDR_ON) ||
-			(mask == ISS_SUB_SCENARIO_VIDEO_WDR_AUTO));
+			(mask == ISS_SUB_SCENARIO_VIDEO_WDR_AUTO) ||
+			(mask == ISS_SUB_SCENARIO_VIDEO_MERGED_HDR_AUTO));
 
 	if (IS_REAR_DUAL(sensor_map) &&
 		setfile_flag &&
@@ -729,6 +762,25 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_DUAL_SYNC_FHD_CAMCORDING)
 		return 1;
 	else
 		return 0;
+}
+
+DECLARE_DVFS_CHK_FUNC(IS_SN_THERMAL_8K)
+{
+	struct is_dvfs_scenario_ctrl *static_ctrl = device->resourcemgr->dvfs_ctrl.static_ctrl;
+	int cur_scen_id = static_ctrl->cur_scenario_id;
+	bool scen_flag = ((cur_scen_id == IS_SN_REAR2_CAMCORDING_UHD_8K) ||
+			(cur_scen_id == IS_SN_REAR_CAMCORDING_UHD_8K));
+	uint16_t ssrmMasking = (AA_SSRM_HINT_LOW_POWER_MODE_L1
+                               | AA_SSRM_HINT_LOW_POWER_MODE_L2
+                               | AA_SSRM_HINT_LOW_POWER_MODE_L3);
+
+	if (!test_bit(IS_ISCHAIN_REPROCESSING, &device->state) &&
+		scen_flag &&
+		(ssrmMasking & shot->ctl.aa.vendor_ssrmHint)) {
+		return 1;
+	} else {
+		return 0;
+	}
 }
 
 DECLARE_DVFS_CHK_FUNC(IS_SN_DUAL_SYNC_FHD_CAMCORDING_CAPTURE)
@@ -1091,6 +1143,7 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_REAR_CAMCORDING_FHD)
 			(mask == ISS_SUB_SCENARIO_VIDEO_WDR_AUTO));
 
 	if ((position == SENSOR_POSITION_REAR) &&
+                        (streaming_cnt == 1) &&
 			(fps <= 30) &&
 			setfile_flag)
 		return 1;
@@ -1139,19 +1192,24 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_REAR_CAMCORDING_UHD)
 /* rear camcording UHD@60fps */
 DECLARE_DVFS_CHK_FUNC(IS_SN_REAR_CAMCORDING_UHD_60FPS)
 {
+	u32 scen = (device->setfile & IS_SCENARIO_MASK) >> IS_SCENARIO_SHIFT;
 	u32 mask = (device->setfile & IS_SETFILE_MASK);
 	bool setfile_flag = ((mask == ISS_SUB_SCENARIO_UHD_60FPS_WDR_ON) ||
 			(mask == ISS_SUB_SCENARIO_UHD_60FPS ) ||
 			(mask == ISS_SUB_SCENARIO_UHD_60FPS_WDR_AUTO));
+	bool scenario_flag = (scen == IS_SCENARIO_PRO_VIDEO);
 
 	if (IS_REAR_SENSOR(position) &&
 			(fps > 30) &&
 			(fps <= 60) &&
-			(resol >= SIZE_UHD) &&
-			setfile_flag)
-		return 1;
-	else
-		return 0;
+			setfile_flag) {
+		if (scenario_flag)
+			return 1;
+		else
+			if(resol >= SIZE_UHD)
+				return 1;
+	}
+	return 0;
 }
 
 /* rear camcording 8K UHD*/
@@ -1177,8 +1235,7 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_REAR_CAMCORDING_UHD_8K)
 DECLARE_DVFS_CHK_FUNC(IS_SN_REAR_CAMCORDING_HDR)
 {
 	u32 mask = (device->setfile & IS_SETFILE_MASK);
-	bool setfile_flag = ((mask == ISS_SUB_SCENARIO_VIDEO_WDR_ON) ||
-			(mask == ISS_SUB_SCENARIO_VIDEO_WDR_AUTO));
+	bool setfile_flag = (mask == ISS_SUB_SCENARIO_VIDEO_MERGED_HDR_AUTO);
 
 	if ((position == SENSOR_POSITION_REAR) &&
 			setfile_flag)
@@ -1833,10 +1890,13 @@ int is_hw_dvfs_init(void *dvfs_data)
 	dvfs_ctrl->dynamic_ctrl->cur_scenario_idx	= -1;
 	dvfs_ctrl->dynamic_ctrl->cur_frame_tick	= -1;
 	dvfs_ctrl->dynamic_ctrl->scenarios		= dynamic_scenarios;
-	if (static_scenarios[0].scenario_id == IS_SN_DEFAULT)
+	if (static_scenarios[0].scenario_id == IS_SN_DEFAULT) {
 		dvfs_ctrl->dynamic_ctrl->scenario_cnt	= 0;
-	else
+		dvfs_ctrl->dynamic_ctrl->fixed_scenario_cnt = 0;
+	} else {
 		dvfs_ctrl->dynamic_ctrl->scenario_cnt	= ARRAY_SIZE(dynamic_scenarios);
+		dvfs_ctrl->dynamic_ctrl->fixed_scenario_cnt = 1; /* IS_SN_THERMAL_8K */
+	}
 
 	dvfs_ctrl->external_ctrl->cur_scenario_id	= -1;
 	dvfs_ctrl->external_ctrl->cur_scenario_idx	= -1;

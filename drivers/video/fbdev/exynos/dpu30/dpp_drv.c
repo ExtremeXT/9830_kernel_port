@@ -10,7 +10,6 @@
 */
 
 #include <linux/module.h>
-#include <linux/version.h>
 #include <linux/clk-provider.h>
 #include <linux/clk.h>
 #include <linux/of.h>
@@ -24,7 +23,7 @@
 
 int dpp_log_level = 6;
 
-struct dpp_device *dpp_drvdata[SOC_DPP_CNT];
+struct dpp_device *dpp_drvdata[MAX_DPP_CNT];
 
 static u32 default_fmt[DEFAULT_FMT_CNT] = {
 	DECON_PIXEL_FORMAT_ARGB_8888, DECON_PIXEL_FORMAT_ABGR_8888,
@@ -43,30 +42,11 @@ void dpp_dump(struct dpp_device *dpp)
 		console_unlock();
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0)
-void dpp_op_timer_handler(unsigned long arg)
-{
-	struct dpp_device *dpp = from_timer(dpp, (struct timer_list *)arg, op_timer);
-	struct decon_device *decon = get_decon_drvdata(0);
-
-	if (!decon_is_bypass(decon))
-		dpp_dump(dpp);
-
-	if (dpp->dpp_config->config.compression)
-		dpp_info("Compression Source is %s of DPP[%d]\n",
-			dpp->dpp_config->config.dpp_parm.comp_src == DPP_COMP_SRC_G2D ?
-			"G2D" : "GPU", dpp->id);
-
-	dpp_info("DPP[%d] irq hasn't been occured", dpp->id);
-}
-#else
 void dpp_op_timer_handler(struct timer_list *arg)
 {
 	struct dpp_device *dpp = from_timer(dpp, arg, op_timer);
-	struct decon_device *decon = get_decon_drvdata(0);
 
-	if (!decon_is_bypass(decon))
-		dpp_dump(dpp);
+	dpp_dump(dpp);
 
 	if (dpp->dpp_config->config.compression)
 		dpp_info("Compression Source is %s of DPP[%d]\n",
@@ -75,7 +55,6 @@ void dpp_op_timer_handler(struct timer_list *arg)
 
 	dpp_info("DPP[%d] irq hasn't been occured", dpp->id);
 }
-#endif
 
 static int dpp_wb_wait_for_framedone(struct dpp_device *dpp)
 {
@@ -156,7 +135,6 @@ static void dpp_get_base_addr_params(struct dpp_params_info *p)
 	case DECON_PIXEL_FORMAT_NV12N_SBWC_8B: /* single fd : [0]-Y_PL */
 		/* calc CbCr Payload base */
 		p->addr[1] = SBWC_8B_CBCR_BASE(p->addr[0], p->src.f_w, p->src.f_h);
-		/* TODO: Continues case : Here Any Comment */
 	case DECON_PIXEL_FORMAT_NV12M_SBWC_8B:
 	case DECON_PIXEL_FORMAT_NV21M_SBWC_8B:
 		/* payload */
@@ -174,7 +152,6 @@ static void dpp_get_base_addr_params(struct dpp_params_info *p)
 	case DECON_PIXEL_FORMAT_NV12N_SBWC_10B: /* single fd : [0]-Y_PL */
 		/* calc CbCr Payload base */
 		p->addr[1] = SBWC_10B_CBCR_BASE(p->addr[0], p->src.f_w, p->src.f_h);
-		/* TODO: Continues case : Here Any Comment */
 	case DECON_PIXEL_FORMAT_NV12M_SBWC_10B:
 	case DECON_PIXEL_FORMAT_NV21M_SBWC_10B:
 		/* payload */
@@ -206,6 +183,9 @@ static int dpp_get_params(struct dpp_device *dpp, struct dpp_params_info *p)
 	const struct dpu_fmt *fmt_info = dpu_find_fmt_info(config->format);
 
 	p->rcv_num = dpp->dpp_config->rcv_num;
+#ifdef CONFIG_EXYNOS_MCD_HDR
+	p->wcg_mode = dpp->dpp_config->wcg_mode;
+#endif
 	memcpy(&p->src, &config->src, sizeof(struct decon_frame));
 	memcpy(&p->dst, &config->dst, sizeof(struct decon_frame));
 	memcpy(&p->block, &config->block_area, sizeof(struct decon_win_rect));
@@ -224,7 +204,6 @@ static int dpp_get_params(struct dpp_device *dpp, struct dpp_params_info *p)
 	p->ypl_c2_strd = 0;
 	p->chd_strd = 0;
 	p->cpl_strd = 0;
-	p->blend = config->blending;
 
 	p->comp_type = fmt_info->ct;
 	if (p->is_comp) {
@@ -388,46 +367,44 @@ static int dpp_check_format(struct dpp_device *dpp, struct dpp_params_info *p)
 	const struct dpu_fmt *fmt_info = dpu_find_fmt_info(p->format);
 
 	if (!test_bit(DPP_ATTR_ROT, &dpp->attr) && (p->rot > DPP_ROT_180)) {
-		dpp_err("Not support rotation(%d) in DPP%d - Rotation Ch only!\n",
+		dpp_err("Not support rotation(%d) in DPP%d\n",
 				p->rot, dpp->id);
 		return -EINVAL;
 	}
 
-
-#if defined(CONFIG_SOC_EXYNOS3830)
-	if (!test_bit(DPP_ATTR_HDR10P, &dpp->attr) && (p->hdr > DPP_HDR_OFF)) {
+#ifndef CONFIG_EXYNOS_MCD_HDR
+	if (!test_bit(DPP_ATTR_HDR, &dpp->attr) && (p->hdr > DPP_HDR_OFF)) {
 		dpp_err("Not support HDR in DPP%d - No H/W!\n",
 				dpp->id);
 		return -EINVAL;
 	}
-#endif
-	/* TODO: Add WCG check statement */
 
 	if ((p->hdr < DPP_HDR_OFF) || (p->hdr > DPP_HDR_HLG)) {
 		dpp_err("Unsupported HDR standard in DPP%d, HDR std(%d)\n",
 				dpp->id, p->hdr);
 		return -EINVAL;
 	}
+#endif
 
 	if (!test_bit(DPP_ATTR_CSC, &dpp->attr) && IS_YUV(fmt_info)) {
-		dpp_err("Not support YUV format(%d) in DPP%d - CSC Ch only!\n",
+		dpp_err("Not support YUV format(%d) in DPP%d\n",
 			p->format, dpp->id);
 		return -EINVAL;
 	}
 
 	if (!test_bit(DPP_ATTR_AFBC, &dpp->attr) && p->is_comp) {
-		dpp_err("Not support AFBC decoding in DPP%d - AFBC Ch only!\n",
+		dpp_err("Not support AFBC decoding in DPP%d\n",
 				dpp->id);
 		return -EINVAL;
 	}
 
 	if (!test_bit(DPP_ATTR_SCALE, &dpp->attr) && p->is_scale) {
-		dpp_err("Not support SCALING in DPP%d - Scale Ch only!\n", dpp->id);
+		dpp_err("Not support SCALING in DPP%d\n", dpp->id);
 		return -EINVAL;
 	}
 
 	if (!test_bit(DPP_ATTR_SBWC, &dpp->attr) && (p->comp_type == COMP_TYPE_SBWC)) {
-		dpp_err("Not support SBWC in DPP%d - SBWC Ch only!\n", dpp->id);
+		dpp_err("Not support SBWC in DPP%d\n", dpp->id);
 		return -EINVAL;
 	}
 
@@ -440,14 +417,17 @@ static int dpp_check_format(struct dpp_device *dpp, struct dpp_params_info *p)
  */
 static int dpp_check_limitation(struct dpp_device *dpp, struct dpp_params_info *p)
 {
-	int ret;
+	int ret = 0;
 	struct dpp_img_format vi;
 	const struct dpu_fmt *fmt_info = dpu_find_fmt_info(p->format);
 
-	ret = dpp_check_scale_ratio(p);
-	if (ret) {
-		dpp_err("failed to set dpp%d scale information\n", dpp->id);
-		return -EINVAL;
+	if (dpp->id != ODMA_WB) {
+		ret = dpp_check_scale_ratio(p);
+		if (ret) {
+			dpp_err("failed to set dpp%d scale information\n",
+					dpp->id);
+			return -EINVAL;
+		}
 	}
 
 	dpp_select_format(dpp, &vi, p);
@@ -465,7 +445,7 @@ static int dpp_check_limitation(struct dpp_device *dpp, struct dpp_params_info *
 			dpp->id);
 		return -EINVAL;
 	}
-	/* TODO: check below condition */
+
 	if (p->is_comp && p->is_block) {
 		dpp_err("Not support [AFBC+BLOCK] at the same time in DPP%d\n",
 			dpp->id);
@@ -474,6 +454,12 @@ static int dpp_check_limitation(struct dpp_device *dpp, struct dpp_params_info *
 
 	if (p->is_comp && IS_YUV420(fmt_info)) {
 		dpp_err("Not support AFBC decoding for YUV format in DPP%d\n",
+			dpp->id);
+		return -EINVAL;
+	}
+
+	if (p->is_comp && (p->comp_type == COMP_TYPE_SBWC)) {
+		dpp_err("Not support AFBC & SBWC at the same time in DPP%d\n",
 			dpp->id);
 		return -EINVAL;
 	}
@@ -516,6 +502,157 @@ static int dpp_afbc_enabled(struct dpp_device *dpp, int *afbc_enabled)
 	return ret;
 }
 
+#ifdef CONFIG_EXYNOS_MCD_HDR
+void dpp_reg_sel_hdr(u32 id, enum hdr_path path);
+
+
+#define HAL_DATASPACE_V0_SRGB 		142671872 // ((STANDARD_BT709 | TRANSFER_SRGB) | RANGE_FULL)
+#define HAL_DATASPACE_DCI_P3_LINEAR 139067392 // ((STANDARD_DCI_P3 | TRANSFER_LINEAR) | RANGE_FULL)
+
+
+int dpp_mcd_config_hdr(struct dpp_device *dpp, struct dpp_params_info *params)
+{
+	u32 ret = 0;
+	struct dpp_hdr10_info *hdr_info;
+	struct hdr10_config config;
+	struct dpp_config *dpp_cfg = dpp->dpp_config;
+	unsigned int ioctl_cmd = CONFIG_HDR10;
+
+	memset(&config, 0, sizeof(struct hdr10_config ));
+
+	hdr_info = &dpp_cfg->hdr_info;
+	config.eq_mode = params->eq_mode;
+	config.hdr_mode = params->hdr;
+	config.color_mode = params->wcg_mode;
+	config.src_max_luminance = params->max_luminance;
+	config.dst_max_luminance = dpp_cfg->hdr_info.dst_max_luminance;
+
+	if (hdr_info->type & VIDEO_INFO_TYPE_HDR_DYNAMIC) {
+		if (!(dpp->attr & (1 << DPP_ATTR_C_HDR10_PLUS))) {
+			dpp_info("DPP:%s:INFO:DPP_ID: %d, HDR10+ -> HDR10\n",
+				__func__, dpp->id);
+			goto exit_config;
+		}
+
+		ioctl_cmd = CONFIG_HDR10P;
+
+#ifdef HDR_DEBUG
+		dpp_info("######### Support Dynamic Meta LUT Info #########\n");
+		print_hex_dump(KERN_ERR, "", DUMP_PREFIX_ADDRESS, 32, 4,
+			&hdr_info->lut, sizeof(unsigned int) * 42, false);
+#endif
+		config.lut = hdr_info->lut;
+	}
+
+exit_config:
+	ret = v4l2_subdev_call(dpp->mcd_sd,
+			core , ioctl ,ioctl_cmd, &config);
+		if (ret)
+			dpp_err("DPP:ERR:%s:faild to hdr10p\n", __func__);
+
+	return ret;
+}
+
+
+static int dpp_mcd_config_wcg(struct dpp_device *dpp, struct dpp_params_info *params)
+{
+	int ret = 0;
+	struct wcg_config color_config;
+
+#if 0
+	dpp_info("dpp-%d wcg: %d, eq_mode : %d(%x), hdr_std : %d(%x)\n",
+		dpp->id, params->wcg_mode,
+		params->eq_mode, params->eq_mode,
+		params->hdr, params->hdr);
+#endif
+
+	memset(&color_config, 0, sizeof(struct wcg_config));
+
+	color_config.color_mode = params->wcg_mode;
+	color_config.eq_mode = params->eq_mode;
+	color_config.hdr_mode = params->hdr;
+
+	ret = v4l2_subdev_call(dpp->mcd_sd,
+		core , ioctl ,CONFIG_WCG, &color_config);
+	if (ret)
+		dpp_err("DPP:ERR:%s:faild to config wcg\n", __func__);
+
+	return ret;
+}
+
+static int dpp_mcd_stop(struct dpp_device *dpp)
+{
+	int ret = 0;
+	int param = 0;
+
+	ret = v4l2_subdev_call(dpp->mcd_sd,
+		core, ioctl, STOP_MCD_IP, &param);
+
+	return ret;
+}
+
+
+static int dpp_mcd_reset(struct dpp_device *dpp)
+{
+	int ret = 0;
+	int param = 0;
+
+	ret = v4l2_subdev_call(dpp->mcd_sd,
+		core, ioctl, RESET_MCD_IP, &param);
+
+	return ret;
+}
+
+#if 0
+
+static bool using_mcd_hdr(struct dpp_params_info *params)
+{
+	bool ret = false;
+	
+	if (params->wcg_mode != HAL_COLOR_MODE_NATIVE
+		|| IS_HDR_FMT(params->hdr))
+		ret = true;
+
+	return ret;
+}
+
+static int dpp_mcd_dump(struct dpp_device *dpp)
+{
+	int ret = 0;
+	int param = 0;
+
+	ret = v4l2_subdev_call(dpp->mcd_sd,
+		core, ioctl, DUMP_MCD_IP, &param);
+
+	return ret;
+}
+#endif
+#endif
+static int dpp_set_cursor_config(struct dpp_device *dpp)
+{
+	struct dpp_params_info params;
+	int ret = 0;
+
+	/* parameters from decon driver are translated for dpp driver */
+	dpp_get_params(dpp, &params);
+
+	/* all parameters must be passed dpp hw limitation */
+	ret = dpp_check_limitation(dpp, &params);
+	if (ret)
+		goto err;
+
+	/* set all parameters to dpp hw */
+	dpp_reg_configure_params(dpp->id, &params, dpp->attr);
+
+	dpp_dbg("dpp%d cursor configuration\n", dpp->id);
+
+err:
+	return ret;
+}
+
+
+
+
 static int dpp_set_config(struct dpp_device *dpp)
 {
 	struct dpp_params_info params;
@@ -541,10 +678,21 @@ static int dpp_set_config(struct dpp_device *dpp)
 		if (test_bit(DPP_ATTR_DPP, &dpp->attr))
 			enable_irq(dpp->res.irq);
 	}
-
 	/* set all parameters to dpp hw */
 	dpp_reg_configure_params(dpp->id, &params, dpp->attr);
 
+#ifdef CONFIG_EXYNOS_MCD_HDR
+	dpp_mcd_reset(dpp);
+
+	if (params.wcg_mode != HAL_COLOR_MODE_NATIVE) {
+		ret = dpp_mcd_config_wcg(dpp, &params);
+		if (ret)
+			dpp_err("DPP:ERR:%s:failed to set mcd ip\n", __func__);
+	}
+
+	if (IS_HDR_FMT(params.hdr))
+		dpp_mcd_config_hdr(dpp, &params);
+#endif
 	dpp->op_timer.expires = (jiffies + 1 * HZ);
 	mod_timer(&dpp->op_timer, dpp->op_timer.expires);
 
@@ -571,12 +719,12 @@ static int dpp_stop(struct dpp_device *dpp, bool reset)
 
 	DPU_EVENT_LOG(DPU_EVT_DPP_STOP, &dpp->sd, ktime_set(0, 0));
 
-	del_timer(&dpp->op_timer);
-	dpp_reg_deinit(dpp->id, reset, dpp->attr);
-
 	disable_irq(dpp->res.dma_irq);
 	if (test_bit(DPP_ATTR_DPP, &dpp->attr))
 		disable_irq(dpp->res.irq);
+
+	del_timer(&dpp->op_timer);
+	dpp_reg_deinit(dpp->id, reset, dpp->attr);
 
 	dpp_dbg("dpp%d is stopped\n", dpp->id);
 
@@ -630,13 +778,33 @@ static long dpp_subdev_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg
 
 	switch (cmd) {
 	case DPP_WIN_CONFIG:
+		if (!arg) {
+			dpp_err("failed to get dpp_config\n");
+			ret = -EINVAL;
+			break;
+		}
 		dpp->dpp_config = (struct dpp_config *)arg;
 		ret = dpp_set_config(dpp);
 		if (ret)
 			dpp_err("failed to configure dpp%d\n", dpp->id);
 		break;
 
+	case DPP_CURSOR_WIN_CONFIG:
+		if (!arg) {
+			dpp_err("failed to get cursor_config\n");
+			ret = -EINVAL;
+			break;
+		}
+		dpp->dpp_config = (struct dpp_config *)arg;
+		ret = dpp_set_cursor_config(dpp);
+		if (ret)
+			dpp_err("failed to configure dpp%d\n", dpp->id);
+		break;
+
 	case DPP_STOP:
+#ifdef CONFIG_EXYNOS_MCD_HDR
+		ret = dpp_mcd_stop(dpp);
+#endif
 		ret = dpp_stop(dpp, reset);
 		if (ret)
 			dpp_err("failed to stop dpp%d\n", dpp->id);
@@ -712,6 +880,43 @@ static struct v4l2_subdev_ops dpp_subdev_ops = {
 	.core = &dpp_subdev_core_ops,
 	.video = &dpp_subdev_video_ops,
 };
+#ifdef CONFIG_EXYNOS_MCD_HDR
+static int __mcd_match_dev(struct device *dev, void *data)
+{
+	struct mcd_hdr_device *hdr;
+	struct dpp_device *dpp = (struct dpp_device *)data;
+
+	hdr = (struct mcd_hdr_device *)dev_get_drvdata(dev);
+	if (hdr == NULL) {
+		dpp_err("DDP:ERR:%s:NULL HDR structure\n", __func__);
+		return -EINVAL;
+	}
+
+	if (dpp->id == hdr->id) {
+		dpp_info("Match ID : %d\n", hdr->id);
+		dpp->mcd_sd = &hdr->sd;
+	}
+
+	return 0;
+}
+
+static int dpp_get_mcd_hdr_subdev(struct dpp_device *dpp, char *devname)
+{
+	int ret = 0;
+	struct device *dev;
+	struct device_driver *drv;
+
+	drv = driver_find(devname, &platform_bus_type);
+	if (IS_ERR_OR_NULL(drv)) {
+		dpp_err("DPP:ERR:%s:failed to find driver\n", __func__);
+		return -ENODEV;
+	}
+
+	dev = driver_find_device(drv, NULL, dpp, __mcd_match_dev);
+
+	return ret;
+}
+#endif
 
 static void dpp_init_subdev(struct dpp_device *dpp)
 {
@@ -892,7 +1097,8 @@ irq_end:
 
 static irqreturn_t dma_irq_handler(int irq, void *priv)
 {
-	struct dpp_device *dpp = priv;
+	struct dpp_device *dpp = priv;	
+	struct decon_device *decon = get_decon_drvdata(0);
 	u32 irqs, val = 0;
 
 	spin_lock(&dpp->dma_slock);
@@ -900,8 +1106,8 @@ static irqreturn_t dma_irq_handler(int irq, void *priv)
 		goto irq_end;
 
 	if (test_bit(DPP_ATTR_ODMA, &dpp->attr)) { /* ODMA case */
-#if defined(CONFIG_SOC_EXYNOS9830)
 		irqs = odma_reg_get_irq_and_clear(dpp->id);
+
 		if ((irqs & ODMA_WRITE_SLAVE_ERROR) ||
 			       (irqs & ODMA_STATUS_DEADLOCK_IRQ)) {
 			dpp_err("odma%d error irq occur(0x%x)\n", dpp->id, irqs);
@@ -916,7 +1122,6 @@ static irqreturn_t dma_irq_handler(int irq, void *priv)
 					ktime_set(0, 0));
 			goto irq_end;
 		}
-#endif
 	} else { /* IDMA case */
 		irqs = idma_reg_get_irq_and_clear(dpp->id);
 
@@ -925,14 +1130,17 @@ static irqreturn_t dma_irq_handler(int irq, void *priv)
 					ktime_set(0, 0));
 			val = (u32)dpp->dpp_config->config.dpp_parm.comp_src;
 			dpp->d.recovery_cnt++;
-			dpp_info("dma%d recovery start(0x%x).. cnt(%d)\n",
-					dpp->id, irqs, dpp->d.recovery_cnt);
+			dpp_info("dma%d recovery start(0x%x)..[src=%d(1:g2d,2:gpu)], cnt(%d)\n",
+					dpp->id, irqs, val,
+					dpp->d.recovery_cnt);
 			goto irq_end;
 		}
 		if ((irqs & IDMA_READ_SLAVE_ERROR) ||
 				(irqs & IDMA_STATUS_DEADLOCK_IRQ)) {
 			dpp_err("dma%d error irq occur(0x%x)\n", dpp->id, irqs);
-			dpp_dump(dpp);
+			decon_dump(decon, false);
+			//dpp_dump(dpp);
+			s3c2410wdt_set_emergency_reset(0,0); /* watch dog reset */
 			goto irq_end;
 		}
 		/*
@@ -980,7 +1188,7 @@ static int dpp_init_resources(struct dpp_device *dpp, struct platform_device *pd
 			(u32)res->start, (u32)res->end);
 
 	dpp->res.dma_regs = devm_ioremap_resource(dpp->dev, res);
-	if (!dpp->res.dma_regs) {
+	if (IS_ERR(dpp->res.dma_regs)) {
 		dpp_err("failed to remap DPU_DMA SFR region\n");
 		return -EINVAL;
 	}
@@ -996,50 +1204,18 @@ static int dpp_init_resources(struct dpp_device *dpp, struct platform_device *pd
 				(u32)res->start, (u32)res->end);
 
 		dpp->res.dma_com_regs = devm_ioremap_resource(dpp->dev, res);
-		if (!dpp->res.dma_com_regs) {
+		if (IS_ERR(dpp->res.dma_com_regs)) {
 			dpp_err("failed to remap DPU_DMA COMMON SFR region\n");
 			return -EINVAL;
 		}
-
-		if (test_bit(DPP_ATTR_WCG, &dpp->attr)) {
-			res = platform_get_resource(pdev, IORESOURCE_MEM, 3);
-			if (!res) {
-				dpp_err("failed to get mem resource\n");
-				return -ENOENT;
-			}
-			dpp_info("WCG res: start(0x%x), end(0x%x)\n",
-					(u32)res->start, (u32)res->end);
-
-			dpp->res.hdr_regs = devm_ioremap_resource(dpp->dev, res);
-			if (!dpp->res.hdr_regs) {
-				dpp_err("failed to remap WCG/HDR SFR region\n");
-				return -EINVAL;
-			}
-		}
-	} else {
-		if (test_bit(DPP_ATTR_WCG, &dpp->attr) ||
-				test_bit(DPP_ATTR_HDR10P, &dpp->attr)) {
-			res = platform_get_resource(pdev, IORESOURCE_MEM, 2);
-			if (!res) {
-				dpp_err("failed to get mem resource\n");
-				return -ENOENT;
-			}
-			dpp_info("WCG/HDR10P res: start(0x%x), end(0x%x)\n",
-					(u32)res->start, (u32)res->end);
-
-			dpp->res.hdr_regs = devm_ioremap_resource(dpp->dev, res);
-			if (!dpp->res.hdr_regs) {
-				dpp_err("failed to remap WCG/HDR SFR region\n");
-				return -EINVAL;
-			}
-		}
 	}
-
 	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	if (!res) {
 		dpp_err("failed to get dpu dma irq resource\n");
 		return -ENOENT;
 	}
+	dpp_dma_irq_clear(dpp->id, dpp->attr);
+
 	dpp_info("dma irq no = %lld\n", res->start);
 
 	dpp->res.dma_irq = res->start;
@@ -1058,16 +1234,15 @@ static int dpp_init_resources(struct dpp_device *dpp, struct platform_device *pd
 			dpp_err("failed to get mem resource\n");
 			return -ENOENT;
 		}
-		dpp_info("dpp res: start(0x%x), end(0x%x)\n",
+		dpp_info("res: start(0x%x), end(0x%x)\n",
 				(u32)res->start, (u32)res->end);
 
 		dpp->res.regs = devm_ioremap_resource(dpp->dev, res);
-		if (!dpp->res.regs) {
+		if (IS_ERR(dpp->res.regs)) {
 			dpp_err("failed to remap DPP SFR region\n");
 			return -EINVAL;
 		}
 	}
-
 
 	if (test_bit(DPP_ATTR_DPP, &dpp->attr)) {
 		res = platform_get_resource(pdev, IORESOURCE_IRQ, 1);
@@ -1075,6 +1250,8 @@ static int dpp_init_resources(struct dpp_device *dpp, struct platform_device *pd
 			dpp_err("failed to get dpp irq resource\n");
 			return -ENOENT;
 		}
+		dpp_op_irq_clear(dpp->id, dpp->attr);
+
 		dpp_info("dpp irq no = %lld\n", res->start);
 
 		dpp->res.irq = res->start;
@@ -1090,6 +1267,42 @@ static int dpp_init_resources(struct dpp_device *dpp, struct platform_device *pd
 	return 0;
 }
 
+#ifdef CONFIG_EXYNOS_MCD_HDR
+
+static char *dpp_attr_string[DPP_ATTR_DPP + 1] = {
+	"DPP_ATTR_AFBC",
+	"DPP_ATTR_BLOCK",
+	"DPP_ATTR_FLIP",
+	"DPP_ATTR_ROT",
+	"DPP_ATTR_CSC",
+	"DPP_ATTR_SCALE",
+	"DPP_ATTR_HDR",
+	"DPP_ATTR_C_HDR",
+	"DPP_ATTR_C_HDR10_PLUS",
+	"DPP_ATTR_WCG",
+	"None10",
+	"None11",
+	"None12",
+	"None13",
+	"None14",
+	"None15",
+	"DPP_ATTR_IDMA",
+	"DPP_ATTR_ODMA",
+	"DPP_ATTR_DPP",
+
+};
+
+static void print_dpp_restrict(unsigned long attr)
+{
+	int i = 0;
+
+	for (i = 0; i <= DPP_ATTR_DPP; i++) {
+		if ((attr & (1 << i)) && (dpp_attr_string[i] != NULL))
+			dpp_info("DPP ATTR : %s\n", dpp_attr_string[i]);
+	}
+}
+
+#endif
 /*
  * If dpp becomes output device of DECON, it is responsible for clock, sysmmu
  * and power domain control like DSIM or DP device.
@@ -1128,6 +1341,9 @@ static int dpp_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct dpp_device *dpp;
 	int ret = 0;
+#ifdef CONFIG_EXYNOS_MCD_HDR
+	int attr = 0;
+#endif
 
 	dpp = devm_kzalloc(dev, sizeof(*dpp), GFP_KERNEL);
 	if (!dpp) {
@@ -1135,6 +1351,7 @@ static int dpp_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto err;
 	}
+
 	dpp_parse_dt(dpp, dev);
 	dpp_drvdata[dpp->id] = dpp;
 
@@ -1143,18 +1360,35 @@ static int dpp_probe(struct platform_device *pdev)
 	mutex_init(&dpp->lock);
 	init_waitqueue_head(&dpp->framedone_wq);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,19,0)
-	timer_setup(&dpp->op_timer, (void (*)(struct timer_list *))dpp_op_timer_handler, 0);
-#else
-	timer_setup(&dpp->op_timer, dpp_op_timer_handler, 0);
-#endif
-
 	ret = dpp_init_resources(dpp, pdev);
 	if (ret)
 		goto err_clk;
 
 	dpp_init_subdev(dpp);
+#ifdef CONFIG_EXYNOS_MCD_HDR
+	dpp_get_mcd_hdr_subdev(dpp, MCD_HDR_MODULE_NAME);
+
+	ret = v4l2_subdev_call(dpp->mcd_sd,
+		core , ioctl ,GET_ATTR, &attr);
+	if (ret)
+		dpp_err("DPP:ERR:%s:faild to get attr wcg\n", __func__);
+
+	if (IS_SUPPORT_HDR10(attr))
+		dpp->attr |= (1 << DPP_ATTR_C_HDR);
+
+	if (IS_SUPPORT_HDR10P(attr))
+		dpp->attr |= (1 << DPP_ATTR_C_HDR10_PLUS);
+
+	if (IS_SUPPORT_WCG(attr))
+		dpp->attr |= (1 << DPP_ATTR_WCG);
+
+	dpp_info("DPP:INFO:%s:%x attr : %lx", __func__, dpp->id, dpp->attr);
+#if 1
+	print_dpp_restrict(dpp->attr);
+#endif
+#endif
 	platform_set_drvdata(pdev, dpp);
+	timer_setup(&dpp->op_timer, dpp_op_timer_handler, 0);
 
 	/* dpp becomes output device of connected DECON in case of writeback */
 	ret = dpp_set_output_device(dpp);

@@ -81,6 +81,13 @@ config CAMERA_CIS_3L2_OBJ
 		help
 		  Use to build 3L2 camera sensor.
 
+config CAMERA_CIS_3L6_OBJ
+		bool "Use 3L6 camera cis"
+	depends on CAMERA_CIS_SELECT
+		default n
+		help
+		  Use to build 3L6 camera sensor.
+
 config CAMERA_CIS_3H1_OBJ
 		bool "Use 3H1 camera cis"
 	depends on CAMERA_CIS_SELECT
@@ -144,7 +151,14 @@ config CAMERA_CIS_3M5_OBJ
 		help
 		  Use to build 3M5 camera sensor.
 
-  config CAMERA_CIS_GW2_OBJ
+config CAMERA_CIS_GH1_OBJ
+		bool "Use GH1 camera cis"
+	depends on CAMERA_CIS_SELECT
+		default n
+		help
+		  Use to build GH1 camera sensor.
+
+config CAMERA_CIS_GW2_OBJ
 		bool "Use GW2 camera cis"
 	depends on CAMERA_CIS_SELECT
 		default n
@@ -242,6 +256,13 @@ config CAMERA_CIS_2LD_OBJ
 		help
 		  Use to build 2LD camera sensor.
 
+config CAMERA_CIS_HM1_OBJ
+		bool "Use HM1 camera cis"
+	depends on CAMERA_CIS_SELECT
+		default n
+		help
+		  Use to build HM1 camera sensor.
+
 config CAMERA_CIS_IMX260_OBJ
 		bool "Use IMX260 camera cis"
 	depends on CAMERA_CIS_SELECT
@@ -311,13 +332,6 @@ config CAMERA_CIS_4HA_OBJ
 		default n
 		help
 		  Use to build 4HA camera sensor.
-
-config CAMERA_CIS_SR846_OBJ
-		bool "Use SR846 camera cis"
-	depends on CAMERA_CIS_SELECT
-		default n
-		help
-		  Use to build SR846 camera sensor.
 
 config CAMERA_CIS_IMX576_OBJ
 		bool "Use IMX576 camera cis"
@@ -390,12 +404,12 @@ config CAMERA_CIS_IMX616_OBJ
 	help
 	  Use to build IMX616 camera sensor.
 
-config CAMERA_CIS_IMX355_OBJ
-	bool "Use IMX355 camera cis"
+config CAMERA_CIS_IMX586_OBJ
+	bool "Use IMX586 camera cis"
 	depends on CAMERA_CIS_SELECT
 	default n
 	help
-	  Use to build IMX355 camera sensor.
+	  Use to build IMX586 camera sensor.
 
 config CAMERA_CIS_GD1_OBJ
 	bool "Use GD1 camera cis"
@@ -404,65 +418,10 @@ config CAMERA_CIS_GD1_OBJ
 	help
 	  Use to build GD1 camera sensor.
 
-config CAMERA_CIS_HI1336_OBJ
-	bool "Use HI1336 camera cis"
+config CAMERA_CIS_HI847_OBJ
+	bool "Use HI847 camera cis"
 	depends on CAMERA_CIS_SELECT
 	default n
 	help
-	  Use to build HI1336 camera sensor.
+	  Use to build HI847 camera sensor.
 
-config CAMERA_CIS_HI556_OBJ
-	bool "Use HI556 camera cis"
-	depends on CAMERA_CIS_SELECT
-	default n
-	help
-	  Use to build HI556 camera sensor.
-
-config CAMERA_CIS_GM2_OBJ
-	bool "Use GM2 camera cis"
-	depends on CAMERA_CIS_SELECT
-	default n
-	help
-	  Use to build GM2 camera sensor.
-	  
-config CAMERA_CIS_GC02M1_OBJ
-	bool "Use GC02M1 camera cis"
-	depends on CAMERA_CIS_SELECT
-	default n
-	help
-	  Use to build GC02M1 camera sensor.
-
-config CAMERA_CIS_GC02M2_OBJ
-	bool "Use GC02M2 camera cis"
-	depends on CAMERA_CIS_SELECT
-	default n
-	help
-	  Use to build GC02M2 camera sensor.
-
-config CAMERA_CIS_SC201_OBJ
-	bool "Use SC201 camera cis"
-	depends on CAMERA_CIS_SELECT
-	default n
-	help
-	  Use to build SC201 camera sensor.
-
-config CAMERA_CIS_JN1_OBJ
-	tristate "Use JN1 camera cis"
-	depends on CAMERA_CIS_SELECT
-	default n
-	help
-	  Use to build JN1 camera sensor.
-
-config CAMERA_CIS_SC501_OBJ
-	bool "Use SC501 camera cis"
-	depends on CAMERA_CIS_SELECT
-	default n
-	help
-	  Use to build SC501 camera sensor.
-
-config CAMERA_CIS_GC08A3_OBJ
-	bool "Use GC08A3 camera cis"
-	depends on CAMERA_CIS_SELECT
-	default n
-	help
-	  Use to build GC08A3 camera sensor.

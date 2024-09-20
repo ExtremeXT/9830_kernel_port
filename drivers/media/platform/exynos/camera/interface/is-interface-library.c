@@ -20,15 +20,11 @@
 #include <asm/neon.h>
 
 #include "is-interface-library.h"
-#ifdef CONFIG_PABLO_V8_20_0
-#include "is-interface-vra-v2.h"
-#else
 #include "is-interface-vra.h"
-#endif
 #include "../is-device-ischain.h"
 #include "is-vender.h"
 #include "votf/camerapp-votf.h"
-#ifdef CONFIG_RKP
+#if (defined CONFIG_UH_RKP || defined CONFIG_FASTUH_RKP)
 #include <linux/rkp.h>
 #endif
 
@@ -536,20 +532,6 @@ void is_free_vra(void *kva)
 	return free_to_mblk(&lib->mb_vra, kva);
 }
 
-void *is_alloc_vra_net_array(u32 size)
-{
-	struct is_lib_support *lib = &gPtr_lib_support;
-
-	return alloc_from_mblk(&lib->mb_vra_net_array, size);
-}
-
-void is_free_vra_net_array(void *kva)
-{
-	struct is_lib_support *lib = &gPtr_lib_support;
-
-	return free_to_mblk(&lib->mb_vra_net_array, kva);
-}
-
 static void __maybe_unused *is_alloc_dma_pb(u32 size)
 {
 	struct is_lib_support *lib = &gPtr_lib_support;
@@ -738,13 +720,6 @@ int is_dva_vra(ulong kva, u32 *dva)
 	return mblk_dva(&lib->mb_vra, kva, dva);
 }
 
-int is_dva_vra_net_array(ulong kva, u32 *dva)
-{
-	struct is_lib_support *lib = &gPtr_lib_support;
-
-	return mblk_dva(&lib->mb_vra_net_array, kva, dva);
-}
-
 int is_kva_dma_taaisp(u32 dva, ulong *kva)
 {
 	struct is_lib_support *lib = &gPtr_lib_support;
@@ -874,12 +849,6 @@ void is_clean_vra(ulong kva, u32 size)
 	return mblk_clean(&lib->mb_vra, kva, size);
 }
 
-void is_inv_vra_net_array(ulong kva, u32 size)
-{
-	struct is_lib_support *lib = &gPtr_lib_support;
-
-	return mblk_inv(&lib->mb_vra_net_array, kva, size);
-}
 /*
  * Assert
  */
@@ -1761,6 +1730,9 @@ int is_init_ddk_thread(void)
 	struct sched_param param = { .sched_priority = IS_MAX_PRIO - 1 };
 	char name[30];
 	int i, j, ret = 0;
+#ifdef SET_CPU_AFFINITY
+	u32 cpu = 0;
+#endif
 
 	struct is_lib_support *lib = &gPtr_lib_support;
 
@@ -1795,43 +1767,16 @@ int is_init_ddk_thread(void)
 					lib_task_work);
 		}
 
+		if (i != TASK_RTA) {
+#ifdef SET_CPU_AFFINITY
+			cpu = lib_get_task_affinity(i);
+			ret = set_cpus_allowed_ptr(lib->task_taaisp[i].task, cpumask_of(cpu));
+			dbg_lib(3, "%s: task(%d) affinity cpu(%d) (%d)\n", __func__, i, cpu, ret);
+#endif
+		}
 	}
 
 	return ret;
-}
-
-void is_set_ddk_thread_affinity(void)
-{
-	struct is_lib_support *lib = &gPtr_lib_support;
-	struct is_core *core;
-	struct task_struct *task;
-	int i;
-	const char *cpus;
-
-	core = (struct is_core *)platform_get_drvdata(lib->pdev);
-	cpus = core->resourcemgr.dvfs_ctrl.cur_cpus;
-
-	for (i = 0 ; i < TASK_INDEX_MAX; i++) {
-		if (i == TASK_RTA)
-			continue;
-
-		task = lib->task_taaisp[i].task;
-
-		if (!cpus) {
-			/* Legacy mode */
-			u32 cpu = lib_get_task_affinity(i);
-
-			set_cpus_allowed_ptr(task, cpumask_of(cpu));
-			dbg_lib(3, "lib_%d_worker: affinity %d\n", i, cpu);
-		} else {
-			/* DT mode */
-			struct cpumask cpumask;
-
-			cpulist_parse(cpus, &cpumask);
-			set_cpus_allowed_ptr(task, &cpumask);
-			dbg_lib(3, "lib_%d_worker: affinity %s\n", i, cpus);
-		}
-	}
 }
 
 void is_flush_ddk_thread(void)
@@ -1934,7 +1879,7 @@ static void _get_fd_data(u32 instance,
 		fd_data->frame_count, fd_data->face_num);
 }
 
-#ifdef SOC_VRA
+#if 0 /* deprecated */
 static void is_get_fd_data(u32 instance,
 	struct fd_info *face_data,
 	struct fd_rectangle *fd_in_size)
@@ -1945,7 +1890,6 @@ static void is_get_fd_data(u32 instance,
 
 	if (unlikely(!lib_vra)) {
 		err_lib("lib_vra is NULL");
-		face_data->face_num = 0;
 		return;
 	}
 
@@ -1961,17 +1905,17 @@ static void is_get_fd_data(u32 instance,
 
 	for (i = 0; i < lib_vra->all_face_num[instance]; i++) {
 		face_data->face[i].face_area.top_left.x =
-			lib_vra->out_faces[instance][i].rect.topleft.x;
+			lib_vra->out_faces[instance][i].base.rect.left;
 		face_data->face[i].face_area.top_left.y =
-			lib_vra->out_faces[instance][i].rect.topleft.y;
+			lib_vra->out_faces[instance][i].base.rect.top;
 		face_data->face[i].face_area.span.width =
-			lib_vra->out_faces[instance][i].rect.width;
+			lib_vra->out_faces[instance][i].base.rect.width;
 		face_data->face[i].face_area.span.height =
-			lib_vra->out_faces[instance][i].rect.height;
+			lib_vra->out_faces[instance][i].base.rect.height;
 
-		face_data->face[i].faceId = lib_vra->out_faces[instance][i].unique_id;
-		face_data->face[i].score = lib_vra->out_faces[instance][i].score;
-		face_data->face[i].rotation = 0;
+		face_data->face[i].faceId = lib_vra->out_faces[instance][i].base.unique_id;
+		face_data->face[i].score = lib_vra->out_faces[instance][i].base.score;
+		face_data->face[i].rotation = lib_vra->out_faces[instance][i].base.rotation;
 
 		dbg_lib(3, "is_get_fd_data: [%d](%d,%d,%d,%d,%d,%d,%d)\n", i,
 			face_data->face[i].face_area.top_left.x,
@@ -1998,7 +1942,8 @@ static void is_get_fd_data(u32 instance,
 	spin_unlock_irqrestore(&lib_vra->ae_fd_slock[instance], flags);
 
 }
-#else
+#endif
+
 static void is_get_hybrid_fd_data(u32 instance,
 	struct fd_info *face_data,
 	struct fd_rectangle *fd_in_size)
@@ -2074,7 +2019,6 @@ static void is_get_hybrid_fd_data(u32 instance,
 		face_data->face_num = 0;
 	}
 }
-#endif
 
 void is_get_binary_version(char **buf, unsigned int type, unsigned int hint)
 {
@@ -2295,11 +2239,8 @@ void set_os_system_funcs(os_system_func_t *funcs)
 	funcs[48] = (os_system_func_t)is_lib_flush_task_handler;
 
 	funcs[49] = (os_system_func_t)_get_fd_data; /* for FDAE/FDAF */
-#ifdef SOC_VRA
-	funcs[50] = (os_system_func_t)is_get_fd_data;
-#else
 	funcs[50] = (os_system_func_t)is_get_hybrid_fd_data; /* for FDAE/FDAF */
-#endif
+
 	funcs[55] = (os_system_func_t)is_dva_dma_orbmch;
 	funcs[56] = (os_system_func_t)is_kva_dma_orbmch;
 	funcs[57] = (os_system_func_t)is_inv_dma_orbmch;
@@ -2522,7 +2463,7 @@ int __nocfi is_load_ddk_bin(int loadType)
 	struct device *device = &gPtr_lib_support.pdev->dev;
 	/* fixup the memory attribute for every region */
 	ulong lib_addr;
-#ifdef CONFIG_RKP
+#if (defined CONFIG_UH_RKP || defined CONFIG_FASTUH_RKP)
 	rkp_dynamic_load_t rkp_dyn;
 	static rkp_dynamic_load_t rkp_dyn_before = {0};
 #endif
@@ -2562,16 +2503,14 @@ int __nocfi is_load_ddk_bin(int loadType)
 		return ret;
 	}
 
-#ifndef USE_TZ_CONTROLLED_MEM_ATTRIBUTE
 #ifdef USE_CDH_BINARY
 	lib_addr = lib_vra;		/* DDK start Addr */
 	bin.data = bin.data + CDH_SIZE;
 	bin.size = bin.size - CDH_SIZE;
 #endif
-#endif
 
 	if (loadType == BINARY_LOAD_ALL) {
-#ifdef CONFIG_RKP
+#if (defined CONFIG_UH_RKP || defined CONFIG_FASTUH_RKP)
 		memset(&rkp_dyn, 0, sizeof(rkp_dyn));
 		rkp_dyn.binary_base = lib_addr;
 		rkp_dyn.binary_size = bin.size;
@@ -2615,8 +2554,8 @@ int __nocfi is_load_ddk_bin(int loadType)
 			goto fail;
 		}
 
-#ifdef CONFIG_RKP
-		ret = uh_call(UH_APP_RKP, RKP_DYNAMIC_LOAD, RKP_DYN_COMMAND_INS, (u64)&rkp_dyn, 0, 0);
+#if (defined CONFIG_UH_RKP || defined CONFIG_FASTUH_RKP)
+		uh_call(UH_APP_RKP, RKP_DYNAMIC_LOAD, RKP_DYN_COMMAND_INS, (u64)&rkp_dyn, (u64)&ret, 0);
 		if (ret) {
 			err_lib("fail to load verify FIMC in EL2");
 		}
@@ -2755,7 +2694,7 @@ int __nocfi is_load_rta_bin(int loadType)
 	os_system_func_t os_system_funcs[100];
 	ulong lib_rta = RTA_LIB_ADDR;
 
-#ifdef CONFIG_RKP
+#if (defined CONFIG_UH_RKP || defined CONFIG_FASTUH_RKP)
 	rkp_dynamic_load_t rkp_dyn;
 	static rkp_dynamic_load_t rkp_dyn_before = {0};
 #endif
@@ -2779,7 +2718,7 @@ int __nocfi is_load_rta_bin(int loadType)
 	}
 
 	if (loadType == BINARY_LOAD_ALL) {
-#ifdef CONFIG_RKP
+#if (defined CONFIG_UH_RKP || defined CONFIG_FASTUH_RKP)
 		memset(&rkp_dyn, 0, sizeof(rkp_dyn));
 		rkp_dyn.binary_base = lib_rta;
 		rkp_dyn.binary_size = bin.size;
@@ -2807,8 +2746,8 @@ int __nocfi is_load_rta_bin(int loadType)
 			ret = -EBADF;
 			goto fail;
 		}
-#ifdef CONFIG_RKP
-		ret = uh_call(UH_APP_RKP, RKP_DYNAMIC_LOAD, RKP_DYN_COMMAND_INS,(u64)&rkp_dyn, 0, 0);
+#if (defined CONFIG_UH_RKP || defined CONFIG_FASTUH_RKP)
+		uh_call(UH_APP_RKP, RKP_DYNAMIC_LOAD, RKP_DYN_COMMAND_INS,(u64)&rkp_dyn, (u64)&ret, 0);
 		if (ret) {
 			err_lib("fail to load verify FIMC in EL2");
 		}
@@ -2970,9 +2909,6 @@ int is_load_bin(void)
 
 	if (IS_ENABLED(ENABLE_VRA))
 		mblk_init(&lib->mb_vra, lib->minfo->pb_vra, MT_TYPE_MB_VRA, "VRA");
-#ifdef ENABLE_VRA_NETARRAY
-	mblk_init(&lib->mb_vra_net_array, lib->minfo->pb_vra_netarray, MT_TYPE_MB_VRA_NETARR, "VRA_NET");
-#endif
 
 	spin_lock_init(&lib->slock_nmb);
 	INIT_LIST_HEAD(&lib->list_of_nmb);

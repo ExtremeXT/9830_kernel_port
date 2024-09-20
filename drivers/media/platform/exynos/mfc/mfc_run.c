@@ -465,6 +465,7 @@ int mfc_run_enc_frame(struct mfc_ctx *ctx)
 	struct hdr10_plus_meta dst_sei_meta, *src_sei_meta;
 	unsigned int index;
 	int last_frame = 0;
+	int is_uncomp = 0;
 
 	raw = &ctx->raw_buf;
 
@@ -483,6 +484,23 @@ int mfc_run_enc_frame(struct mfc_ctx *ctx)
 		}
 	} else {
 		last_frame = __mfc_check_last_frame(ctx, src_mb);
+	}
+
+	/* Support per-frame SBWC change for encoder source */
+	if (MFC_FEATURE_SUPPORT(dev, dev->pdata->sbwc_enc_src_ctrl)
+			&& ctx->is_sbwc) {
+		if (mfc_check_vb_flag(src_mb, MFC_FLAG_ENC_SRC_UNCOMP)) {
+			is_uncomp = 1;
+			mfc_debug(2, "[SBWC] src is uncomp\n");
+		} else {
+			is_uncomp = 0;
+		}
+
+		mfc_set_enc_src_sbwc(dev,
+			(is_uncomp ? MFC_ENC_SRC_SBWC_OFF : MFC_ENC_SRC_SBWC_ON));
+		mfc_set_linear_stride_size(ctx,
+			(is_uncomp ? enc->uncomp_fmt : ctx->src_fmt));
+		mfc_set_enc_stride(ctx);
 	}
 
 	index = src_mb->vb.vb2_buf.index;
@@ -526,6 +544,7 @@ int mfc_run_enc_frame(struct mfc_ctx *ctx)
 
 	if (!reg_test)
 		mfc_set_slice_mode(ctx);
+	mfc_set_enc_ts_delta(ctx);
 
 	mfc_cmd_enc_one_frame(ctx, last_frame);
 

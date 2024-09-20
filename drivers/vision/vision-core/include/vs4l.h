@@ -79,6 +79,11 @@ struct vs4l_ctrl {
 	__u32			value;
 };
 
+struct vs4l_sched_param {
+	__u32			priority;
+	__u32			bound_id;
+};
+
 struct vs4l_roi {
 	__u32			x;
 	__u32			y;
@@ -114,6 +119,17 @@ struct vs4l_container {
 	__u32			reserved[4];
 	__u32			count;
 	struct vs4l_buffer	*buffers;
+};
+
+struct vs4l_profiler_node {
+	const char *label;
+	uint32_t duration;
+	struct vs4l_profiler_node **child;
+};
+
+struct vs4l_profiler {
+	uint8_t level;
+	struct vs4l_profiler_node *node;
 };
 
 enum vs4l_direction {
@@ -172,5 +188,8 @@ struct vs4l_container_list {
 #define VS4L_VERTEXIOC_DQBUF			_IOW('V', 7, struct vs4l_container_list)
 #define VS4L_VERTEXIOC_PREPARE			_IOW('V', 8, struct vs4l_container_list)
 #define VS4L_VERTEXIOC_UNPREPARE		_IOW('V', 9, struct vs4l_container_list)
+#define VS4L_VERTEXIOC_SCHED_PARAM		_IOW('V', 10, struct vs4l_sched_param)
+#define VS4L_VERTEXIOC_PROFILE_ON 		_IOW('V', 11, struct vs4l_profiler)
+#define VS4L_VERTEXIOC_PROFILE_OFF		_IOW('V', 12, struct vs4l_profiler)
 
 #endif

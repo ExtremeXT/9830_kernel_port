@@ -254,6 +254,50 @@ static struct pll_spec gpll1031X_spec = {
 	150,		500,
 };
 
+static struct pll_spec gpll0732X_spec = {
+	1,		63,
+	16,		511,
+	0,		6,
+	-32767,		32767,
+	6*MHZ,		30*MHZ,
+	600*MHZ,	1200*MHZ,
+	9.5*MHZ,	1200*MHZ,
+	500,		500,
+};
+
+static struct pll_spec gpll0716X_spec = {
+	1,		63,
+	64,		1023,
+	0,		6,
+	0,		0,
+	6*MHZ,		12*MHZ,
+	3300*MHZ,	6600*MHZ,
+	39.06*MHZ,	6600*MHZ,
+	150,		0,
+};
+
+static struct pll_spec gpll0717X_spec = {
+	1,		63,
+	64,		1023,
+	0,		6,
+	0,		0,
+	4*MHZ,		12*MHZ,
+	950*MHZ,	2400*MHZ,
+	14.83*MHZ,	2400*MHZ,
+	150,		0,
+};
+
+static struct pll_spec gpll0718X_spec = {
+	1,		63,
+	64,		1023,
+	0,		6,
+	0,		0,
+	2*MHZ,		8*MHZ,
+	600*MHZ,	1200*MHZ,
+	9.5*MHZ,	1200*MHZ,
+	150,		0,
+};
+
 struct pll_spec *pll_get_spec(struct cmucal_pll *pll)
 {
 	struct pll_spec *pll_spec;
@@ -327,6 +371,18 @@ struct pll_spec *pll_get_spec(struct cmucal_pll *pll)
 		break;
 	case pll_0831x:
 		pll_spec = &gpll0831X_spec;
+		break;
+	case pll_0732x:
+		pll_spec = &gpll0732X_spec;
+		break;
+	case pll_0716x:
+		pll_spec = &gpll0716X_spec;
+		break;
+	case pll_0717x:
+		pll_spec = &gpll0717X_spec;
+		break;
+	case pll_0718x:
+		pll_spec = &gpll0718X_spec;
 		break;
 	default:
 		pll_spec = NULL;

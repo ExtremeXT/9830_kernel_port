@@ -559,7 +559,8 @@ static int is_hw_isp_shot(struct is_hw_ip *hw_ip, struct is_frame *frame,
 			}
 		}
 	}
-#endif
+
+#endif
 
 config:
 	param_set->instance_id = instance;

@@ -36,6 +36,8 @@ struct panel_irc_info;
 #define BRT_GT(brt)			(BRT_SCALE_UP(brt) + 1)
 #define BRT_USER(brt)		(BRT_SCALE_DN(brt))
 
+#define CALC_SCALE	(100)
+
 #define UI_MIN_BRIGHTNESS			(BRT(0))
 #define UI_DEF_BRIGHTNESS			(BRT(128))
 #define UI_MAX_BRIGHTNESS			(BRT(255))
@@ -74,7 +76,21 @@ enum {
 	MAX_IRC_PARAM,
 };
 
+enum brightness_control_type {
+	BRIGHTNESS_CONTROL_TYPE_GAMMA_MODE1,
+	BRIGHTNESS_CONTROL_TYPE_GAMMA_MODE2,
+	MAX_BRIGHTNESS_CONTROL_TYPE
+};
+
+enum dim_type {
+	DIM_TYPE_STR_TABLE,
+	DIM_TYPE_STR_FLASH,
+	DIM_TYPE_STR_GM2,
+	MAX_DIM_TYPE_STR,
+};
+
 struct brightness_table {
+	int control_type;
 	/* brightness to step count between brightness */
 	u32 *step_cnt;
 	u32 sz_step_cnt;
@@ -103,6 +119,10 @@ struct brightness_table {
 	u32 sz_ui_lum;
 	u32 sz_hbm_lum;
 	u32 sz_ext_hbm_lum;
+
+	u32 sz_panel_dim_ui_lum;
+	u32 sz_panel_dim_hbm_lum;
+	u32 sz_panel_dim_ext_hbm_lum;
 	u32 vtotal;
 };
 
@@ -114,7 +134,9 @@ enum panel_bl_hw_type {
 
 enum panel_bl_subdev_type {
 	PANEL_BL_SUBDEV_TYPE_DISP,
+#ifdef CONFIG_SUPPORT_HMD
 	PANEL_BL_SUBDEV_TYPE_HMD,
+#endif
 #ifdef CONFIG_SUPPORT_AOD_BL
 	PANEL_BL_SUBDEV_TYPE_AOD,
 #endif
@@ -133,10 +155,11 @@ struct panel_bl_properties {
 	int acl_opr;
 	int aor_ratio;
 	int smooth_transition;
-#ifdef CONFIG_SUPPORT_INDISPLAY
-	int indisplay_target_br;
-	int indisplay_actual_br;
-	bool indisplay_en;
+#ifdef CONFIG_SUPPORT_MASK_LAYER
+	int mask_layer_br_target;
+	int mask_layer_br_actual;
+	int mask_layer_br_hook;
+	ktime_t last_br_update_time;
 #endif
 };
 
@@ -174,6 +197,7 @@ int panel_bl_probe(struct panel_device *panel);
 int panel_bl_set_brightness(struct panel_bl_device *panel_bl, int id, int force);
 int panel_update_brightness(struct panel_device *panel);
 int get_max_brightness(struct panel_bl_device *panel_bl);
+int get_brightness_pac_step_by_subdev_id(struct panel_bl_device *panel_bl, int id, int brightness);
 int get_brightness_pac_step(struct panel_bl_device *panel_bl, int brightness);
 int get_brightness_of_brt_to_step(struct panel_bl_device *panel_bl, int id, int brightness);
 int get_actual_brightness(struct panel_bl_device *panel_bl, int brightness);

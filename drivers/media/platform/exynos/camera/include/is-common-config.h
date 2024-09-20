@@ -348,7 +348,7 @@ extern int debug_sensor;
 	mdbg_common(debug_video, "[%d][I%dT:V]", fmt, ((struct is_device_ischain *)this->device)->instance, GET_IXT_ID(this->video), ##args)
 
 #define mdbgv_ixg(fmt, this, args...) \
-	mdbg_common(debug_video, "[%d][I%dG:V]", fmt, ((struct is_device_ischain *)this->device)->instance, GET_IXG_ID(this->video), ##args)
+	mdbg_common(debug_video, "[%d][I%dG:V]", fmt, ((struct is_device_ischain *)this->device)->instance, GET_IXG_ID(this->video), ##args)	
 
 #define mdbgv_ixv(fmt, this, args...) \
 	mdbg_common(debug_video, "[%d][I%dV:V]", fmt, ((struct is_device_ischain *)this->device)->instance, GET_IXV_ID(this->video), ##args)

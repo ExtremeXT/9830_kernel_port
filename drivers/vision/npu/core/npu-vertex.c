@@ -33,7 +33,7 @@
 #include "npu-device.h"
 #include "npu-session.h"
 #include "npu-common.h"
-#include "npu-profile.h"
+#include "npu-scheduler.h"
 
 const struct vision_file_ops npu_vertex_fops;
 const struct vertex_ioctl_ops npu_vertex_ioctl_ops;
@@ -139,9 +139,13 @@ static int npu_vertex_s_graph(struct file *file, struct vs4l_graph *sinfo)
 	}
 
 	vctx->state |= BIT(NPU_VERTEX_GRAPH);
+	mutex_unlock(lock);
+	profile_point1(PROBE_ID_DD_NW_VS4L_RET, 0, 0, NPU_NW_CMD_LOAD);
+	return ret;
 
 p_err:
 	mutex_unlock(lock);
+	vctx->state &= (~BIT(NPU_VERTEX_GRAPH));
 	profile_point1(PROBE_ID_DD_NW_VS4L_RET, 0, 0, NPU_NW_CMD_LOAD);
 	return ret;
 }
@@ -154,6 +158,10 @@ static int npu_vertex_open(struct file *file)
 	struct mutex *lock = &vertex->lock;
 	struct npu_vertex_ctx *vctx = NULL;
 	struct npu_session *session = NULL;
+	struct npu_scheduler_info *info;
+
+	info = npu_scheduler_get_info();
+	npu_scheduler_boost_on(info);
 
 	/* check npu_device emergency error */
 	ret = check_emergency(device);
@@ -175,6 +183,7 @@ static int npu_vertex_open(struct file *file)
 	}
 	if (ret) {
 		npu_err("fail(%d) in vref_get", ret);
+		__vref_put(&vertex->open_cnt);
 		goto ErrorExit;
 	}
 
@@ -184,6 +193,9 @@ static int npu_vertex_open(struct file *file)
 		__vref_put(&vertex->open_cnt);
 		goto ErrorExit;
 	}
+
+	/* set max npu core for the SOC */
+	session->sched_param.max_npu_core = device->system.max_npu_core;
 
 	vctx			= &session->vctx;
 	vctx->id		= session->uid;
@@ -207,6 +219,7 @@ ErrorExit:
 		npu_info("%s: (%d)\n",  __func__, ret);
 
 	mutex_unlock(lock);
+	npu_scheduler_boost_off_timeout(info, NPU_SCHEDULER_BOOST_TIMEOUT);
 
 	if (ret < -1000) {
 		/* Return value is not acceptable as open's result */
@@ -362,6 +375,10 @@ static int npu_vertex_s_format(struct file *file, struct vs4l_format_list *flist
 	struct npu_queue *queue = &vctx->queue;
 	struct mutex *lock = &vctx->lock;
 	u32 FM_cnt;
+	struct npu_scheduler_info *info;
+
+	info = npu_scheduler_get_info();
+	npu_scheduler_boost_on(info);
 
 	/* check npu_device emergency error */
 	ret = check_emergency_vctx(vctx);
@@ -373,7 +390,7 @@ static int npu_vertex_s_format(struct file *file, struct vs4l_format_list *flist
 		return -ERESTARTSYS;
 	}
 
-	if (!(vctx->state & (BIT(NPU_VERTEX_GRAPH) | BIT(NPU_VERTEX_FORMAT)))) {
+	if (!(vctx->state & BIT(NPU_VERTEX_GRAPH))) {
 		npu_ierr("invalid state(%X)\n", vctx, vctx->state);
 		ret = -EINVAL;
 		goto p_err;
@@ -420,10 +437,12 @@ static int npu_vertex_s_format(struct file *file, struct vs4l_format_list *flist
 
 	npu_iinfo("%s():%d\n", vctx, __func__, ret);
 	mutex_unlock(lock);
+	npu_scheduler_boost_off_timeout(info, NPU_SCHEDULER_BOOST_TIMEOUT);
 	return ret;
 p_err:
 	vctx->state &= (~BIT(NPU_VERTEX_GRAPH));
 	mutex_unlock(lock);
+	npu_scheduler_boost_off_timeout(info, NPU_SCHEDULER_BOOST_TIMEOUT);
 	return ret;
 }
 
@@ -453,6 +472,41 @@ static int npu_vertex_s_param(struct file *file, struct vs4l_param_list *plist)
 	ret = npu_session_param(session, plist);
 	if (ret) {
 		npu_err("fail(%d) in npu_session_param\n", ret);
+		goto p_err;
+	}
+
+p_err:
+	npu_idbg("%s: (%d)\n", vctx, __func__, ret);
+	mutex_unlock(lock);
+	return ret;
+}
+
+static int npu_vertex_sched_param(struct file *file, struct vs4l_sched_param *param)
+{
+	int ret = 0;
+	struct npu_vertex_ctx *vctx = file->private_data;
+	struct npu_session *session = container_of(vctx, struct npu_session, vctx);
+	struct mutex *lock = &vctx->lock;
+
+	/* check npu_device emergency error */
+	ret = check_emergency_vctx(vctx);
+	if (ret)
+		return ret;
+
+	if (mutex_lock_interruptible(lock)) {
+		npu_ierr("fail in mutex_lock_interruptible\n", vctx);
+		return -ERESTARTSYS;
+	}
+
+	if (!(vctx->state & BIT(NPU_VERTEX_OPEN))) {
+		npu_ierr("invalid state(%X)\n", vctx, vctx->state);
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	ret = npu_session_nw_sched_param(session, param);
+	if (ret) {
+		npu_err("fail(%d) in npu_vertex_sched_param\n", ret);
 		goto p_err;
 	}
 
@@ -666,6 +720,10 @@ static int npu_vertex_streamon(struct file *file)
 	}
 
 	ret = npu_session_NW_CMD_STREAMON(session);
+	if (ret) {
+		npu_ierr("fail(%d) in npu_session_NW_CMD_STREAMON\n", vctx, ret);
+		goto p_err;
+	}
 	ret = chk_nw_result_no_error(session);
 	if (ret == NPU_ERR_NO_ERROR) {
 		vctx->state |= BIT(NPU_VERTEX_STREAMON);
@@ -705,6 +763,13 @@ static int npu_vertex_streamoff(struct file *file)
 		goto p_err;
 	}
 
+	if (!(vctx->state & BIT(NPU_VERTEX_FORMAT))
+	    || !(vctx->state & BIT(NPU_VERTEX_GRAPH))) {
+		npu_ierr("invalid state(%X)\n", vctx, vctx->state);
+		ret = -EINVAL;
+		goto p_err;
+	}
+
 	ret = npu_queue_streamoff(queue);
 	if (ret) {
 		npu_ierr("fail(%d) in npu_queue_streamoff\n", vctx, ret);
@@ -712,6 +777,10 @@ static int npu_vertex_streamoff(struct file *file)
 	}
 
 	ret = npu_session_NW_CMD_STREAMOFF(session);
+	if (ret) {
+		npu_ierr("fail(%d) in npu_session_NW_CMD_STREAMOFF\n", vctx, ret);
+		goto p_err;
+	}
 	ret = chk_nw_result_no_error(session);
 	if (ret == NPU_ERR_NO_ERROR) {
 		vctx->state |= BIT(NPU_VERTEX_STREAMOFF);
@@ -738,6 +807,48 @@ p_err:
 	return ret;
 }
 
+static int npu_vertex_profileon(struct file *file, struct vs4l_profiler *phead)
+{
+	int ret = 0;
+	struct npu_vertex_ctx *vctx = file->private_data;
+	//struct npu_vertex *vertex = vctx->vertex;
+	struct mutex *lock = &vctx->lock;
+
+	/* check npu_device emergency error */
+	ret = check_emergency_vctx(vctx);
+	if (ret)
+		return ret;
+
+	if (mutex_lock_interruptible(lock)) {
+		npu_ierr("fail in mutex_lock_interruptible\n", vctx);
+		return -ERESTARTSYS;
+	}
+	// allocate vision buffer
+	mutex_unlock(lock);
+	return 0;
+}
+
+static int npu_vertex_profileoff(struct file *file, struct vs4l_profiler *phead)
+{
+	int ret = 0;
+	struct npu_vertex_ctx *vctx = file->private_data;
+	//struct npu_vertex *vertex = vctx->vertex;
+	struct mutex *lock = &vctx->lock;
+
+	/* check npu_device emergency error */
+	ret = check_emergency_vctx(vctx);
+	if (ret)
+		return ret;
+
+	if (mutex_lock_interruptible(lock)) {
+		npu_ierr("fail in mutex_lock_interruptible\n", vctx);
+		return -ERESTARTSYS;
+	}
+	// deallocate vision buffer & update
+	mutex_unlock(lock);
+	return 0;
+}
+
 static int __force_streamoff(struct file *file)
 {
 	int ret = 0;
@@ -758,6 +869,10 @@ static int __force_streamoff(struct file *file)
 	}
 
 	ret = npu_session_NW_CMD_STREAMOFF(session);
+	if (ret) {
+		npu_ierr("fail(%d) in npu_session_NW_CMD_STREAMOFF\n", vctx, ret);
+		goto p_err;
+	}
 
 	if (!npu_device_is_emergency_err(device)) {
 		ret = chk_nw_result_no_error(session);
@@ -794,10 +909,13 @@ const struct vertex_ioctl_ops npu_vertex_ioctl_ops = {
 	.vertexioc_s_format     = npu_vertex_s_format,
 	.vertexioc_s_param      = npu_vertex_s_param,
 	.vertexioc_s_ctrl       = npu_vertex_s_ctrl,
+	.vertexioc_sched_param	= npu_vertex_sched_param,
 	.vertexioc_qbuf         = npu_vertex_qbuf,
 	.vertexioc_dqbuf        = npu_vertex_dqbuf,
 	.vertexioc_prepare      = npu_vertex_prepare,
 	.vertexioc_unprepare    = npu_vertex_unprepare,
 	.vertexioc_streamon     = npu_vertex_streamon,
-	.vertexioc_streamoff    = npu_vertex_streamoff
+	.vertexioc_streamoff    = npu_vertex_streamoff,
+	.vertexioc_profileon    = npu_vertex_profileon,
+	.vertexioc_profileoff   = npu_vertex_profileoff
 };

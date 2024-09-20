@@ -91,7 +91,7 @@
 #define ENABLE_ORBMCH	1
 #define ENABLE_10BIT_MCSC
 #define ENABLE_DJAG_IN_MCSC
-/* #define USE_MCSC_STRIP_OUT_CROP */	/* use for MCSC stripe */
+#define USE_MCSC_STRIP_OUT_CROP				/* use for MCSC stripe */
 /* #define ENABLE_VRA */
 /* #define ENABLE_REPROCESSING_FD */
 /* #define ENABLE_VRA_CHANGE_SETFILE_PARSING */
@@ -104,7 +104,6 @@
 #define ENABLE_IRQ_MULTI_TARGET
 #define IS_ONLINE_CPU_MIN	4
 #define ENABLE_3AA_LIC_OFFSET	1
-#define IS_MAX_HW_3AA_SRAM		(13696)
 #define PDP_RDMA_MO_LIMIT       1
 #define PDP_RDMA_LINE_GAP	(0x1388)
 #define USE_RECOVER_I2C_TRANS	2
@@ -163,7 +162,6 @@
 #define DISABLE_CHECK_PERFRAME_FMT_SIZE
 #define IS_MAX_TASK		(40)
 
-//#define HW_TIMEOUT_PANIC_ENABLE
 #define OVERFLOW_PANIC_ENABLE_ISCHAIN
 #define OVERFLOW_PANIC_ENABLE_CSIS
 #if defined(CONFIG_ARM_EXYNOS_DEVFREQ)
@@ -216,22 +214,22 @@
 #ifdef SECURE_CAMERA_IRIS
 #undef SECURE_CAMERA_IRIS
 #endif
-#define SECURE_CAMERA_FACE	/* For face Detection and face authentication */
+/* #define SECURE_CAMERA_FACE */	/* For face Detection and face authentication */
 #define SECURE_CAMERA_CH		((1 << CSI_ID_C) | (1 << CSI_ID_E))
 #define SECURE_CAMERA_HEAP_ID		(11)
-#define SECURE_CAMERA_MEM_ADDR		(0xE1900000)	/* secure_camera_heap */
-#define SECURE_CAMERA_MEM_SIZE		(0x01EE0000)
-#define NON_SECURE_CAMERA_MEM_ADDR	(0x0)	/* camera_heap */
-#define NON_SECURE_CAMERA_MEM_SIZE	(0x0)
+#define SECURE_CAMERA_MEM_ADDR		(0xA1000000)	/* secure_camera_heap */
+#define SECURE_CAMERA_MEM_SIZE		(0x02B00000)
+#define NON_SECURE_CAMERA_MEM_ADDR	(0xA3B00000)	/* camera_heap */
+#define NON_SECURE_CAMERA_MEM_SIZE	(0x18C00000)
 
-#undef SECURE_CAMERA_FACE_SEQ_CHK	/* To check sequence before applying secure protection */
+#define SECURE_CAMERA_FACE_SEQ_CHK	/* To check sequence before applying secure protection */
 #endif
 
 #define QOS_INTCAM
 #define QOS_TNR
 #define USE_NEW_PER_FRAME_CONTROL
 
-/* #define ENABLE_HWACG_CONTROL */
+#define ENABLE_HWACG_CONTROL
 
 /* load calibation data */
 #define ENABLE_CAL_LOAD

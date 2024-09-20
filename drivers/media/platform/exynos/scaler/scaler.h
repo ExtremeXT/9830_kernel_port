@@ -27,6 +27,10 @@
 #include <media/v4l2-ctrls.h>
 #include <soc/samsung/exynos-itmon.h>
 
+#include "giant_mscl_uapi.h"
+
+struct sc_ext_dev;
+
 extern int sc_log_level;
 #define sc_dbg(fmt, args...)						\
 	do {								\
@@ -39,7 +43,7 @@ extern int sc_log_level;
 #define SC_MAX_DEVS		1
 #define SC_TIMEOUT		(2 * HZ)	/* 2 seconds */
 #define SC_WDT_CNT		3
-#define SC_MAX_CTRL_NUM		20
+#define SC_MAX_CTRL_NUM		11
 
 #define SC_MAX_PLANES		3
 /* Address index */
@@ -89,31 +93,19 @@ extern int sc_log_level;
 		(x == V4L2_PIX_FMT_YVU420) || (x == V4L2_PIX_FMT_NV12) || \
 		(x == V4L2_PIX_FMT_NV21) || (x == V4L2_PIX_FMT_NV12M) || \
 		(x == V4L2_PIX_FMT_NV21M) || (x == V4L2_PIX_FMT_YUV420M) || \
-		(x == V4L2_PIX_FMT_YVU420M) || \
-		(x == V4L2_PIX_FMT_NV12MT_16X16) || \
-		(x == V4L2_PIX_FMT_NV12N) || \
-		(x == V4L2_PIX_FMT_NV12N_RGB32) || \
-		(x == V4L2_PIX_FMT_NV12M_RGB32))
+		(x == V4L2_PIX_FMT_YVU420M) || (x == V4L2_PIX_FMT_NV12MT_16X16))
 #define sc_fmt_is_ayv12(x)	((x) == V4L2_PIX_FMT_YVU420)
 #define sc_fmt_is_s10bit_yuv(x)	((x == V4L2_PIX_FMT_NV12M_S10B) || \
 		(x == V4L2_PIX_FMT_NV12N_10B) || (x == V4L2_PIX_FMT_NV16M_S10B) || \
 		(x == V4L2_PIX_FMT_NV61M_S10B))
-#define sc_fmt_is_sbwc_lossy(x)	((x == V4L2_PIX_FMT_NV12M_SBWCL_8B) || \
-		(x == V4L2_PIX_FMT_NV12M_SBWCL_10B))
 #define sc_fmt_is_sbwc(x)	((x == V4L2_PIX_FMT_NV12M_SBWC_8B) || \
 		(x == V4L2_PIX_FMT_NV12M_SBWC_10B) || (x == V4L2_PIX_FMT_NV21M_SBWC_8B) || \
 		(x == V4L2_PIX_FMT_NV21M_SBWC_10B) || (x == V4L2_PIX_FMT_NV12N_SBWC_8B) || \
-		(x == V4L2_PIX_FMT_NV12N_SBWC_10B) || sc_fmt_is_sbwc_lossy(x))
+		(x == V4L2_PIX_FMT_NV12N_SBWC_10B))
 #define sc_dith_val(a, b, c)	((a << SCALER_DITH_R_SHIFT) |	\
 		(b << SCALER_DITH_G_SHIFT) | (c << SCALER_DITH_B_SHIFT))
 
 #define SCALER_VERSION(x, y, z) (((x) << 16) | ((y) << 8) | (z))
-
-/* SBWC lossy buffer size */
-#define SBWCL_BLOCK_COUNT(w, h)		(ALIGN(w, 32) * ALIGN(h, 4) / 128)
-#define SBWCL_Y_SIZE(w, h, r)		(SBWCL_BLOCK_COUNT(w, h) * 32 * (r))
-#define SBWCL_CBCR_SIZE(w, h, r)	(SBWCL_BLOCK_COUNT(w, h) * 16 * (r))
-#define SBWCL_STRIDE(w, r)		(ALIGN(w, 32) * (r))
 
 #define SC_FMT_PREMULTI_FLAG	10
 
@@ -123,36 +115,6 @@ extern int sc_log_level;
 #define V4L2_CID_2D_COLOR_FILL		(V4L2_CID_EXYNOS_BASE + 104)
 #define V4L2_CID_2D_DITH		(V4L2_CID_EXYNOS_BASE + 105)
 #define V4L2_CID_2D_FMT_PREMULTI	(V4L2_CID_EXYNOS_BASE + 106)
-
-/* for scaler blend set format */
-#define V4L2_CID_2D_SRC_BLEND_SET_H_POS         (V4L2_CID_EXYNOS_BASE + 116)
-#define V4L2_CID_2D_SRC_BLEND_SET_V_POS         (V4L2_CID_EXYNOS_BASE + 117)
-#define V4L2_CID_2D_SRC_BLEND_FMT_PREMULTI      (V4L2_CID_EXYNOS_BASE + 118)
-#define V4L2_CID_2D_SRC_BLEND_SET_WIDTH         (V4L2_CID_EXYNOS_BASE + 119)
-#define V4L2_CID_2D_SRC_BLEND_SET_HEIGHT        (V4L2_CID_EXYNOS_BASE + 120)
-/* for scaler : blending operation */
-/* 12  Y/CbCr 4:2:0 RGBA  */
-#define V4L2_PIX_FMT_NV12M_RGB32    v4l2_fourcc('N', 'V', 'R', 'G')
-/* 12  Y/CbCr 4:2:0 ARGB  */
-#define V4L2_PIX_FMT_NV12M_BGR32    v4l2_fourcc('N', 'V', 'B', 'G')
-/* 12  Y/CbCr 4:2:0 RGB565  */
-#define V4L2_PIX_FMT_NV12M_RGB565   v4l2_fourcc('N', 'V', 'R', '6')
-/* 12  Y/CbCr 4:2:0 RGB444  */
-#define V4L2_PIX_FMT_NV12M_RGB444   v4l2_fourcc('N', 'V', 'R', '4')
-/* 12  Y/CbCr 4:2:0 RGB555X  */
-#define V4L2_PIX_FMT_NV12M_RGB555X   v4l2_fourcc('N', 'V', 'R', '5')
-/* 12  Y/CbCr 4:2:0 16x16 macroblocks */
-#define V4L2_PIX_FMT_NV12MT_16X16_RGB32 v4l2_fourcc('V', 'M', 'R', 'G')
-/* 12  Y/CbCr 4:2:0 RGBA */
-#define V4L2_PIX_FMT_NV12_RGB32 v4l2_fourcc('N', 'V', '1', 'R')
-/* 12  Y/CbCr 4:2:0 RGBA */
-#define V4L2_PIX_FMT_NV12N_RGB32   v4l2_fourcc('N', 'N', '1', 'R')
-/* 21  Y/CbCr 4:2:0 RGBA  */
-#define V4L2_PIX_FMT_NV21M_RGB32   v4l2_fourcc('V', 'N', 'R', 'G')
-/* 21  Y/CbCr 4:2:0 ARGB  */
-#define V4L2_PIX_FMT_NV21M_BGR32   v4l2_fourcc('V', 'N', 'B', 'G')
-/* 21  Y/CbCr 4:2:0 RGBA */
-#define V4L2_PIX_FMT_NV21_RGB32    v4l2_fourcc('V', 'N', '1', 'R')
 
 /* for performance */
 #define SC_CID_FRAMERATE		(V4L2_CID_EXYNOS_BASE + 110)
@@ -295,7 +257,6 @@ struct sc_variant {
 	u8 initphase:1;
 	u8 pixfmt_10bit:1;
 	u8 extra_buf:1;
-	u8 is_bilinear:1;
 };
 
 /*
@@ -320,8 +281,6 @@ struct sc_fmt {
 	u8	v_shift:1;
 	u8	is_rgb:1;
 	u8	cspan:1;
-	u8	is_alphablend_fmt:1;
-	u8	alphablend_plane_num:2;
 };
 
 enum {
@@ -351,7 +310,6 @@ struct sc_frame {
 
 	struct sc_addr			addr;
 	__u32			bytesused[SC_MAX_PLANES];
-	__u8			byte32num;
 	bool			pre_multi;
 };
 
@@ -414,26 +372,10 @@ struct sc_dnoise_filter {
 	u32			h;
 };
 
-struct sc_src_blend_cfg {
-	bool pre_multi;
-	u8 blend_src_color_byte_swap;
-	u8 blend_src_color_format;
-	u32 blend_src_stride;
-	u32 blend_src_h_pos;
-	u32 blend_src_v_pos;
-	u32 blend_src_width;
-	u32 blend_src_height;
-	u32 blend_src_crop_width;
-	u32 blend_src_crop_height;
-};
-
 struct sc_qos_table {
 	unsigned int freq_mif;
 	unsigned int freq_int;
-	union {
-		unsigned int data_size;
-		unsigned int freq_mscl;
-	};
+	unsigned int data_size;
 };
 
 struct sc_ppc_table {
@@ -470,6 +412,7 @@ struct sc_dev {
 	const struct sc_variant		*variant;
 	struct sc_m2m_device		m2m;
 	struct m2m1shot_device		*m21dev;
+	struct sc_ext_dev		*xdev;
 	struct clk			*aclk;
 	struct clk			*pclk;
 	struct clk			*clk_chld;
@@ -501,7 +444,8 @@ struct sc_dev {
 
 enum SC_CONTEXT_TYPE {
 	SC_CTX_V4L2_TYPE,
-	SC_CTX_M2M1SHOT_TYPE
+	SC_CTX_M2M1SHOT_TYPE,
+	SC_CTX_EXT_TYPE
 };
 
 struct sc_qos_request {
@@ -538,7 +482,6 @@ struct sc_ctx {
 		struct m2m1shot_context	*m21_ctx;
 	};
 	struct sc_frame			s_frame;
-	struct sc_frame			src_blend_frame;
 	struct sc_int_frame		*i_frame;
 	struct sc_frame			d_frame;
 	struct v4l2_ctrl_handler	ctrl_handler;
@@ -562,7 +505,6 @@ struct sc_ctx {
 	struct sc_init_phase		init_phase;
 	struct sc_dnoise_filter		dnoise_ft;
 	struct delayed_work		qos_work;
-	struct sc_src_blend_cfg		src_blend_cfg;
 	struct sc_qos_request		pm_qos;
 	struct mutex			pm_qos_lock;
 	int				pm_qos_lv;
@@ -588,11 +530,11 @@ static inline struct sc_frame *ctx_get_frame(struct sc_ctx *ctx,
 	return frame;
 }
 
-int sc_hwset_src_image_format(struct sc_dev *sc, struct sc_frame *frame);
-int sc_hwset_dst_image_format(struct sc_dev *sc, struct sc_frame *frame);
+int sc_hwset_src_image_format(struct sc_dev *sc, const struct sc_fmt *);
+int sc_hwset_dst_image_format(struct sc_dev *sc, const struct sc_fmt *);
 void sc_hwset_pre_multi_format(struct sc_dev *sc, bool src, bool dst);
 void sc_hwset_blend(struct sc_dev *sc, enum sc_blend_op bl_op, bool pre_multi,
-		unsigned char g_alpha, struct sc_src_blend_cfg *src_blend_cfg);
+		unsigned char g_alpha);
 void sc_hwset_color_fill(struct sc_dev *sc, unsigned int val);
 void sc_hwset_dith(struct sc_dev *sc, unsigned int val);
 void sc_hwset_csc_coef(struct sc_dev *sc, enum sc_csc_idx idx,
@@ -604,12 +546,20 @@ void sc_hwset_src_crop(struct sc_dev *sc, struct v4l2_rect *rect,
 		       unsigned int pre_h_ratio, unsigned int pre_v_ratio);
 void sc_hwset_dst_crop(struct sc_dev *sc, struct v4l2_rect *rect);
 void sc_hwset_src_addr(struct sc_dev *sc, struct sc_frame *frame);
-void sc_hwset_blend_src_addr(struct sc_dev *sc, struct sc_frame *frame);
 void sc_hwset_dst_addr(struct sc_dev *sc, struct sc_frame *frame);
 void sc_hwset_hcoef(struct sc_dev *sc, unsigned int coef);
 void sc_hwset_vcoef(struct sc_dev *sc, unsigned int coef);
 
 void sc_hwregs_dump(struct sc_dev *sc);
 void sc_ctx_dump(struct sc_ctx *ctx);
+void sc_print_dbg_snapshot(struct sc_ctx *ctx);
+
+/* Added for scaler-ext */
+struct sc_ext_dev *create_scaler_ext_device(struct device *dev);
+void destroy_scaler_ext_device(struct sc_ext_dev *ext_dev);
+int sc_ext_device_run(struct sc_ctx *ctx);
+int sc_ext_run_job(struct sc_ctx *ctx);
+void sc_ext_current_task_finish(struct sc_ext_dev *ext_dev, bool success);
+bool sc_ext_job_finished(struct sc_ctx *ctx);
 
 #endif /* SCALER__H_ */

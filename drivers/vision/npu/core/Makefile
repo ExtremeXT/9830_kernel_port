@@ -4,11 +4,13 @@ obj-y					+= npu-util-msgidgen.o
 obj-y					+= npu-util-regs.o
 obj-y					+= npu-util-llq.o
 obj-y					+= npu-util-common.o
+obj-y					+= npu-llc.o
 obj-y					+= npu-log.o
 obj-y					+= npu-ver.o
 obj-y					+= npu-debug.o
-obj-y					+= npu-profile.o
 obj-y					+= npu-device.o
+obj-y					+= npu-core.o
+obj-y					+= npu-clock.o
 obj-y					+= npu-vertex.o
 obj-y					+= npu-binary.o
 obj-y					+= npu-queue.o
@@ -27,6 +29,11 @@ obj-$(CONFIG_NPU_GOLDEN_MATCH)	        += npu-golden.o
 obj-$(CONFIG_NPU_GOLDEN_MATCH)	        += npu-util-statekeeper.o
 obj-$(CONFIG_NPU_GOLDEN_MATCH)	        += npu-util-comparator.o
 obj-$(CONFIG_FIRMWARE_SRAM_DUMP_DEBUGFS)	        += npu-util-memdump.o
+obj-$(CONFIG_NPU_SCHEDULER_GOVERNOR)	+= npu-scheduler.o npu-scheduler-governor.o
+obj-$(CONFIG_NPU_GOVERNOR_SIMPLE_EXYNOS)	+= npu-scheduler-governor-simple-exynos.o
+obj-$(CONFIG_NPU_GOVERNOR_EXYNOS_INTERACTIVE)	+= npu-scheduler-governor-exynos-interactive.o
+obj-$(CONFIG_NPU_GOVERNOR_USERSPACE)	+= npu-scheduler-governor-userspace.o
+obj-$(CONFIG_NPU_USE_SPROFILER)		+= npu-profile.o
 
 obj-y					+= generated/
 

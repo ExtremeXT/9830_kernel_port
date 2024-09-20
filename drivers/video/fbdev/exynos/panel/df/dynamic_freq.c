@@ -1,6 +1,7 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) Samsung Electronics Co., Ltd.
+ * linux/drivers/video/fbdev/exynos/panel/dynamic_freq.h
+ *
+ * Copyright (c) 2018 Samsung Electronics
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -10,26 +11,34 @@
 #include "../panel.h"
 #include "../panel_drv.h"
 #include "dynamic_freq.h"
+#ifdef CONFIG_EXYNOS_DPU30_DUAL
+#include "../../dpu30_dual/panels/exynos_panel.h"
+#else
 #include "../../dpu30/panels/exynos_panel.h"
-
+#endif
 #include <linux/dev_ril_bridge.h>
 
-static int search_dynamic_freq_idx(struct panel_device *panel, u32 band_idx, int freq)
+#ifdef PANEL_PR_TAG
+#undef PANEL_PR_TAG
+#define PANEL_PR_TAG	"dynfq"
+#endif
+
+static struct dynamic_freq_range *search_dynamic_freq_idx(struct panel_device *panel, int band_idx, int freq)
 {
 	int i, ret = 0;
 	int min, max, array_idx;
 	struct df_freq_tbl_info *df_tbl;
-	struct dynamic_freq_range *array;
+	struct dynamic_freq_range *array = NULL;
 
 	if (band_idx >= FREQ_RANGE_MAX) {
-		panel_err("[DYN_FREQ]:ERR:%s: exceed max band idx : %u\n", __func__, band_idx);
+		panel_err("exceed max band idx : %d\n", band_idx);
 		ret = -1;
 		goto search_exit;
 	}
 
 	df_tbl = &panel->df_freq_tbl[band_idx];
 	if (df_tbl == NULL) {
-		panel_err("[DYN_FREQ]:ERR:%s:failed to find band_idx : %u\n", __func__, band_idx);
+		panel_err("failed to find band_idx : %d\n", band_idx);
 		ret = -1;
 		goto search_exit;
 	}
@@ -37,9 +46,9 @@ static int search_dynamic_freq_idx(struct panel_device *panel, u32 band_idx, int
 
 	if (array_idx == 1) {
 		array = &df_tbl->array[0];
-		panel_info("[DYN_FREQ]:INFO:%s:Found adap_freq idx(0) : %d\n",
-			__func__, array->freq_idx);
-		ret = array->freq_idx;
+		panel_info("Found adap_freq idx(0): %d, osc: %d\n",
+				array->freq_idx, array->ddi_osc);
+		return array;
 	} else {
 		for (i = 0; i < array_idx; i++) {
 			array = &df_tbl->array[i];
@@ -49,20 +58,50 @@ static int search_dynamic_freq_idx(struct panel_device *panel, u32 band_idx, int
 			max = (int)freq - array->max;
 
 			if ((min >= 0) && (max <= 0)) {
-				panel_info("[DYN_FREQ]:INFO:%s:Found adap_freq idx : %d\n",
-					__func__, array->freq_idx);
-				ret = array->freq_idx;
-				break;
+				panel_info("Found adap_freq idx: %d, osc: %d\n",
+						array->freq_idx, array->ddi_osc);
+				return array;
 			}
 		}
 
 		if (i >= array_idx) {
-			panel_err("[DYN_FREQ]:ERR:%s:Can't found freq idx\n", __func__);
-			ret = -1;
+			panel_err("can't found freq idx\n");
+			array = NULL;
 			goto search_exit;
 		}
 	}
 search_exit:
+	return array;
+}
+
+int set_dynamic_freq_ffc(struct panel_device *panel)
+{
+	int ret = 0;
+	struct panel_state *state = &panel->state;
+	struct df_status_info *status = &panel->df_status;
+
+	if (state->connect_panel == PANEL_DISCONNECT) {
+		panel_warn("panel no use\n");
+		return -ENODEV;
+	}
+
+	if (state->cur_state == PANEL_STATE_OFF ||
+		state->cur_state == PANEL_STATE_ON || !IS_PANEL_ACTIVE(panel))
+		return 0;
+
+	mutex_lock(&panel->op_lock);
+
+	if (status->target_df != status->ffc_df) {
+		status->ffc_df = status->target_df;
+		ret = panel_do_seqtbl_by_index_nolock(panel, PANEL_DYNAMIC_FFC_SEQ);
+		if (unlikely(ret < 0)) {
+			panel_err("failed to set PANEL_FFC_SEQ\n");
+			goto exit_changed;
+		}
+	}
+
+exit_changed:
+	mutex_unlock(&panel->op_lock);
 	return ret;
 }
 
@@ -73,7 +112,7 @@ int set_dynamic_freq_ffc_off(struct panel_device *panel)
 	struct df_status_info *status = &panel->df_status;
 
 	if (state->connect_panel == PANEL_DISCONNECT) {
-		panel_warn("PANEL:WARN:%s:panel no use\n", __func__);
+		panel_warn("panel no use\n");
 		return -ENODEV;
 	}
 
@@ -81,15 +120,18 @@ int set_dynamic_freq_ffc_off(struct panel_device *panel)
 		state->cur_state == PANEL_STATE_ON || !IS_PANEL_ACTIVE(panel))
 		return 0;
 
+	if (!check_seqtbl_exist(&panel->panel_data, PANEL_DYNAMIC_FFC_OFF_SEQ)) {
+		panel_dbg("no PANEL_DYNAMIC_FFC_OFF_SEQ\n");
+		return 0;
+	}
+
 	mutex_lock(&panel->op_lock);
 
 	if (status->target_df != status->ffc_df) {
-
-		status->ffc_df = MAX_DYNAMIC_FREQ;
-
+		status->ffc_df = MAX_DYNAMIC_FREQ; /* off : make abnormal state */
 		ret = panel_do_seqtbl_by_index_nolock(panel, PANEL_DYNAMIC_FFC_OFF_SEQ);
 		if (unlikely(ret < 0)) {
-			panel_err("[DYN_FREQ]:ERR:%s:failed to set PANEL_FFC_OFF_SEQ\n", __func__);
+			panel_err("failed to set PANEL_FFC_OFF_SEQ\n", __func__);
 			goto exit_changed;
 		}
 	}
@@ -98,61 +140,27 @@ exit_changed:
 	mutex_unlock(&panel->op_lock);
 	return ret;
 }
-
-int set_dynamic_freq_ffc(struct panel_device *panel)
-{
-	int ret = 0;
-	struct panel_state *state = &panel->state;
-	struct df_status_info *status = &panel->df_status;
-
-	if (state->connect_panel == PANEL_DISCONNECT) {
-		panel_warn("PANEL:WARN:%s:panel no use\n", __func__);
-		return -ENODEV;
-	}
-
-	if (state->cur_state == PANEL_STATE_OFF ||
-		state->cur_state == PANEL_STATE_ON || !IS_PANEL_ACTIVE(panel))
-		return 0;
-
-	mutex_lock(&panel->op_lock);
-
-	if (status->target_df != status->ffc_df) {
-
-		status->ffc_df = status->target_df;
-
-		ret = panel_do_seqtbl_by_index_nolock(panel, PANEL_DYNAMIC_FFC_SEQ);
-		if (unlikely(ret < 0)) {
-			panel_err("[DYN_FREQ]:ERR:%s:failed to set PANEL_FFC_SEQ\n", __func__);
-			goto exit_changed;
-		}
-	}
-
-exit_changed:
-	mutex_unlock(&panel->op_lock);
-	return ret;
-}
-
 
 int dynamic_freq_update(struct panel_device *panel, int idx)
 {
-
 	struct df_setting_info *df_setting;
 	struct df_status_info *status = &panel->df_status;
 	struct exynos_panel_info *lcd_info;
 
 	lcd_info = panel->mipi_drv.get_lcd_info(panel->dsi_id);
 	if (!lcd_info) {
-		panel_err("%s failed to get lcd_info\n", __func__);
+		panel_err("failed to get lcd_info\n");
 		return -EINVAL;
 	}
 
-	if (idx >= lcd_info->df_set_info.df_cnt) {
-		panel_err("[DYN_FREQ]:ERR:%s:invalid idx : %d\n", __func__, idx);
+	if ((idx >= lcd_info->df_set_info.df_cnt) || (idx < 0)) {
+		panel_err("invalid idx : %d\n", idx);
 		return -EINVAL;
 	}
+
 	df_setting = &lcd_info->df_set_info.setting_info[idx];
-	panel_info("[DYN_FREQ]:INFO:%s:IDX : %d Setting HS : %d\n",
-		__func__, idx, df_setting->hs);
+	panel_info("IDX : %d Setting HS : %d\n",
+			idx, df_setting->hs);
 
 	status->request_df = idx;
 	status->context = DF_CONTEXT_RIL;
@@ -160,65 +168,69 @@ int dynamic_freq_update(struct panel_device *panel, int idx)
 	return 0;
 }
 
-
 static int df_notifier(struct notifier_block *self, unsigned long size, void *buf)
 {
-	int df_idx;
 	struct panel_device *panel;
 	struct dev_ril_bridge_msg *msg;
 	struct ril_noti_info *ch_info;
 	struct df_status_info *dyn_status;
+	struct dynamic_freq_range *freq_info;
 
 	panel = container_of(self, struct panel_device, df_noti);
 	if (panel == NULL) {
-		panel_err("[DYN_FREQ]:ERR:%s:panel is null\n", __func__);
+		panel_err("panel is null\n");
 		goto exit_notifier;
 	}
 
 	dyn_status = &panel->df_status;
 	if (dyn_status == NULL) {
-		panel_err("[DYN_FREQ]:ERR:%s:dymanic status is null\n", __func__);
+		panel_err("dymanic status is null\n");
 		goto exit_notifier;
 	};
 
 	if (!dyn_status->enabled) {
-		panel_err("[DYN_FREQ]:ERR:%s:df is disabled\n", __func__);
+		panel_err("df is disabled\n");
 		goto exit_notifier;
 	}
 
 	msg = (struct dev_ril_bridge_msg *)buf;
 	if (msg == NULL) {
-		panel_err("[DYN_FREQ]:ERR:%s:msg is null\n", __func__);
+		panel_err("msg is null\n");
 		goto exit_notifier;
 	}
 
 	if (msg->dev_id == IPC_SYSTEM_CP_CHANNEL_INFO &&
 		msg->data_len == sizeof(struct ril_noti_info)) {
-
 		ch_info = (struct ril_noti_info *)msg->data;
 		if (ch_info == NULL) {
-			panel_err("[DYN_FREQ]:ERR:%s:ch_info is null\n", __func__);
+			panel_err("ch_info is null\n");
 			goto exit_notifier;
 		}
 
-		panel_info("[DYN_FREQ]:INFO:%s: (b:%u, c:%d)\n",
-			__func__, ch_info->band, ch_info->channel);
+		panel_info("(b:%d, c:%d)\n",
+				ch_info->band, ch_info->channel);
 
-		df_idx = search_dynamic_freq_idx(panel, ch_info->band, ch_info->channel);
-		if (df_idx < 0) {
-			panel_info("[DYN_FREQ]:ERR:%s:failed to search freq idx\n", __func__);
+		freq_info = search_dynamic_freq_idx(panel, ch_info->band, ch_info->channel);
+		if (freq_info == NULL) {
+			panel_info("failed to search freq idx\n");
 			goto exit_notifier;
 		}
+#if 0
+		if (freq_info->ddi_osc != 0)
+			panel_info("not support dual osc\n");
+#endif
+		if (freq_info->ddi_osc != dyn_status->current_ddi_osc) {
+			panel_info("ddi osc was changed %d -> %d\n",
+				dyn_status->current_ddi_osc, freq_info->ddi_osc);
+			dyn_status->request_ddi_osc = freq_info->ddi_osc;
+		}
 
-		if (df_idx != dyn_status->current_df)
-			dynamic_freq_update(panel, df_idx);
-
+		if (freq_info->freq_idx != dyn_status->current_df)
+			dynamic_freq_update(panel, freq_info->freq_idx);
 	}
 exit_notifier:
 	return 0;
 }
-
-
 
 static int init_dynamic_freq_status(struct panel_device *panel)
 {
@@ -230,13 +242,13 @@ static int init_dynamic_freq_status(struct panel_device *panel)
 
 	lcd_info = panel->mipi_drv.get_lcd_info(panel->dsi_id);
 	if (!lcd_info) {
-		panel_err("%s failed to get lcd_info\n", __func__);
+		panel_err("failed to get lcd_info\n");
 		return -EINVAL;
 	}
 
 	status = &panel->df_status;
 	if (status == NULL) {
-		panel_err("[DYN_FREQ]:ERR:%s:dynamic status is null\n", __func__);
+		panel_err("dynamic status is null\n");
 		ret = -EINVAL;
 		goto init_exit;
 	}
@@ -256,7 +268,6 @@ init_exit:
 	return ret;
 }
 
-
 static int parse_dynamic_freq(struct panel_device *panel)
 {
 	int ret = 0, i, cnt = 0;
@@ -270,33 +281,33 @@ static int parse_dynamic_freq(struct panel_device *panel)
 
 	lcd_info = panel->mipi_drv.get_lcd_info(panel->dsi_id);
 	if (!lcd_info) {
-		panel_err("%s failed to get lcd_info\n", __func__);
+		panel_err("failed to get lcd_info\n");
 		return -EINVAL;
 	}
 
 	df = &lcd_info->df_set_info;
 
 	if (node == NULL) {
-		panel_err("[DYN_FREQ]:ERR:%s:ddi node is NULL\n", __func__);
+		panel_err("ddi node is NULL\n");
 		node = of_parse_phandle(dev->of_node, "ddi_info", 0);
 	}
 
 	cnt = of_property_count_u32_elems(node, "dynamic_freq");
 	if (cnt  <= 0) {
-		panel_warn("[DYN_FREQ]:WARN:%s:Can't found dynamic freq info\n", __func__);
+		panel_warn("can't found dynamic freq info\n");
 		return -EINVAL;
 	}
 
 	if (cnt > MAX_DYNAMIC_FREQ) {
-		panel_info("[DYN_FREQ]:ERR:%s:freq cnt exceed max freq num (%d:%d)\n",
-			__func__, cnt, MAX_DYNAMIC_FREQ);
+		panel_info("freq cnt exceed max freq num (%d:%d)\n",
+				cnt, MAX_DYNAMIC_FREQ);
 		cnt = MAX_DYNAMIC_FREQ;
 	}
 	df->df_cnt = cnt;
 
 	of_property_read_u32(node, "timing,dsi-hs-clk", &dft_hs);
-	panel_info("[DYN_FREQ]:INFO:%s default hs clock(%d)\n", __func__, dft_hs);
-	panel_info("[DYN_FREQ]:INFO:%s:FREQ CNT : %d\n", __func__, cnt);
+	panel_info("default hs clock(%d)\n", dft_hs);
+	panel_info("FREQ CNT : %d\n", cnt);
 
 	for (i = 0; i < cnt; i++) {
 		freq_node = of_parse_phandle(node, "dynamic_freq", i);
@@ -305,37 +316,40 @@ static int parse_dynamic_freq(struct panel_device *panel)
 		of_property_read_u32(freq_node, "hs-clk", &set_info->hs);
 		if (dft_hs == set_info->hs) {
 			df->dft_index = i;
-			panel_info("[DYN_FREQ]:INFO:%s:found default hs idx  : %d\n",
-				__func__, df->dft_index);
+			panel_info("found default hs idx  : %d\n",
+					df->dft_index);
 		}
-
+#if 0
+		of_property_read_u32_array(freq_node, "cmd_underrun_lp_ref",
+				set_info->cmd_underrun_lp_ref,
+				lcd_info->dt_lcd_mres.mres_number);
+#endif
 		of_property_read_u32_array(freq_node, "pmsk", (u32 *)&set_info->dphy_pms,
 			sizeof(struct stdphy_pms)/sizeof(unsigned int));
 
-		panel_info("[DYN_FREQ]:INFO:HS_FREQ : %d\n", set_info->hs);
-		panel_info("[DYN_FREQ]:INFO:PMS[p] : %d\n", set_info->dphy_pms.p);
-		panel_info("[DYN_FREQ]:INFO:PMS[m] : %d\n", set_info->dphy_pms.m);
-		panel_info("[DYN_FREQ]:INFO:PMS[s] : %d\n", set_info->dphy_pms.s);
-		panel_info("[DYN_FREQ]:INFO:PMS[k] : %d\n", set_info->dphy_pms.k);
+		panel_info("HS_FREQ : %d\n", set_info->hs);
+		panel_info("PMS[p] : %d\n", set_info->dphy_pms.p);
+		panel_info("PMS[m] : %d\n", set_info->dphy_pms.m);
+		panel_info("PMS[s] : %d\n", set_info->dphy_pms.s);
+		panel_info("PMS[k] : %d\n", set_info->dphy_pms.k);
 	}
 
 	return ret;
 }
-
 
 int dynamic_freq_probe(struct panel_device *panel, struct df_freq_tbl_info *freq_tbl)
 {
 	int ret = 0;
 
 	if (freq_tbl == NULL) {
-		panel_err("[DYN_FREQ]:ERR:%s:frequence set is null", __func__);
-		panel_err("[DYN_FREQ]:ERR:%s:can't support DF\n", __func__);
+		panel_err("frequence set is null");
+		panel_err("can't support DF\n");
 		goto exit_probe;
 	}
 
 	ret = parse_dynamic_freq(panel);
 	if (ret) {
-		panel_err("[DYN_FREQ]:ERR:%s:faied to parse df\n", __func__);
+		panel_err("faied to parse df\n");
 		goto exit_probe;
 	}
 	panel->df_freq_tbl = freq_tbl;

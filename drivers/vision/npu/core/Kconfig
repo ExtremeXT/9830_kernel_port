@@ -63,6 +63,64 @@ config NPU_USE_MBR
 	default n
 	help
 		Because of lack of memory allocation by remapper limitation,
-		use Master Boot Record for FW booting
+		use Master Boot Record for FW booting.
+
+config NPU_PERF_FW
+	bool "use performance firmware"
+	default n
+	help
+		Because of performance test,
+		use performance firmware for test.
+
+config NPU_SCHEDULER_GOVERNOR
+	bool "use scheduler and governor for power/performance control for NPU"
+	depends on EXYNOS_NPU
+	default y
+	help
+		use scheduler and governor for power/performance control for NPU
+
+		When this option is enabled, additional module is activated for
+		power / performance control for NPU HW.
+		Also governor is needed to be selected for scheduler.
+
+config NPU_GOVERNOR_SIMPLE_EXYNOS
+	bool "use simple-exynos governor policy for NPU scheduler"
+	depends on NPU_SCHEDULER_GOVERNOR
+	default y
+	help
+		use simple-exynos governor policy for NPU scheduler
+
+		Also governor is needed to be selected for NPU scheduler.
+		Simple-exynos governor selects NPU-related frequecies in
+		gradual manner by thresholds.
+
+config NPU_GOVERNOR_EXYNOS_INTERACTIVE
+	bool "use exynos-interactive governor policy for NPU scheduler"
+	depends on NPU_SCHEDULER_GOVERNOR
+	default y
+	help
+		use exynos-interactive governor policy for NPU scheduler
+
+		Also governor is needed to be selected for NPU scheduler.
+		Exynos-interactive governor selects NPU-related frequecies in
+		gradual manner by thresholds.
+		Also introduce hispeed/lowspeed ramp up.
+
+config NPU_GOVERNOR_USERSPACE
+	bool "use userspace governor policy for NPU scheduler"
+	depends on NPU_SCHEDULER_GOVERNOR
+	default y
+	help
+		Also governor is needed to be selected for NPU scheduler.
+		Userspace governor directly selects NPU-related frequecies as
+		preferred frequency not related to load.
+
+config NPU_USE_SPROFILER
+	bool "use S-profiler for debugging"
+	default n
+	help
+		use S-profiler for debugging
+
+		S-profiler for internal use
 
 endif

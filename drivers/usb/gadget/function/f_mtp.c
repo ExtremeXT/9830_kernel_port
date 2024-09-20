@@ -819,6 +819,11 @@ static void send_file_work(struct work_struct *data)
 	offset = dev->xfer_file_offset;
 	count = dev->xfer_file_length;
 
+	if (count < 0) {
+		dev->xfer_result = -EINVAL;
+		return;
+	}
+	
 	DBG(cdev, "send_file_work(%lld %lld)\n", offset, count);
 
 	if (dev->xfer_send_header) {
@@ -924,6 +929,11 @@ static void receive_file_work(struct work_struct *data)
 	filp = dev->xfer_file;
 	offset = dev->xfer_file_offset;
 	count = dev->xfer_file_length;
+
+	if (count < 0) {
+		dev->xfer_result = -EINVAL;
+		return;
+	}
 
 	DBG(cdev, "receive_file_work(%lld)\n", count);
 
@@ -1132,17 +1142,6 @@ out:
 	return ret;
 }
 
-#ifdef CONFIG_COMPAT
-static long mtp_compat_ioctl(struct file *fp, unsigned code, unsigned long value)
-{
-	long ret;
-
-	ret = mtp_ioctl(fp, code, (unsigned long)compat_ptr(value));
-
-	return ret;
-}
-#endif
-
 static int mtp_open(struct inode *ip, struct file *fp)
 {
 	printk(KERN_INFO "mtp_open\n");
@@ -1171,9 +1170,6 @@ static const struct file_operations mtp_fops = {
 	.read = mtp_read,
 	.write = mtp_write,
 	.unlocked_ioctl = mtp_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = mtp_compat_ioctl,
-#endif
 	.open = mtp_open,
 	.release = mtp_release,
 };

@@ -23,10 +23,17 @@
 #include <linux/miscdevice.h>
 
 #if defined(CONFIG_EXYNOS_DPU30)
+#ifdef CONFIG_EXYNOS_DPU30_DUAL
+#include "../dpu30_dual/disp_err.h"
+#include "../dpu30_dual/dsim.h"
+#include "../dpu30_dual/decon.h"
+#include "../dpu30_dual/panels/exynos_panel.h"
+#else
 #include "../dpu30/disp_err.h"
 #include "../dpu30/dsim.h"
 #include "../dpu30/decon.h"
 #include "../dpu30/panels/exynos_panel.h"
+#endif
 #elif defined(CONFIG_EXYNOS_DPU20)
 #include "../dpu20/disp_err.h"
 #include "../dpu20/dsim.h"
@@ -42,6 +49,7 @@
 #include "panel.h"
 #include "mdnie.h"
 #include "copr.h"
+#include "panel_debug.h"
 
 #ifdef CONFIG_SUPPORT_DDI_FLASH
 #include "panel_poc.h"
@@ -49,6 +57,10 @@
 
 #ifdef CONFIG_EXTEND_LIVE_CLOCK
 #include "./aod/aod_drv.h"
+#endif
+
+#ifdef CONFIG_SUPPORT_MAFPC
+#include "./mafpc/mafpc_drv.h"
 #endif
 
 #ifdef CONFIG_SUPPORT_DISPLAY_PROFILER
@@ -59,10 +71,6 @@
 #include "panel_spi.h"
 #endif
 
-#ifdef CONFIG_SUPPORT_I2C
-#include "panel_i2c.h"
-#endif
-
 #if defined(CONFIG_TDMB_NOTIFIER)
 #include <linux/tdmb_notifier.h>
 #endif
@@ -71,10 +79,6 @@
 #include "./df/dynamic_freq.h"
 #endif
 
-#include "decon_assist.h"
-#include "decon_notify.h"
-#include "dd.h"
-
 #if defined(CONFIG_EXYNOS_DPU30)
 typedef struct exynos_panel_info EXYNOS_PANEL_INFO;
 #else
@@ -82,35 +86,13 @@ typedef struct decon_lcd EXYNOS_PANEL_INFO;
 #endif
 
 extern void parse_lcd_info(struct device_node *node, EXYNOS_PANEL_INFO *lcd_info);
-extern int panel_log_level;
 
-//#define CONFIG_DISP_PMIC_SSD
+#ifdef CONFIG_SEC_PM
+#define CONFIG_DISP_PMIC_SSD
+#endif
+// #define CONFIG_SUPPORT_ERRFG_RECOVERY
 
 void clear_pending_bit(int irq);
-
-#define panel_err(fmt, ...)							\
-	do {									\
-		if (panel_log_level >= 3) {					\
-			pr_err(pr_fmt(fmt), ##__VA_ARGS__);			\
-		}								\
-	} while (0)
-
-#define panel_warn(fmt, ...)							\
-	do {									\
-		if (panel_log_level >= 4) {					\
-			pr_warn(pr_fmt(fmt), ##__VA_ARGS__);			\
-		}								\
-	} while (0)
-#define panel_info(fmt, ...)							\
-	do {									\
-		if (panel_log_level >= 6)					\
-			pr_info(pr_fmt(fmt), ##__VA_ARGS__);			\
-	} while (0)
-#define panel_dbg(fmt, ...)							\
-	do {									\
-		if (panel_log_level >= 6)					\
-			pr_info(pr_fmt(fmt), ##__VA_ARGS__);			\
-	} while (0)
 
 enum {
 	PANEL_REGULATOR_TYPE_PWR = 0,
@@ -123,10 +105,14 @@ enum {
 	PANEL_REGULATOR_DDI_VDD3,
 	PANEL_REGULATOR_DDR_VDDR,
 	PANEL_REGULATOR_SSD,
+#ifdef CONFIG_EXYNOS_DPU30_DUAL
+	PANEL_SUB_REGULATOR_DDI_VCI,
+	PANEL_SUB_REGULATOR_DDI_VDD3,
+	PANEL_SUB_REGULATOR_DDR_VDDR,
+	PANEL_SUB_REGULATOR_SSD,
+#endif
 	PANEL_REGULATOR_MAX
 };
-
-#define NO_PANEL_GPIO_DISP_DET 1
 
 enum panel_gpio_lists {
 	PANEL_GPIO_RESET = 0,
@@ -134,7 +120,6 @@ enum panel_gpio_lists {
 	PANEL_GPIO_PCD,
 	PANEL_GPIO_ERR_FG,
 	PANEL_GPIO_CONN_DET,
-	PANEL_GPIO_DISP_UB_EN,
 	PANEL_GPIO_MAX,
 };
 
@@ -143,12 +128,18 @@ enum panel_gpio_lists {
 #define PANEL_GPIO_NAME_PCD ("pcd")
 #define PANEL_GPIO_NAME_ERR_FG ("err-fg")
 #define PANEL_GPIO_NAME_CONN_DET ("conn-det")
-#define PANEL_GPIO_NAME_DISP_UB_EN ("disp-ub-en")
 
 #define PANEL_REGULATOR_NAME_DDI_VCI ("ddi-vci")
 #define PANEL_REGULATOR_NAME_DDI_VDD3 ("ddi-vdd3")
 #define PANEL_REGULATOR_NAME_DDR_VDDR ("ddr-vddr")
 #define PANEL_REGULATOR_NAME_SSD ("short-detect")
+
+#ifdef CONFIG_EXYNOS_DPU30_DUAL
+#define PANEL_SUB_REGULATOR_NAME_DDI_VCI ("ddi-sub-vci")
+#define PANEL_SUB_REGULATOR_NAME_DDI_VDD3 ("ddi-sub-vdd3")
+#define PANEL_SUB_REGULATOR_NAME_DDR_VDDR ("ddr-sub-vddr")
+#define PANEL_SUB_REGULATOR_NAME_SSD ("short-sub-detect")
+#endif
 
 struct panel_gpio {
 	const char *name;
@@ -168,21 +159,30 @@ struct panel_regulator {
 	int type;
 	int def_voltage;
 	int lpm_voltage;
-	int def_current;
-	int lpm_current;
+	int from_off_current;
+	int from_lpm_current;
+};
+
+struct cmd_set {
+	u8 cmd_id;
+	u32 offset;
+	const u8 *buf;
+	int size;
 };
 
 #define DSIM_OPTION_WAIT_TX_DONE	(1U << 0)
 #define DSIM_OPTION_POINT_GPARA		(1U << 1)
+#define DSIM_OPTION_2BYTE_GPARA		(1U << 2)
 
 struct mipi_drv_ops {
-	int (*read)(u32 id, u8 addr, u8 ofs, u8 *buf, int size, u32 option);
-	int (*write)(u32 id, u8 cmd_id, const u8 *cmd, u8 ofs, int size, u32 option);
+	int (*read)(u32 id, u8 addr, u32 ofs, u8 *buf, int size, u32 option);
+	int (*write)(u32 id, u8 cmd_id, const u8 *cmd, u32 ofs, int size, u32 option);
+	int (*write_table)(u32 id, const struct cmd_set *cmd, int size, u32 option);
+	int (*sr_write)(u32 id, u8 cmd_id, const u8 *cmd, u32 ofs, int size, u32 option);
 	enum dsim_state(*get_state)(u32 id);
 	void (*parse_dt)(struct device_node *node, EXYNOS_PANEL_INFO *lcd_info);
 	EXYNOS_PANEL_INFO *(*get_lcd_info)(u32 id);
-	void (*set_lpdt)(u32 id, u32 lpdt_on);
-	void (*decon_disable)(u32 id);
+	int (*wait_for_vsync)(u32 id, u32 timeout);
 };
 
 #define PANEL_INIT_KERNEL		0
@@ -211,8 +211,18 @@ enum {
 	PANEL_CONNECT = 1,
 };
 
+enum {
+	PANEL_PCD_BYPASS_OFF = 0,
+	PANEL_PCD_BYPASS_ON = 1,
+};
+
 #define ALPM_MODE	0
 #define HLPM_MODE	1
+
+enum panel_lpm_lfd_fps {
+	LPM_LFD_1HZ = 0,
+	LPM_LFD_30HZ,
+};
 
 enum panel_active_state {
 	PANEL_STATE_OFF = 0,
@@ -243,18 +253,19 @@ enum {
 	PANEL_WORK_CONN_DET,
 	PANEL_WORK_DIM_FLASH,
 	PANEL_WORK_CHECK_CONDITION,
+	PANEL_WORK_UPDATE,
 	PANEL_WORK_MAX,
 };
 
 enum {
-	GREEN_CIRCLE_OFF = 0,
-	GREEN_CIRCLE_ON,
-	MAX_GREEN_CIRCLE,
+	PANEL_THREAD_VRR_BRIDGE,
+	PANEL_THREAD_MAX,
 };
 
 enum {
-	PANEL_DSI_LPDT_OFF = 0,
-	PANEL_DSI_LPDT_ON,
+	PANEL_CB_VRR,
+	PANEL_CB_DISPLAY_MODE,
+	MAX_PANEL_CB,
 };
 
 struct panel_state {
@@ -268,7 +279,7 @@ struct panel_state {
 	int hmd_on;
 #endif
 	int lpm_brightness;
-	int green_circle_state;
+	int pcd_bypass;
 };
 
 struct copr_spi_gpios {
@@ -288,7 +299,7 @@ enum {
 	PRINT_NORMAL_PANEL_INFO,
 	CHECK_NORMAL_PANEL_INFO,
 	PRINT_DOZE_PANEL_INFO,
-	PANEL_INFO_STATE_MAX
+	STATE_MAX
 };
 
 #define STR_NO_CHECK			("no state")
@@ -300,7 +311,7 @@ struct panel_condition_check {
 	bool is_panel_check;
 	u32 frame_cnt;
 	u8 check_state;
-	char str_state[PANEL_INFO_STATE_MAX][30];
+	char str_state[STATE_MAX][30];
 };
 
 enum GAMMA_FLASH_RESULT {
@@ -314,6 +325,7 @@ enum GAMMA_FLASH_RESULT {
 
 struct dim_flash_result {
 	bool exist;
+	u32 state;
 
 	u32 dim_chksum_ok;
 	u32 dim_chksum_by_calc;
@@ -336,9 +348,21 @@ struct panel_work {
 	int ret;
 };
 
-struct panel_vsync {
+#define MAX_PANEL_CMD_QUEUE	(1024)
+
+struct panel_cmd_queue {
+	struct cmd_set cmd[MAX_PANEL_CMD_QUEUE];
+	int top;
+	int cmd_payload_size;
+	int img_payload_size;
+	struct mutex lock;
+};
+typedef int (*panel_thread_fn)(void *data);
+
+struct panel_thread {
 	wait_queue_head_t wait;
-	ktime_t timestamp;
+	atomic_t count;
+	struct task_struct *thread;
 };
 
 #ifdef CONFIG_DYNAMIC_FREQ
@@ -352,6 +376,9 @@ struct panel_device {
 	int dsi_id;
 
 	struct device_node *ddi_node;
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+	struct panel_display_modes *panel_modes;
+#endif
 
 	struct spi_device *spi;
 	struct copr_info copr;
@@ -378,12 +405,12 @@ struct panel_device {
 	struct panel_regulator regulator[PANEL_REGULATOR_MAX];
 
 	struct mipi_drv_ops mipi_drv;
+	struct panel_cmd_queue cmdq;
 
 	struct panel_state state;
 
 	struct panel_work work[PANEL_WORK_MAX];
-
-	struct panel_vsync vsync;
+	struct panel_thread thread[PANEL_THREAD_MAX];
 
 	struct notifier_block fb_notif;
 #ifdef CONFIG_DISPLAY_USE_INFO
@@ -393,27 +420,37 @@ struct panel_device {
 
 #ifdef CONFIG_EXTEND_LIVE_CLOCK
 	struct aod_dev_info aod;
-	struct mutex gc_lock;
 #endif
+
+#ifdef CONFIG_SUPPORT_MAFPC
+	struct mafpc_device mafpc;
+	struct v4l2_subdev *mafpc_sd;
+	s64 mafpc_write_time;
+#endif
+
 #ifdef CONFIG_SUPPORT_DDI_FLASH
 	struct panel_poc_device poc_dev;
 #endif
 #ifdef CONFIG_SUPPORT_POC_SPI
 	struct panel_spi_dev panel_spi_dev;
 #endif
-#ifdef CONFIG_SUPPORT_I2C
-	struct panel_i2c_dev panel_i2c_dev;
-#endif
 #ifdef CONFIG_SUPPORT_TDMB_TUNE
 	struct notifier_block tdmb_notif;
 #endif
+#if defined(CONFIG_INPUT_TOUCHSCREEN)
+	struct notifier_block input_notif;
+#endif
 	struct disp_error_cb_info error_cb_info;
+	struct disp_cb_info cb_info[MAX_PANEL_CB];
 
 	ktime_t ktime_panel_on;
 	ktime_t ktime_panel_off;
 
+	struct dim_flash_result *dim_flash_result;
+	int nr_dim_flash_result;
+	int max_nr_dim_flash_result;
+
 #ifdef CONFIG_SUPPORT_DIM_FLASH
-	struct dim_flash_result dim_flash_result;
 	struct panel_irc_info *irc_info;
 #endif
 	struct panel_condition_check condition_check;
@@ -427,10 +464,14 @@ struct panel_device {
 #ifdef CONFIG_SUPPORT_DISPLAY_PROFILER
 	struct profiler_device profiler;
 #endif
+	struct panel_debug d;
 };
 
 #ifdef CONFIG_SUPPORT_DIM_FLASH
 int panel_update_dim_type(struct panel_device *panel, u32 dim_type);
+#endif
+#ifdef CONFIG_SUPPORT_GM2_FLASH
+int panel_flash_checksum_calc(struct panel_device *panel);
 #endif
 
 static inline bool IS_PANEL_PWR_ON_STATE(struct panel_device *panel)
@@ -479,6 +520,18 @@ static inline int panel_aod_power_off(struct panel_device *panel)
 		panel->aod.ops->power_off(&panel->aod) : 0;
 }
 
+static inline int panel_aod_black_grid_on(struct panel_device *panel)
+{
+	return (panel->aod.ops && panel->aod.ops->black_grid_on) ?
+		panel->aod.ops->black_grid_on(&panel->aod) : 0;
+}
+
+static inline int panel_aod_black_grid_off(struct panel_device *panel)
+{
+	return (panel->aod.ops && panel->aod.ops->black_grid_off) ?
+		panel->aod.ops->black_grid_off(&panel->aod) : 0;
+}
+
 #ifdef SUPPORT_NORMAL_SELF_MOVE
 static inline int panel_self_move_pattern_update(struct panel_device *panel)
 {
@@ -491,11 +544,32 @@ static inline int panel_self_move_pattern_update(struct panel_device *panel)
 bool ub_con_disconnected(struct panel_device *panel);
 int panel_wake_lock(struct panel_device *panel);
 void panel_wake_unlock(struct panel_device *panel);
-int panel_set_vrr(struct panel_device *panel, int fps, int mode);
+#ifdef CONFIG_SUPPORT_DDI_CMDLOG
+int panel_seq_cmdlog_dump(struct panel_device *panel);
+#endif
 bool panel_gpio_valid(struct panel_gpio *gpio);
 void panel_send_ubconn_uevent(struct panel_device *panel);
 int panel_set_gpio_irq(struct panel_gpio *gpio, bool enable);
 
+int panel_create_debugfs(struct panel_device *panel);
+void panel_destroy_debugfs(struct panel_device *panel);
+#if defined(CONFIG_SUPPORT_DOZE) && defined(CONFIG_SEC_FACTORY)
+int panel_seq_exit_alpm(struct panel_device *panel);
+int panel_seq_set_alpm(struct panel_device *panel);
+#endif
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+int panel_display_mode_cb(struct panel_device *panel);
+int panel_update_display_mode(struct panel_device *panel);
+int find_panel_mode_by_common_panel_display_mode(struct panel_device *panel,
+		struct common_panel_display_mode *cpdm);
+int panel_display_mode_find_panel_mode(struct panel_device *panel,
+		struct panel_display_mode *pdm);
+int panel_set_display_mode_nolock(struct panel_device *panel, int panel_mode);
+#endif
+
+#if defined(CONFIG_SEC_FACTORY) && defined(CONFIG_SUPPORT_FAST_DISCHARGE)
+int panel_fast_discharge_set(struct panel_device *panel);
+#endif
 #define PANEL_DRV_NAME "panel-drv"
 
 #define PANEL_IOC_BASE	'P'
@@ -517,8 +591,6 @@ int panel_set_gpio_irq(struct panel_gpio *gpio, bool enable);
 #define PANEL_IOC_EVT_FRAME_DONE		_IOW(PANEL_IOC_BASE, 11, struct timespec *)
 #define PANEL_IOC_EVT_VSYNC				_IOW(PANEL_IOC_BASE, 12, struct timespec *)
 
-#define PANEL_IOC_SET_RESET				_IO(PANEL_IOC_BASE, 13)
-
 #ifdef CONFIG_SUPPORT_DOZE
 #define PANEL_IOC_DOZE					_IO(PANEL_IOC_BASE, 31)
 #define PANEL_IOC_DOZE_SUSPEND			_IO(PANEL_IOC_BASE, 32)
@@ -526,14 +598,21 @@ int panel_set_gpio_irq(struct panel_gpio *gpio, bool enable);
 
 #define PANEL_IOC_SET_MRES				_IOW(PANEL_IOC_BASE, 41, int *)
 #define PANEL_IOC_GET_MRES				_IOR(PANEL_IOC_BASE, 42, struct panel_mres *)
-
-#define PANEL_IOC_SET_ACTIVE			_IOW(PANEL_IOC_BASE, 43, void *)
-#define PANEL_IOC_GET_ACTIVE			_IOR(PANEL_IOC_BASE, 44, void *)
+#define PANEL_IOC_SET_VRR_INFO			_IOW(PANEL_IOC_BASE, 45, struct vrr_config_data *)
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+#define PANEL_IOC_GET_DISPLAY_MODE		_IOR(PANEL_IOC_BASE, 48, void *)
+#define PANEL_IOC_SET_DISPLAY_MODE		_IOW(PANEL_IOC_BASE, 49, void *)
+#define PANEL_IOC_REG_DISPLAY_MODE_CB	_IOR(PANEL_IOC_BASE, 53, struct host_cb *)
+#endif
 
 #define PANEL_IOC_REG_RESET_CB			_IOR(PANEL_IOC_BASE, 51, struct host_cb *)
-#ifdef CONFIG_SUPPORT_INDISPLAY
-#define PANEL_IOC_SET_INDISPLAY_PRE		_IO(PANEL_IOC_BASE, 61)
-#define PANEL_IOC_SET_INDISPLAY_POST		_IO(PANEL_IOC_BASE, 62)
+#define PANEL_IOC_REG_VRR_CB			_IOR(PANEL_IOC_BASE, 52, struct host_cb *)
+#ifdef CONFIG_SUPPORT_MASK_LAYER
+#define PANEL_IOC_SET_MASK_LAYER		_IOW(PANEL_IOC_BASE, 61, struct mask_layer_data *)
+#endif
+
+#ifdef CONFIG_SUPPORT_MAFPC
+#define PANEL_IOC_WAIT_MAFPC			_IO(PANEL_IOC_BASE, 71)
 #endif
 
 #ifdef CONFIG_DYNAMIC_FREQ
@@ -541,5 +620,6 @@ int panel_set_gpio_irq(struct panel_gpio *gpio, bool enable);
 
 #define PANEL_IOC_GET_DF_STATUS			_IOR(PANEL_IOC_BASE, 85, int *)
 #define PANEL_IOC_DYN_FREQ_FFC			_IOR(PANEL_IOC_BASE, 82, int *)
+#define PANEL_IOC_DYN_FREQ_FFC_OFF			_IOR(PANEL_IOC_BASE, 83, int *)
 #endif
 #endif //__PANEL_DRV_H__

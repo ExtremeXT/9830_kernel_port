@@ -21,6 +21,7 @@
 #include "../../npu-log.h"
 #include "mailbox_msg.h"
 #include "../../npu-session.h"
+#include "../../include/npu-system-soc.h"
 
 #define MAX_MAILBOX	4
 #define EPARAM		41

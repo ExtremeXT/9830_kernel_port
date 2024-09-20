@@ -49,18 +49,20 @@ extern int dpu_panel_log_level;
 #define MAX_PANEL_SUPPORT	10
 #define MAX_PANEL_ID_NUM	4
 
+/* for dual display */
+#define MAX_PANEL_DRV_SUPPORT	3
+
 #define DEFAULT_MAX_BRIGHTNESS	255
 #define DEFAULT_BRIGHTNESS	127
 
-extern struct exynos_panel_device *panel_drvdata;
+extern struct exynos_panel_device *panel_drvdata[MAX_PANEL_DRV_SUPPORT];
 #if defined(CONFIG_EXYNOS_COMMON_PANEL)
 extern struct exynos_panel_ops common_panel_ops;
 #else
+extern struct exynos_panel_ops panel_s6e3hab_ops;
 extern struct exynos_panel_ops panel_s6e3ha9_ops;
 extern struct exynos_panel_ops panel_s6e3ha8_ops;
 extern struct exynos_panel_ops panel_s6e3fa0_ops;
-extern struct exynos_panel_ops panel_ea8076_ops;
-extern struct exynos_panel_ops panel_td4150_ops;
 #endif
 
 struct exynos_panel_resources {
@@ -73,13 +75,14 @@ struct exynos_panel_ops {
 	u32 id[MAX_PANEL_ID_NUM];
 	int (*suspend)(struct exynos_panel_device *panel);
 	int (*displayon)(struct exynos_panel_device *panel);
-	int (*mres)(struct exynos_panel_device *panel, int mres_idx);
+	int (*mres)(struct exynos_panel_device *panel, u32 mode_idx);
 	int (*doze)(struct exynos_panel_device *panel);
 	int (*doze_suspend)(struct exynos_panel_device *panel);
 	int (*dump)(struct exynos_panel_device *panel);
 	int (*read_state)(struct exynos_panel_device *panel);
 	int (*set_cabc_mode)(struct exynos_panel_device *panel, int mode);
 	int (*set_light)(struct exynos_panel_device *panel, u32 br_val);
+	int (*set_vrefresh)(struct exynos_panel_device *panel, struct vrr_config_data *vrr_info);
 #if defined(CONFIG_EXYNOS_COMMON_PANEL)
 	int (*probe)(struct exynos_panel_device *panel);
 	int (*resume)(struct exynos_panel_device *panel);
@@ -87,15 +90,16 @@ struct exynos_panel_ops {
 	int (*connected)(struct exynos_panel_device *panel);
 	int (*is_poweron)(struct exynos_panel_device *panel);
 	int (*setarea)(struct exynos_panel_device *panel, u32 l, u32 r, u32 t, u32 b);
-	int (*reset)(struct exynos_panel_device *panel);
 	int (*poweron)(struct exynos_panel_device *panel);
 	int (*poweroff)(struct exynos_panel_device *panel);
 	int (*sleepin)(struct exynos_panel_device *panel);
 	int (*sleepout)(struct exynos_panel_device *panel);
 	int (*notify)(struct exynos_panel_device *panel, void *data);
 	int (*set_error_cb)(struct exynos_panel_device *panel, void *data);
-	int (*indisplay_pre)(struct exynos_panel_device *panel, bool en);
-	int (*indisplay_post)(struct exynos_panel_device *panel, bool en);
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+	int (*get_display_mode)(struct exynos_panel_device *panel, void *data);
+	int (*set_display_mode)(struct exynos_panel_device *panel, void *data);
+#endif
 #endif
 };
 
@@ -144,9 +148,9 @@ struct exynos_panel_device {
 	enum power_mode power_mode;
 };
 
-static inline struct exynos_panel_device *get_panel_drvdata(void)
+static inline struct exynos_panel_device *get_panel_drvdata(u32 panel_idx)
 {
-	return panel_drvdata;
+	return panel_drvdata[panel_idx];
 }
 
 int exynos_panel_calc_slice_width(u32 dsc_cnt, u32 slice_num, u32 xres);
@@ -166,6 +170,7 @@ int exynos_panel_calc_slice_width(u32 dsc_cnt, u32 slice_num, u32 xres);
 #define EXYNOS_PANEL_IOC_DUMP		_IOW('P', 9, u32)
 #define EXYNOS_PANEL_IOC_READ_STATE	_IOR('P', 10, u32)
 #define EXYNOS_PANEL_IOC_SET_LIGHT	_IOW('P', 11, u32)
+#define EXYNOS_PANEL_IOC_SET_VREFRESH	_IOW('P', 12, struct vrr_config_data *)
 
 #if defined(CONFIG_EXYNOS_COMMON_PANEL)
 #define EXYNOS_PANEL_IOC_INIT	_IOW('P', 21, u32)
@@ -177,8 +182,10 @@ int exynos_panel_calc_slice_width(u32 dsc_cnt, u32 slice_num, u32 xres);
 #define EXYNOS_PANEL_IOC_NOTIFY	_IOW('P', 27, u32)
 #define EXYNOS_PANEL_IOC_SET_ERROR_CB	_IOW('P', 28, u32)
 #define EXYNOS_PANEL_IOC_PROBE	_IOW('P', 29, u32)
-#define EXYNOS_PANEL_IOC_INDISPLAY_PRE	_IOW('P', 30, bool)
-#define EXYNOS_PANEL_IOC_INDISPLAY_POST	_IOW('P', 31, bool)
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+#define EXYNOS_PANEL_IOC_GET_DISPLAY_MODE	_IOR('P', 30, void *)
+#define EXYNOS_PANEL_IOC_SET_DISPLAY_MODE	_IOW('P', 31, void *)
+#endif
 #endif
 
 #endif /* __EXYNOS_PANEL_DRV_H__ */

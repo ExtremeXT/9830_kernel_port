@@ -23,6 +23,8 @@
 #include "mfc_pm.h"
 #include "mfc_cmd.h"
 #include "mfc_reg_api.h"
+#include "mfc_mmcache.h"
+#include "mfc_llc.h"
 
 #include "mfc_qos.h"
 #include "mfc_queue.h"
@@ -566,11 +568,26 @@ int mfc_otf_handle_seq(struct mfc_ctx *ctx)
 
 	mfc_change_state(ctx, MFCINST_HEAD_PARSED);
 
-	if (mfc_alloc_codec_buffers(ctx)) {
-		mfc_err_ctx("[OTF] Failed to allocate encoding buffers\n");
-		return -EINVAL;
+	if (ctx->codec_buffer_allocated &&
+			(ctx->dpb_count > MFC_OTF_DEFAULT_DPB_COUNT ||
+			ctx->scratch_buf_size > MFC_OTF_DEFAULT_SCRATCH_SIZE)) {
+		mfc_debug(2, "[OTF] codec buffer will be reallocated. scratch: %zu, count %d\n",
+				ctx->scratch_buf_size, ctx->dpb_count);
+		if (dev->has_mmcache && dev->mmcache.is_on_status)
+			mfc_invalidate_mmcache(dev);
+
+		if (dev->has_llc && dev->llc_on_status)
+			mfc_llc_flush(dev);
+
+		mfc_release_codec_buffers(ctx);
 	}
 
+	if (!ctx->codec_buffer_allocated) {
+		if (mfc_alloc_codec_buffers(ctx)) {
+			mfc_err_ctx("[OTF] Failed to allocate encoding buffers\n");
+			return -ENOMEM;
+		}
+	}
 	mfc_debug_leave();
 
 	return 0;

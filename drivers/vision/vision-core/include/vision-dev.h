@@ -41,6 +41,8 @@ struct vision_device {
 	int				index;
 	u32				type;
 
+	s64				tpf;
+
 	/* device ops */
 	const struct vision_file_ops	*fops;
 

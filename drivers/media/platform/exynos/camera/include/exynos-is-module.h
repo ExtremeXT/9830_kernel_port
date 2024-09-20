@@ -30,6 +30,8 @@ struct exynos_sensor_pin {
 	spinlock_t *shared_rsc_slock;
 	atomic_t *shared_rsc_count;
 	int shared_rsc_active;
+
+	u32 actuator_i2c_delay;
 };
 
 struct exynos_sensor_module_match {
@@ -104,7 +106,6 @@ struct exynos_platform_is_module {
 	char *sensor_maker;
 	char *sensor_name;
 	char *setfile_name;
-	u32 sensor_module_type;
 	u32 cfgs;
 	struct is_sensor_cfg *cfg;
 	struct is_sensor_vc_extra_info vc_extra_info[VC_BUF_DATA_TYPE_MAX];

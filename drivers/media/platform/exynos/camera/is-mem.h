@@ -162,7 +162,6 @@ struct is_minfo {
 	struct is_priv_buf *pb_tnr;
 	struct is_priv_buf *pb_lhfd;
 	struct is_priv_buf *pb_vra;
-	struct is_priv_buf *pb_vra_netarray;
 	struct is_priv_buf *pb_tpu;
 	struct is_priv_buf *pb_mcsc_dnr;
 	struct is_priv_buf *pb_orbmch;
@@ -193,8 +192,6 @@ struct is_minfo {
 	ulong		kvaddr_lhfd;	/* NUM_FD_INTERNAL_BUF = 3 */
 	dma_addr_t	dvaddr_vra;
 	ulong		kvaddr_vra;
-	dma_addr_t	dvaddr_vra_netarray;
-	ulong		kvaddr_vra_netarray;
 	dma_addr_t	dvaddr_mcsc_dnr;
 	ulong		kvaddr_mcsc_dnr;
 

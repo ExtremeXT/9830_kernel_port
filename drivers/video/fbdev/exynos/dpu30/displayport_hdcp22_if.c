@@ -111,7 +111,7 @@ void reset_dp_hdcp_module(void)
 			&displayport->hpd_unplug_work, 0);
 }
 
-int displayport_hdcp22_authenticate()
+int displayport_hdcp22_authenticate(void)
 {
 #if defined(CONFIG_EXYNOS_HDCP2)
 #ifdef CONFIG_HDCP2_FUNC_TEST_MODE
@@ -130,5 +130,12 @@ int displayport_hdcp22_authenticate()
 #else
 	displayport_info("Not compiled EXYNOS_HDCP2 driver\n");
 	return 0;
+#endif
+}
+
+void displayport_hdcp22_notify_state(enum dp_state state)
+{
+#if defined(CONFIG_EXYNOS_HDCP2)
+	hdcp_dplink_connect_state(state);
 #endif
 }

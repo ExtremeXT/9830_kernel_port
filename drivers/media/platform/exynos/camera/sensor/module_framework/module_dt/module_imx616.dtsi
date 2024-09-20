@@ -11,12 +11,6 @@
 
 #include <dt-bindings/camera/exynos_is_dt.h>
 
-#ifndef USE_VENDOR_PWR_PIN_NAME
-#define IMX616_IOVDD	<>     /* CAM_VDDIO_1P8 : CAM0_VLDO3 is used for all camera commonly */
-#define IMX616_AVDD	<>     /* RCAM1_AVDD1_2P9 */
-#define IMX616_DVDD	<>     /* RCAM1_DVDD_1P1 */
-#endif
-
 / {
 	fragment@camera {
 		target-path = "/";
@@ -34,14 +28,10 @@
 				margin_bottom = <0>;
 				max_framerate = <120>;
 				bitwidth = <10>;
-				use_retention_mode = <SENSOR_RETENTION_INACTIVE>;
+				use_retention_mode = <SENSOR_RETENTION_UNSUPPORTED>;
 				sensor_maker = "SONY";
 				sensor_name = "IMX616";
 				setfile_name = "setfile_imx616.bin";
-
-				imx616_iovdd-supply = IMX616_IOVDD;
-				imx616_avdd-supply = IMX616_AVDD;
-				imx616_dvdd-supply = IMX616_DVDD;
 
 				status = "okay";
 
@@ -92,8 +82,8 @@
 				 * -. QBC HDR
 				 *    [ 15 ] REG_S : QBCHDR Seamless 3264x2448 24fps  : QBCHDR seamless (4:3)        ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
 				 *    [ 16 ] REG_W : QBCHDR Seamless 3264x1836 30fps  : QBCHDR seamless (16:9)       ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
-				 *    [ 17 ] REG_X : 2x2Bin Seamless 3264x1836 30fps  : 2X2Bin seamless (4:3)        ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
-				 *    [ 18 ] REG_Z : 2x2Bin Seamless 3264x2448 24fps  : 2X2Bin seamless (16:9)       ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
+				 *    [ 17 ] REG_X : 2x2Bin Seamless 3264x1836 30fps  : 2X2Bin seamless (16:9)       ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
+				 *    [ 18 ] REG_Z : 2x2Bin Seamless 3264x2448 24fps  : 2X2Bin seamless (4:3)        ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
 				 *
 				 */
 
@@ -258,21 +248,22 @@
 
 				power_seq {
 					use = <1>;
+					gpio_mclk = <&gpc0 1 0x1>;
+
 					scenario_normal_on {
 						sensor_scenario = <SENSOR_SCENARIO_NORMAL>;
 						gpio_scenario = <GPIO_SCENARIO_ON>;
 
 						/* A start node number should be over the 10 for reserved number 0~9. */
-						/* pname = "name"; pin = <act value dealy voltage>; gpio = <gpx# # 0x1>; */
-						10 { pname = "sen_rst low"; pin = <PIN_OUTPUT 0 500>; gpio = <>; };
-						20 { pname = "imx616_avdd"; pin = <PIN_REGULATOR 1 0>; }; /* IMX616_AVDD 2.8V */
-						30 { pname = "imx616_iovdd"; pin = <PIN_REGULATOR 1 0>; }; /* IMX616_IOVDD 1.8V */
-						40 { pname = "imx616_dvdd"; pin = <PIN_REGULATOR 1 500>; }; /* IMX616_DVDD 1.05V */
-						50 { pname = "on_i2c"; pin = <PIN_I2C 1 10>; };
-						60 { pname = "pin"; pin = <PIN_FUNCTION 2 1000>; };
-						70 { pname = "MCLK"; pin = <PIN_MCLK 1 1500>; };
-						80 { pname = "sen_rst high"; pin = <PIN_OUTPUT 1 0>; gpio = <>; };
-						90 { pname = "delay"; pin = <PIN_NONE 0 8000>; };
+						/* pname = "name";						pin = <act value dealy voltage>;	gpio = <gpx# # 0x1>; */
+						10 { pname = "sen_rst low";				pin = <PIN_OUTPUT 0 100>;			gpio = <&gpm11 0 0x1>;	};
+						20 { pname = "gpio_fcam_avdd_ldo_en";	pin = <PIN_OUTPUT 1 0>;				gpio = <&gpa1 4 0x1>;	};
+						30 { pname = "VDDIO_1.8V_CAM";			pin = <PIN_REGULATOR 1 0>;			share = <SRT_ACQUIRE SHARED_PIN0 1>;	};
+						40 { pname = "VDDD_1.05V_VT";			pin = <PIN_REGULATOR 1 500>;	};
+						50 { pname = "on_i2c";					pin = <PIN_I2C 1 100>;			};
+						60 { pname = "pin";						pin = <PIN_FUNCTION 2 0>;		};
+						70 { pname = "MCLK";					pin = <PIN_MCLK 1 500>;			};
+						80 { pname = "sen_rst high";			pin = <PIN_OUTPUT 1 10000>;			gpio = <&gpm11 0 0x1>;	};
 					};
 
 					scenario_normal_off {
@@ -280,17 +271,17 @@
 						gpio_scenario = <GPIO_SCENARIO_OFF>;
 
 						/* A start node number should be over the 10 for reserved number 0~9. */
-						/* pname = "name"; pin = <act value dealy voltage>; gpio = <gpx# # 0x1>; */
-						10 { pname = "delay"; pin = <PIN_NONE 0 5000>; };
-						20 { pname = "sen_rst low"; pin = <PIN_OUTPUT 0 0>; gpio = <>; };
-						30 { pname = "MCLK"; pin = <PIN_MCLK 0 0>; };
-						40 { pname = "pin"; pin = <PIN_FUNCTION 0 0>; };
-						50 { pname = "pin"; pin = <PIN_FUNCTION 1 500>; };
-						60 { pname = "pin"; pin = <PIN_FUNCTION 0 0>; };
-						70 { pname = "off_i2c"; pin = <PIN_I2C 0 0>; };
-						80 { pname = "imx616_avdd"; pin = <PIN_REGULATOR 0 0>; }; /* IMX616_AVDD 2.8V */
-						90 { pname = "imx616_iovdd"; pin = <PIN_REGULATOR 0 0>; }; /* IMX616_IOVDD 1.8V */
-						100 { pname = "imx616_dvdd"; pin = <PIN_REGULATOR 0 0>; }; /* IMX616_DVDD 1.05V */
+						/* pname = "name";						pin = <act value dealy voltage>;	gpio = <gpx# # 0x1>; */
+						10 { pname = "delay";					pin = <PIN_NONE 0 1000>;		};
+						20 { pname = "sen_rst low";				pin = <PIN_OUTPUT 0 0>;				gpio = <&gpm11 0 0x1>;	};
+						30 { pname = "MCLK";					pin = <PIN_MCLK 0 0>;			};
+						40 { pname = "pin";						pin = <PIN_FUNCTION 0 0>;		};
+						50 { pname = "pin";						pin = <PIN_FUNCTION 1 0>;		};
+						60 { pname = "pin";						pin = <PIN_FUNCTION 0 0>;		};
+						70 { pname = "off_i2c";					pin = <PIN_I2C 0 0>;			};
+						80 { pname = "gpio_fcam_avdd_ldo_en";	pin = <PIN_OUTPUT 0 0>;				gpio = <&gpa1 4 0x1>;	};
+						90 { pname = "VDDIO_1.8V_CAM";			pin = <PIN_REGULATOR 0 0>;			share = <SRT_RELEASE SHARED_PIN0 0>;	};
+						100 { pname = "VDDD_1.05V_VT";			pin = <PIN_REGULATOR 0 0>;		};
 					};
 
 					scenario_read_rom_on {
@@ -298,9 +289,9 @@
 						gpio_scenario = <GPIO_SCENARIO_ON>;
 
 						/* A start node number should be over the 10 for reserved number 0~9. */
-						/* pname = "name"; pin = <act value dealy voltage>; gpio = <gpx# # 0x1>; */
-						10 { pname = "imx616_iovdd"; pin = <PIN_REGULATOR 1 0>; }; /* IMX616_IOVDD 1.8V */
-						20 { pname = "SENSOR_SET_DELAY"; pin = <PIN_NONE 0 3000>; };
+						/* pname = "name";						pin = <act value dealy voltage>;	gpio = <gpx# # 0x1>; */
+						10 { pname = "VDDIO_1.8V_CAM";			pin = <PIN_REGULATOR 1 3000>;		share = <SRT_ACQUIRE SHARED_PIN0 1>;	};
+						20 { pname = "on_i2c";					pin = <PIN_I2C 1 0>;			};
 					};
 
 					scenario_read_rom_off {
@@ -308,8 +299,43 @@
 						gpio_scenario = <GPIO_SCENARIO_OFF>;
 
 						/* A start node number should be over the 10 for reserved number 0~9. */
-						/* pname = "name"; pin = <act value dealy voltage>; gpio = <gpx# # 0x1>; */
-						10 { pname = "imx616_iovdd"; pin = <PIN_REGULATOR 0 0>; }; /* IMX616_IOVDD 1.8V */
+						/* pname = "name";						pin = <act value dealy voltage>;	gpio = <gpx# # 0x1>; */
+						10 { pname = "off_i2c";					pin = <PIN_I2C 0 0>;			};
+						20 { pname = "VDDIO_1.8V_CAM";			pin = <PIN_REGULATOR 0 20000>;			share = <SRT_RELEASE SHARED_PIN0 0>;	};
+					};
+
+					scenario_vision_on {
+						sensor_scenario = <SENSOR_SCENARIO_VISION>;
+						gpio_scenario = <GPIO_SCENARIO_ON>;
+
+						/* A start node number should be over the 10 for reserved number 0~9. */
+						/* pname = "name";						pin = <act value dealy voltage>;	gpio = <gpx# # 0x1>; */
+						10 { pname = "sen_rst low";				pin = <PIN_OUTPUT 0 100>;			gpio = <&gpm11 0 0x1>;	};
+						20 { pname = "gpio_fcam_avdd_ldo_en";	pin = <PIN_OUTPUT 1 0>;				gpio = <&gpa1 4 0x1>;	};
+						30 { pname = "VDDIO_1.8V_CAM";			pin = <PIN_REGULATOR 1 0>;			share = <SRT_ACQUIRE SHARED_PIN0 1>;	};
+						40 { pname = "VDDD_1.05V_VT";			pin = <PIN_REGULATOR 1 500>;	};
+						50 { pname = "on_i2c";					pin = <PIN_I2C 1 100>;			};
+						60 { pname = "pin";						pin = <PIN_FUNCTION 2 0>;		};
+						70 { pname = "MCLK";					pin = <PIN_MCLK 1 500>;			};
+						80 { pname = "sen_rst high";			pin = <PIN_OUTPUT 1 10000>;			gpio = <&gpm11 0 0x1>;	};
+					};
+
+					scenario_vision_off {
+						sensor_scenario = <SENSOR_SCENARIO_VISION>;
+						gpio_scenario = <GPIO_SCENARIO_OFF>;
+
+						/* A start node number should be over the 10 for reserved number 0~9. */
+						/* pname = "name";						pin = <act value dealy voltage>; 	gpio = <gpx# # 0x1>; */
+						10 { pname = "delay";					pin = <PIN_NONE 0 1000>;		};
+						20 { pname = "sen_rst low";				pin = <PIN_OUTPUT 0 0>;				gpio = <&gpm11 0 0x1>;	};
+						30 { pname = "MCLK";					pin = <PIN_MCLK 0 0>;			};
+						40 { pname = "pin";						pin = <PIN_FUNCTION 0 0>;		};
+						50 { pname = "pin";						pin = <PIN_FUNCTION 1 0>;		};
+						60 { pname = "pin";						pin = <PIN_FUNCTION 0 0>;		};
+						70 { pname = "off_i2c";					pin = <PIN_I2C 0 0>;			};
+						80 { pname = "gpio_fcam_avdd_ldo_en";	pin = <PIN_REGULATOR 0 0>;			gpio = <&gpa1 4 0x1>;	};
+						90 { pname = "VDDIO_1.8V_CAM";			pin = <PIN_REGULATOR 0 0>;			share = <SRT_RELEASE SHARED_PIN0 0>;	};
+						100 { pname = "VDDD_1.05V_VT";			pin = <PIN_REGULATOR 0 0>;		};
 					};
 				};
 			};

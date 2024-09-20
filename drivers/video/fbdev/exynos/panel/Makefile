@@ -5,9 +5,11 @@
 # Licensed under GPLv2
 #
 
-obj-$(CONFIG_EXYNOS_MIPI_DSIM) += timenval.o panel.o panel_bl.o dimming.o panel_drv.o panel_irc.o decon_board.o decon_notify.o decon_void_regulator.o decon_assist.o
-obj-$(and $(CONFIG_SMCDSD_LCD_DEBUG),$(subst undefined,y,$(origin CONFIG_SAMSUNG_PRODUCT_SHIP))) += dd_lcd.o dd_backlight.o dd_param.o dd_assist.o
-obj-$(CONFIG_EXYNOS_DECON_MDNIE) += mdnie.o
+obj-$(CONFIG_PANEL_DISPLAY_MODE) += panel_modes.o
+obj-$(CONFIG_EXYNOS_MIPI_DSIM) += timenval.o panel.o panel_bl.o \
+	dimming.o panel_drv.o panel_irc.o panel_vrr.o
+obj-$(CONFIG_PANEL_DEBUG) += panel_debug.o
+obj-$(CONFIG_EXYNOS_DECON_MDNIE_LITE) += mdnie.o
 obj-$(CONFIG_EXYNOS_DECON_LCD_SYSFS) += sysfs.o
 obj-$(CONFIG_EXYNOS_DECON_LCD_SPI) += spi.o
 obj-$(CONFIG_EXYNOS_DECON_LCD_COPR) += copr.o
@@ -16,25 +18,24 @@ obj-$(CONFIG_PANEL_NOTIFY) += panel_notify.o
 obj-$(CONFIG_SUPPORT_DDI_FLASH) += panel_poc.o
 obj-$(CONFIG_EXTEND_LIVE_CLOCK) += aod/aod_drv.o
 obj-$(CONFIG_SUPPORT_POC_SPI) += panel_spi.o
-obj-$(CONFIG_SUPPORT_I2C) += panel_i2c.o
 obj-$(CONFIG_DYNAMIC_FREQ) += df/dynamic_freq.o
+obj-$(CONFIG_SUPPORT_DISPLAY_PROFILER) += \
+	display_profiler/display_profiler.o \
+	display_profiler/maskgen.o
+obj-$(CONFIG_SUPPORT_MAFPC) += mafpc/mafpc_drv.o
+obj-$(CONFIG_PANEL_DECON_BOARD) += decon_board.o
 
-
-obj-$(CONFIG_EXYNOS_DECON_LCD_DUMMY_LCD_V320) += dummy_lcd/dummy_lcd.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_FT8203_BOE_T260) += ft8203_boe/ft8203_boe.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_HX83102_T270) += hx83102/hx83102.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_HX83112F_BOE_A13) += hx83112f_boe_a13/hx83112f_boe.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_NT36672C_CSOT_A13) += nt36672c_csot/nt36672c_csot.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_NT36672C_TIANMA_A13) += nt36672c_tianma/nt36672c_tianma.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_TD4375_BOE_A13) += td4375_boe/td4375_boe.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_ILI7807_BOE_M13) += ili7807_boe/ili7807_boe.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_HX83112F_BOE_M13) += hx83112f_boe_m13/hx83112f_boe.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_FT8720_DTC_M13) += ft8720_dtc/ft8720_dtc.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_TD4160_BOE_A04S) += td4160_boe/td4160_boe.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_NT36525C_SHARP_A04S) += nt36525c_sharp/nt36525c_sharp.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_NT36525C_SHARP_VE_A04S) += nt36525c_sharp_ve/nt36525c_sharp_ve.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_TD4162_BOE_A04S) += td4162_boe/td4162_boe.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_NT36525C_TIANMA_A04S) += nt36525c_tianma/nt36525c_tianma.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_NT36525C_DTC_A04S) += nt36525c_dtc/nt36525c_dtc.o
-obj-$(CONFIG_EXYNOS_DECON_LCD_NT36672C_TIANMA_A14) += nt36672c_tianma_a14/nt36672c_tianma.o
-
+#
+# Panel and DDI(display driver ic) Device Drivers
+#
+obj-$(CONFIG_EXYNOS_DECON_LCD_S6E3XA0) += s6e3xa0/
+obj-$(CONFIG_EXYNOS_DECON_LCD_S6E3FA7) += s6e3fa7/
+obj-$(CONFIG_EXYNOS_DECON_LCD_S6E3FA9) += s6e3fa9/
+obj-$(CONFIG_EXYNOS_DECON_LCD_S6E3FAB) += s6e3fab/
+obj-$(CONFIG_EXYNOS_DECON_LCD_S6E3HA8) += s6e3ha8/
+obj-$(CONFIG_EXYNOS_DECON_LCD_S6E3HA9) += s6e3ha9/
+obj-$(CONFIG_EXYNOS_DECON_LCD_S6E3HAB) += s6e3hab/
+obj-$(CONFIG_EXYNOS_DECON_LCD_S6E3HAC) += s6e3hac/
+obj-$(CONFIG_EXYNOS_DECON_LCD_EA8076) += ea8076/
+obj-$(CONFIG_EXYNOS_DECON_LCD_EA8079) += ea8079/
+obj-$(CONFIG_EXYNOS_DECON_LCD_S6E3FC3) += s6e3fc3/

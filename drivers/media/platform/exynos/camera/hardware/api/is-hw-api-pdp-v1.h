@@ -65,7 +65,7 @@ void pdp_hw_s_core(struct is_pdp *pdp, bool pd_enable, struct is_sensor_cfg *sen
 	u32 img_hwformat, u32 img_pixelsize,
 	u32 pd_width, u32 pd_height, u32 pd_hwformat,
 	u32 sensor_type, u32 path, int sensor_mode, u32 fps, u32 en_sdc, u32 en_votf,
-	u32 num_buffers, ulong freq, u32 position);
+	u32 num_buffers, ulong freq, u32 binning, u32 position);
 void pdp_hw_s_init(void __iomem *base);
 void pdp_hw_s_reset(void __iomem *base);
 void pdp_hw_s_global(void __iomem *base, u32 ch, u32 lic_mode, void *data);
@@ -84,7 +84,7 @@ int pdp_hw_wait_idle(void __iomem *base, unsigned long state);
 int pdp_hw_g_stat0(void __iomem *base, void *buf, size_t len);
 void pdp_hw_g_pdstat_size(u32 *width, u32 *height, u32 *bytes_per_pixel);
 void pdp_hw_s_pdstat_path(void __iomem *base, bool enable);
-void pdp_hw_s_line_row(void __iomem *base, bool pd_enable, int sensor_mode);
+void pdp_hw_s_line_row(void __iomem *base, bool pd_enable, int sensor_mode, u32 binning);
 
 /* sensor mode */
 void pdp_hw_s_sensor_type(void __iomem *base, u32 sensor_type);

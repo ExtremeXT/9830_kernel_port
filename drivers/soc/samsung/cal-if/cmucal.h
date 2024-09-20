@@ -144,6 +144,10 @@ struct vclk {
 };
 
 enum clk_pll_type {
+	pll_0732x = 7320,
+	pll_0716x = 7160,
+	pll_0717x = 7170,
+	pll_0718x = 7180,
 	pll_0816x = 8160,
 	pll_0818x = 8180,
 	pll_0822x = 8220,

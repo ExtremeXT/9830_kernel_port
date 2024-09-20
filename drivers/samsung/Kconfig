@@ -42,6 +42,13 @@ config WC_OFFSET
 	help
 	  set Wireless Charging IC Info Offset.
 
+config PD_OFFSET
+        int "PD HV Offset"
+        default 0
+        depends on SEC_PARAM
+        help
+          set PD HV Offset when you enable SEC_PARAM.
+
 config FMM_LOCK_OFFSET
 	int "FMM lock Offset"
 	default 0
@@ -101,6 +108,6 @@ config SEC_SYSUP
 	  Samsung system update Feature
 
 source "drivers/samsung/debug/Kconfig"
+source "drivers/samsung/misc/Kconfig"
 source "drivers/samsung/pm/Kconfig"
 source "drivers/samsung/perf/Kconfig"
-

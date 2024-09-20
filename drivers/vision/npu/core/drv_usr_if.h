@@ -13,7 +13,7 @@
 #define _DRV_USR_IF_H_
 
 /* Current supporting user API version */
-#define USER_API_VERSION	3
+#define USER_API_VERSION	4
 
 struct drv_usr_share {
 	unsigned int id;

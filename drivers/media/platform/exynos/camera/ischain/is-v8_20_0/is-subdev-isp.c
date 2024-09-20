@@ -52,8 +52,6 @@ int is_ischain_isp_stripe_cfg(struct is_group *group,
 		frame->stripe_info.region_base_addr[0] = frame->dvaddr_buffer[0];
 	} else if (region_id < frame->stripe_info.region_num - 1) {
 		/* Middle region */
-		frame->stripe_info.in.prev_h_pix_num = frame->stripe_info.in.h_pix_num;
-
 		if (is_leader || !stream->stripe_region_num) {
 			stripe_w = incrop->w * (region_id + 1) / frame->stripe_info.region_num;
 			stripe_w = ALIGN((stripe_w - frame->stripe_info.in.h_pix_num), 2);
@@ -213,7 +211,7 @@ static int is_ischain_isp_cfg(struct is_subdev *leader,
 		if (device->sensor)
 			device->sensor->use_stripe_flag = true;
 	} else {
-		if (frame && device->sensor)
+		if (device->sensor)
 			device->sensor->use_stripe_flag = false;
 	}
 

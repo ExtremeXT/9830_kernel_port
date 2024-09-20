@@ -32,6 +32,7 @@
 #include <linux/usb/gadget.h>
 #include <linux/usb/of.h>
 #include <linux/usb/otg.h>
+
 #include <linux/usb_notify.h>
 
 #include "core.h"
@@ -43,14 +44,12 @@
 
 #define DWC3_DEFAULT_AUTOSUSPEND_DELAY	5000 /* ms */
 
-#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
 /* for BC1.2 spec */
 int dwc3_set_vbus_current(int state)
 {
 	struct power_supply *psy;
 	union power_supply_propval pval = {0};
 
-	pr_info("usb: %s : %dmA\n", __func__, state);
 	psy = power_supply_get_by_name("battery");
 	if (!psy) {
 		pr_err("%s: fail to get battery power_supply\n", __func__);
@@ -67,7 +66,7 @@ static void dwc3_exynos_set_vbus_current_work(struct work_struct *w)
 {
 	struct dwc3 *dwc = container_of(w, struct dwc3, set_vbus_current_work);
 	struct otg_notify *o_notify = get_otg_notify();
-
+	
 	switch (dwc->vbus_current) {
 	case USB_CURRENT_SUSPENDED:
 	/* set vbus current for suspend state is called in usb_notify. */
@@ -87,8 +86,23 @@ static void dwc3_exynos_set_vbus_current_work(struct work_struct *w)
 skip:
 	return;
 }
-/* -------------------------------------------------------------------------- */
+
+#if defined(CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE) && defined(CONFIG_SEC_FACTORY)
+static void dwc3_usb_link_state_check_work(struct work_struct *wk)
+{
+	struct delayed_work *delay_work = container_of(wk, struct delayed_work, work);
+	struct dwc3 *dwc = container_of(delay_work, struct dwc3, usb_link_state_check_work);
+	u32 ret = 0;
+
+	if (dwc->pullups_connected) {
+		ret = dwc3_gadget_get_link_state(dwc);
+		printk("usb: %s: link state=%d\n", __func__, ret);
+	} else
+		printk("usb: %s: skip link state check\n", __func__);
+}
 #endif
+
+/* -------------------------------------------------------------------------- */
 
 /**
  * dwc3_get_dr_mode - Validates and sets dr_mode
@@ -308,15 +322,29 @@ void dwc3_core_config(struct dwc3 *dwc)
 	 */
 	reg = dwc3_readl(dwc->regs, DWC3_GUCTL);
 	reg |= (DWC3_GUCTL_USBHSTINAUTORETRYEN);
-
-	reg &= ~DWC3_GUCTL_REFCLKPER_MASK;
-	/* FOR ref_clk 50MHz */
-	reg |= DWC3_GUCTL_REFCLKPER(0x14);
-
+	if (dwc->adj_sof_accuracy) {
+		reg &= ~DWC3_GUCTL_REFCLKPER_MASK;
+		/* fix ITP interval time to 125us */
+#if defined(CONFIG_SOC_EXYNOS9830)
+		if (exynos_soc_info.main_rev == 1)
+			reg |= DWC3_GUCTL_REFCLKPER(0x32);
+		else if (exynos_soc_info.main_rev == 0)
+			reg |= DWC3_GUCTL_REFCLKPER(0xF);
+#else
+		reg |= DWC3_GUCTL_REFCLKPER(0xF);
+#endif
+	}
 	if (dwc->dis_u2_freeclk_exists_quirk) {
 		reg &= ~DWC3_GUCTL_REFCLKPER_MASK;
-		/* FOR ref_clk 50MHz */
-		reg |= DWC3_GUCTL_REFCLKPER(0x14);
+		/* fix ITP interval time to 125us */
+#if defined(CONFIG_SOC_EXYNOS9830)
+		if (exynos_soc_info.main_rev == 1)
+			reg |= DWC3_GUCTL_REFCLKPER(0x32);
+		else if (exynos_soc_info.main_rev == 0)
+			reg |= DWC3_GUCTL_REFCLKPER(0xF);
+#else
+		reg |= DWC3_GUCTL_REFCLKPER(0xF);
+#endif
 	}
 	if (dwc->sparse_transfer_control)
 		reg |= DWC3_GUCTL_SPRSCTRLTRANSEN;
@@ -374,11 +402,22 @@ void dwc3_core_config(struct dwc3 *dwc)
 	dwc3_writel(dwc->regs, DWC3_GUSB3PIPECTL(0), reg);
 
 	if (dwc->revision > DWC3_USB31_REVISION_120A) {
+#if defined(CONFIG_SOC_EXYNOS9820)
+		reg = dwc3_readl(dwc->regs, DWC3_LLUCTL);
+		reg |= (DWC3_PENDING_HP_TIMER_US(0xb) | DWC3_EN_US_HP_TIMER);
+		reg |= DWC3_FORCE_GEN1;
+		dwc3_writel(dwc->regs, DWC3_LLUCTL, reg);
+
+		reg = dwc3_readl(dwc->regs, DWC3_LSKIPFREQ);
+		reg |= (DWC3_PM_ENTRY_TIMER_US(0x9) |
+			DWC3_PM_LC_TIMER_US(0x5) | DWC3_EN_PM_TIMER_US);
+		dwc3_writel(dwc->regs, DWC3_LSKIPFREQ, reg);
+#elif defined(CONFIG_SOC_EXYNOS9830)
 		reg = dwc3_readl(dwc->regs, DWC3_LLUCTL);
 		reg &= ~(DWC3_LLUCTL_TX_TS1_CNT_MASK);
 		reg |= (DWC3_PENDING_HP_TIMER_US(0xb) | DWC3_EN_US_HP_TIMER) |
 		    (DWC3_LLUCTL_PIPE_RESET) | (DWC3_LLUCTL_LTSSM_TIMER_OVRRD) |
-		    (DWC3_LLUCTL_TX_TS1_CNT(0x7));
+		    (DWC3_LLUCTL_TX_TS1_CNT(0x0));
 		if (dwc->force_gen1)
 			reg |= DWC3_FORCE_GEN1;
 		dwc3_writel(dwc->regs, DWC3_LLUCTL, reg);
@@ -391,6 +430,7 @@ void dwc3_core_config(struct dwc3 *dwc)
 
 		reg = dwc3_readl(dwc->regs, DWC3_GUSB3PIPECTL(0));
 		reg &= ~DWC3_GUSB3PIPECTL_DISRXDETINP3;
+		reg &= ~DWC3_GUSB3PIPECTL_RX_DETOPOLL;
 		dwc3_writel(dwc->regs, DWC3_GUSB3PIPECTL(0), reg);
 
 		/* Use Default Value
@@ -409,6 +449,7 @@ void dwc3_core_config(struct dwc3 *dwc)
 		reg &= ~DWC3_GUCTL1_IP_GAP_ADD_ON_MASK;
 		reg |= DWC3_GUCTL1_IP_GAP_ADD_ON(0x1);
 		dwc3_writel(dwc->regs, DWC3_GUCTL1, reg);
+#endif
 	}
 
 	/*
@@ -578,6 +619,12 @@ int dwc3_soft_reset(struct dwc3 *dwc)
 	return 0;
 }
 
+static const struct clk_bulk_data dwc3_core_clks[] = {
+	{ .id = "ref" },
+	{ .id = "bus_early" },
+	{ .id = "suspend" },
+};
+
 /*
  * dwc3_frame_length_adjustment - Adjusts frame length if required
  * @dwc3: Pointer to our controller context structure
@@ -604,8 +651,9 @@ static void dwc3_frame_length_adjustment(struct dwc3 *dwc)
 		reg |= DWC3_GFLADJ_30MHZ_SDBND_SEL | dwc->fladj;
 		dwc3_writel(dwc->regs, DWC3_GFLADJ, reg);
 	}
-#else
-		/* FOR ref_clk 40MHz */
+#elif defined(CONFIG_SOC_EXYNOS9830)
+	if (exynos_soc_info.main_rev == 1) {
+		/* FOR EVT1 ref_clk 20MHz */
 		reg = dwc3_readl(dwc->regs, DWC3_GFLADJ);
 		dft = reg & DWC3_GFLADJ_30MHZ_MASK;
 		if(dft != dwc->fladj) {
@@ -614,13 +662,40 @@ static void dwc3_frame_length_adjustment(struct dwc3 *dwc)
 		}
 
 		reg &= ~DWC3_GFLADJ_REFCLK_240MHZ_DECR_MASK;
-		reg |= DWC3_GFLADJ_REFCLK_240MHZ_DECR(0x6);
+		reg |= DWC3_GFLADJ_REFCLK_240MHZ_DECR(0xc);
 
-		reg &= ~DWC3_GFLADJ_REFCLK_LPM_SEL;
+		reg |= DWC3_GFLADJ_REFCLK_LPM_SEL;
 		reg &= ~DWC3_GFLADJ_REFCLK_FLADJ_MASK;
 		reg |= DWC3_GFLADJ_30MHZ_SDBND_SEL;
 
 		dwc3_writel(dwc->regs, DWC3_GFLADJ, reg);
+	} else if (exynos_soc_info.main_rev == 0) {
+		/* For EVT0 ref_clk 66Mhz */
+		reg = dwc3_readl(dwc->regs, DWC3_GFLADJ);
+
+		reg &= ~DWC3_GFLADJ_REFCLK_240MHZ_DECR_MASK;
+		reg |= DWC3_GFLADJ_REFCLK_240MHZ_DECR(0xa);
+
+		/*
+		   if (dwc->dis_u2_freeclk_exists_quirk)
+		   reg &= ~DWC3_GFLADJ_REFCLK_LPM_SEL;
+		   else
+		   reg |= DWC3_GFLADJ_REFCLK_LPM_SEL;
+		   */
+
+		reg |= DWC3_GFLADJ_REFCLK_LPM_SEL;
+
+		reg &= ~DWC3_GFLADJ_REFCLK_FLADJ_MASK;
+		reg |= DWC3_GFLADJ_REFCLK_FLADJ(0x7f0);
+
+		dft = reg & DWC3_GFLADJ_30MHZ_MASK;
+		if(dft != dwc->fladj) {
+			reg &= ~DWC3_GFLADJ_30MHZ_MASK;
+			reg |= dwc->fladj;
+		}
+
+		dwc3_writel(dwc->regs, DWC3_GFLADJ, reg);
+	}
 #endif
 }
 
@@ -1017,7 +1092,9 @@ void dwc3_core_exit(struct dwc3 *dwc)
 	usb_phy_set_suspend(dwc->usb3_phy, 1);
 	phy_power_off(dwc->usb2_generic_phy);
 	phy_power_off(dwc->usb3_generic_phy);
-
+	clk_bulk_disable(dwc->num_clks, dwc->clks);
+	clk_bulk_unprepare(dwc->num_clks, dwc->clks);
+	reset_control_assert(dwc->reset);
 }
 
 static bool dwc3_core_is_valid(struct dwc3 *dwc)
@@ -1111,7 +1188,7 @@ static void dwc3_core_setup_global_control(struct dwc3 *dwc)
 	 */
 	if (dwc->revision < DWC3_REVISION_190A)
 		reg |= DWC3_GCTL_U2RSTECN;
-/*
+
 	if (dwc->dis_u2_freeclk_exists_quirk)
 		reg |= DWC3_GCTL_SOFITPSYNC;
 	else
@@ -1119,8 +1196,6 @@ static void dwc3_core_setup_global_control(struct dwc3 *dwc)
 
 	if (dwc->adj_sof_accuracy)
 		reg &= ~DWC3_GCTL_SOFITPSYNC;
-*/
-	reg &= ~DWC3_GCTL_SOFITPSYNC;
 
 	if (dwc->suspend_clk_freq == 0) {
 		dev_info(dwc->dev, "Set suspend clock freq to 26Mhz(Default)\n");
@@ -1262,8 +1337,6 @@ int dwc3_core_init(struct dwc3 *dwc)
 	}
 
 	/* Adjust SOF accuracy only for revisions >= 2.50a */
-	if (dwc->revision < DWC3_REVISION_250A)
-		dwc->adj_sof_accuracy = 0;
 
 	if (!dwc->ulpi_ready) {
 		ret = dwc3_core_ulpi_init(dwc);
@@ -1343,9 +1416,6 @@ int dwc3_core_init(struct dwc3 *dwc)
 
 		if (dwc->dis_tx_ipgap_linecheck_quirk)
 			reg |= DWC3_GUCTL1_TX_IPGAP_LINECHECK_DIS;
-
-		if (dwc->parkmode_disable_ss_quirk)
-			reg |= DWC3_GUCTL1_PARKMODE_DISABLE_SS;
 
 		dwc3_writel(dwc->regs, DWC3_GUCTL1, reg);
 	}
@@ -1609,9 +1679,6 @@ static void dwc3_core_exit_mode(struct dwc3 *dwc)
 		/* do nothing */
 		break;
 	}
-
-	/* de-assert DRVVBUS for HOST and OTG mode */
-	dwc3_set_prtcap(dwc, DWC3_GCTL_PRTCAP_DEVICE);
 }
 
 static int dwc3_get_option(struct dwc3 *dwc)
@@ -1745,8 +1812,6 @@ static void dwc3_get_properties(struct dwc3 *dwc)
 				"snps,dis-del-phy-power-chg-quirk");
 	dwc->dis_tx_ipgap_linecheck_quirk = device_property_read_bool(dev,
 				"snps,dis-tx-ipgap-linecheck-quirk");
-	dwc->parkmode_disable_ss_quirk = device_property_read_bool(dev,
-				"snps,parkmode-disable-ss-quirk");
 
 	dwc->tx_de_emphasis_quirk = device_property_read_bool(dev,
 				"snps,tx_de_emphasis_quirk");
@@ -1759,6 +1824,7 @@ static void dwc3_get_properties(struct dwc3 *dwc)
 
 	dwc->dis_metastability_quirk = device_property_read_bool(dev,
 				"snps,dis_metastability_quirk");
+	/* Added for 2020 */
 	dwc->no_extra_delay = device_property_read_bool(dev,
 				"samsung,no-extra-delay");
 	dwc->force_gen1 = device_property_read_bool(dev, "samsung,force-gen1");
@@ -1851,6 +1917,11 @@ static int dwc3_probe(struct platform_device *pdev)
 	if (!dwc)
 		return -ENOMEM;
 
+	dwc->clks = devm_kmemdup(dev, dwc3_core_clks, sizeof(dwc3_core_clks),
+				 GFP_KERNEL);
+	if (!dwc->clks)
+		return -ENOMEM;
+
 	dwc->dev = dev;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -1881,6 +1952,32 @@ static int dwc3_probe(struct platform_device *pdev)
 
 	dwc3_get_properties(dwc);
 
+	dwc->reset = devm_reset_control_get_optional_shared(dev, NULL);
+	if (IS_ERR(dwc->reset))
+		return PTR_ERR(dwc->reset);
+	if (dev->of_node) {
+		dwc->num_clks = ARRAY_SIZE(dwc3_core_clks);
+		ret = clk_bulk_get(dev, dwc->num_clks, dwc->clks);
+		if (ret == -EPROBE_DEFER)
+		/*
+		 * Clocks are optional, but new DT platforms should support all
+		 * clocks as required by the DT-binding.
+		 */
+		if (ret)
+			dwc->num_clks = 0;
+	}
+	ret = reset_control_deassert(dwc->reset);
+	if (ret)
+		goto put_clks;
+
+	ret = clk_bulk_prepare(dwc->num_clks, dwc->clks);
+	if (ret)
+		goto assert_reset;
+
+	ret = clk_bulk_enable(dwc->num_clks, dwc->clks);
+	if (ret)
+		goto unprepare_clks;
+
 	ret = dma_set_mask(dwc->sysdev, DMA_BIT_MASK(36));
 	if (ret) {
 		pr_err("dma set mask ret = %d\n", ret);
@@ -1908,13 +2005,9 @@ static int dwc3_probe(struct platform_device *pdev)
 	if (ret)
 		goto err3;
 
-	/*
-	 * pm_runtime_get_sync triggers dwc3_core_init,
-	 * which causes Kernel panic because dwc3_core_init
-	 * is called in pm_runtime_get_sync before
-	 * dwc3_alloc_event_buffers. Move the location to
-	 * call pm runtime api
-	 */
+	/* pm_runtime_get_sync triggers dwc3_core_init, which causes Kernel panic
+		because dwc3_core_init is called in pm_runtime_get_sync before dwc3_alloc_event_buffers.
+		Move the location to call pm runtime api  */
 	pm_runtime_set_active(dev);
 	pm_runtime_use_autosuspend(dev);
 	pm_runtime_set_autosuspend_delay(dev, DWC3_DEFAULT_AUTOSUSPEND_DELAY);
@@ -1928,22 +2021,22 @@ static int dwc3_probe(struct platform_device *pdev)
 
 	ret = dwc3_core_init(dwc);
 	if (ret) {
-		if (ret != -EPROBE_DEFER)
-			dev_err(dev, "failed to initialize core: %d\n", ret);
+		dev_err(dev, "failed to initialize core\n");
 		goto err4;
 	}
 
 	dwc3_check_params(dwc);
-	dwc3_debugfs_init(dwc);
 
 	ret = dwc3_core_init_mode(dwc);
 	if (ret)
 		goto err5;
 
+	dwc3_debugfs_init(dwc);
 	pm_runtime_put(dev);
-
-#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
 	INIT_WORK(&dwc->set_vbus_current_work, dwc3_exynos_set_vbus_current_work);
+#if defined(CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE) && defined(CONFIG_SEC_FACTORY)
+	INIT_DELAYED_WORK(&dwc->usb_link_state_check_work,
+					dwc3_usb_link_state_check_work);
 #endif
 
 	/* Disable LDO */
@@ -1953,19 +2046,7 @@ static int dwc3_probe(struct platform_device *pdev)
 	return 0;
 
 err5:
-	dwc3_debugfs_exit(dwc);
 	dwc3_event_buffers_cleanup(dwc);
-
-	usb_phy_shutdown(dwc->usb2_phy);
-	usb_phy_shutdown(dwc->usb3_phy);
-	phy_exit(dwc->usb2_generic_phy);
-	phy_exit(dwc->usb3_generic_phy);
-
-	usb_phy_set_suspend(dwc->usb2_phy, 1);
-	usb_phy_set_suspend(dwc->usb3_phy, 1);
-	phy_power_off(dwc->usb2_generic_phy);
-	phy_power_off(dwc->usb3_generic_phy);
-
 	dwc3_ulpi_exit(dwc);
 
 err4:
@@ -1982,7 +2063,13 @@ err1:
 	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 
+	clk_bulk_disable(dwc->num_clks, dwc->clks);
+unprepare_clks:
 	phy_conn(dwc->usb2_generic_phy, 0);
+assert_reset:
+	reset_control_assert(dwc->reset);
+put_clks:
+	clk_bulk_put(dwc->num_clks, dwc->clks);
 
 	return ret;
 }
@@ -1993,21 +2080,20 @@ static int dwc3_remove(struct platform_device *pdev)
 
 	pm_runtime_get_sync(&pdev->dev);
 
-	dwc3_core_exit_mode(dwc);
 	dwc3_debugfs_exit(dwc);
+	dwc3_core_exit_mode(dwc);
 
 	dwc3_core_exit(dwc);
 	dwc3_ulpi_exit(dwc);
 
 	if (dwc->dr_mode != USB_DR_MODE_OTG)
 		pm_runtime_put_sync(&pdev->dev);
+	pm_runtime_allow(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
-	pm_runtime_put_noidle(&pdev->dev);
-	pm_runtime_set_suspended(&pdev->dev);
 
 	dwc3_free_event_buffers(dwc);
 	dwc3_free_scratch_buffers(dwc);
-//	clk_bulk_put(dwc->num_clks, dwc->clks);
+	clk_bulk_put(dwc->num_clks, dwc->clks);
 
 	return 0;
 }
@@ -2151,7 +2237,7 @@ static int dwc3_resume_common(struct dwc3 *dwc, pm_message_t msg)
 		if (PMSG_IS_AUTO(msg))
 			break;
 
-		ret = dwc3_core_init_for_resume(dwc);
+		ret = dwc3_core_init(dwc);
 		if (ret)
 			return ret;
 

@@ -54,7 +54,6 @@ int fingerprint_register(struct device *dev, void *drvdata,
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(fingerprint_register);
 
 void fingerprint_unregister(struct device *dev,
 	struct device_attribute *attributes[])
@@ -64,7 +63,6 @@ void fingerprint_unregister(struct device *dev,
 	for (i = 0; attributes[i] != NULL; i++)
 		device_remove_file(dev, attributes[i]);
 }
-EXPORT_SYMBOL_GPL(fingerprint_unregister);
 
 void destroy_fingerprint_class(void)
 {
@@ -73,7 +71,6 @@ void destroy_fingerprint_class(void)
 		fingerprint_class = NULL;
 	}
 }
-EXPORT_SYMBOL_GPL(destroy_fingerprint_class);
 
 static int __init fingerprint_class_init(void)
 {

@@ -22,7 +22,13 @@
 #endif
 
 #define MAX_TIMEOUT		12000
+#define MAX_TIMEOUT_SPEEDCHANGE 10000
+#define MAX_TIMEOUT_LANECHANGE  10000
 #define MAX_L2_TIMEOUT		2000
+#define LNKRCVYWAIT_TIMEOUT	500
+#define PLL_LOCK_TIMEOUT	500
+#define RX_OC_TIMEOUT		500
+#define MAX_L1_EXIT_TIMEOUT	300
 #define ID_MASK			0xffff
 #define TPUT_THRESHOLD		150
 #define MAX_RC_NUM		2
@@ -78,7 +84,6 @@ enum __ltssm_states {
 	S_LPBK_EXIT_TIMEOUT             = 0x1D,
 	S_HOT_RESET_ENTRY               = 0x1E,
 	S_HOT_RESET                             = 0x1F,
-	GEN3_LINKUP                     = 0x91,
 };
 
 #define LINK_STATE_DISP(state)  \
@@ -114,7 +119,6 @@ enum __ltssm_states {
         (state == S_LPBK_EXIT_TIMEOUT)  ? "LPBK EXIT TIMEOUT" : \
         (state == S_HOT_RESET_ENTRY)    ? "HOT RESET ENTRY" : \
         (state == S_HOT_RESET)          ? "HOT RESET" : \
-        (state == GEN3_LINKUP)                 ? "GEN3_L0" : \
         " Unknown state..!! "
 
 #define CAP_ID_NAME(id)	\
@@ -170,6 +174,7 @@ struct pcie_phyops {
 				struct regmap *sysreg_phandle,
 				void *elbi_base_regs, int ch_num);
 	int (*phy_eom)(struct device *dev, void *phy_base_regs);
+	void (*phy_input_clk_change)(struct exynos_pcie *exynos_pcie, bool enable);
 };
 
 struct exynos_pcie_ops {
@@ -187,6 +192,7 @@ struct exynos_pcie_ops {
 
 struct exynos_pcie {
 	struct dw_pcie		*pci;
+	struct pci_bus		*ep_pci_bus;
 	void __iomem		*elbi_base;
 	void __iomem		*phy_base;
 	void __iomem		*sysreg_base;
@@ -195,6 +201,11 @@ struct exynos_pcie {
 	void __iomem		*ia_base;
 	unsigned int		pci_cap[48];
 	unsigned int		pci_ext_cap[48];
+	u32			ep_pcie_cap_off;
+	u32			ep_l1ss_cap_off;
+	u32			ep_link_ctrl_off;
+	u32			ep_l1ss_ctrl1_off;
+	u32			ep_l1ss_ctrl2_off;
 	struct regmap		*pmureg;
 	struct regmap		*sysreg;
 	int			perst_gpio;
@@ -214,8 +225,12 @@ struct exynos_pcie {
 	bool			use_sysmmu;
 	bool			use_ia;
 	bool			use_nclkoff_en;
+	bool			cpl_timeout_recovery;
+	bool			pcie_irq_enabled;
+	bool			sudden_linkdown;
 	spinlock_t		conf_lock;
 	spinlock_t              reg_lock;
+	spinlock_t              pcie_l1_exit_lock;
 	struct workqueue_struct	*pcie_wq;
 	struct exynos_pcie_clks	clks;
 	struct pci_dev		*pci_dev;
@@ -223,7 +238,9 @@ struct exynos_pcie {
 	struct notifier_block	power_mode_nb;
 	struct notifier_block   ss_dma_mon_nb;
 	struct delayed_work	dislink_work;
+	struct delayed_work	cpl_timeout_work;
 	struct exynos_pcie_register_event *event_reg;
+	struct exynos_pcie_register_event *rc_event_reg[2];
 #ifdef CONFIG_PM_DEVFREQ
 	unsigned int            int_min_lock;
 #endif
@@ -236,12 +253,19 @@ struct exynos_pcie {
 	int			boot_cnt;
 	int			work_l1ss_cnt;
 	int			ep_device_type;
+#ifdef CONFIG_SEC_PANIC_PCIE_ERR
+	const char		*ep_device_name;
+#endif
 	int			max_link_speed;
 
 	struct pinctrl		*pcie_pinctrl;
 	struct pinctrl_state	*pin_state[MAX_PCIE_PIN_STATE];
 	struct pcie_eom_result **eom_result;
 	struct notifier_block	itmon_nb;
+
+	char			*rmem_msi_name;
+	unsigned long		rmem_msi_base;
+	u32			rmem_msi_size;
 
 	int wlan_gpio;
 	int ssd_gpio;
@@ -252,6 +276,10 @@ struct exynos_pcie {
 
 	u32 app_req_exit_l1;
 	u32 app_req_exit_l1_mode;
+
+	u32 btl_target_addr;
+	u32 btl_offset;
+	u32 btl_size;
 };
 
 #define PCIE_EXYNOS_OP_READ(base, type)					\

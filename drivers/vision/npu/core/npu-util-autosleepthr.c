@@ -111,6 +111,7 @@ static int auto_sleep_thread_thrfunc(void *data)
 	BUG_ON(!thrctx);
 	BUG_ON(!(thrctx->do_task));
 
+	thrctx->idle_start_ns = 0;
 	while (!kthread_should_stop()) {
 		/* Execute thread task */
 		if (!(thrctx->do_task)) {
@@ -141,8 +142,7 @@ static int auto_sleep_thread_thrfunc(void *data)
 
 				auto_sleep_thread_set_state(thrctx, THREAD_STATE_SLEEPING);
 				wait_event_interruptible_timeout(thrctx->wq,
-					wakeup_check(thrctx),
-					AUTO_SLEEP_THREAD_TIMEOUT);
+					wakeup_check(thrctx), thrctx->period);
 				auto_sleep_thread_set_state(thrctx, THREAD_STATE_RUNNING);
 				no_activity_cnt = 0;
 				npu_trace("ASThread[%s] wakeup.", thrctx->name);
@@ -160,7 +160,8 @@ static int auto_sleep_thread_thrfunc(void *data)
 int auto_sleep_thread_create(struct auto_sleep_thread *newthr, const char *print_name,
 	int (*do_task)(struct auto_sleep_thread_param *data),
 	int (*check_work)(struct auto_sleep_thread_param *data),
-	void (*on_idle)(struct auto_sleep_thread_param *data, s64 idle_duration_ns))
+	void (*on_idle)(struct auto_sleep_thread_param *data, s64 idle_duration_ns),
+	unsigned int period)
 {
 
 	BUG_ON(!newthr);
@@ -184,6 +185,10 @@ int auto_sleep_thread_create(struct auto_sleep_thread *newthr, const char *print
 	newthr->check_work = (check_work);
 	newthr->on_idle = (on_idle);
 	newthr->no_activity_threshold = DEFAULT_NO_ACTIVITY_THRESHOLD;
+	if (period == 0)
+		newthr->period = AUTO_SLEEP_THREAD_TIMEOUT;
+	else
+		newthr->period = period;
 	auto_sleep_thread_set_state(newthr, THREAD_STATE_INITIALIZED);
 
 	npu_info("Creating Auto Sleep Thread(%s): Completed - newthr(%pK), do_task(%pK)\n",
@@ -206,7 +211,7 @@ int auto_sleep_thread_start(struct auto_sleep_thread *thrctx, struct auto_sleep_
 	auto_sleep_thread_set_state(thrctx, THREAD_STATE_RUNNING);
 
 	npu_info("calling kthread_run for (%s)...\n", thrctx->name);
-	thrctx->thread_ref = kthread_run(auto_sleep_thread_thrfunc, thrctx, thrctx->name);
+	thrctx->thread_ref = kthread_run(auto_sleep_thread_thrfunc, thrctx, "%s", thrctx->name);
 	if (IS_ERR(thrctx->thread_ref)) {
 		npu_err("NPU: kthread_run failed(%pK) [%s]\n", thrctx->thread_ref, thrctx->name);
 		return -EFAULT;
@@ -224,7 +229,7 @@ int auto_sleep_thread_start(struct auto_sleep_thread *thrctx, struct auto_sleep_
  */
 int auto_sleep_thread_terminate(struct auto_sleep_thread *thrctx)
 {
-	int ret;
+	int ret = 0;
 
 	BUG_ON(!thrctx);
 	BUG_ON(!thrctx->thread_ref);
@@ -268,6 +273,23 @@ void auto_sleep_thread_signal(struct auto_sleep_thread *thrctx)
 	wake_up_all(&(thrctx->wq));
 
 	return;
+}
+
+void auto_sleep_thread_set_period(struct auto_sleep_thread *thrctx,
+		unsigned int period)
+{
+	BUG_ON(!thrctx);
+	BUG_ON(!thrctx->thread_ref);
+
+	if (period == 0)
+		thrctx->period = AUTO_SLEEP_THREAD_TIMEOUT;
+	else
+		thrctx->period = period;
+
+	npu_dbg("set AST (%s) period as %d\n", thrctx->name, thrctx->period);
+
+	/* immediately restart to re-set period */
+	auto_sleep_thread_signal(thrctx);
 }
 
 /* Unit test */

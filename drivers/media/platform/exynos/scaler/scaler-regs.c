@@ -472,32 +472,22 @@ static struct sc_bl_op_val sc_bl_op_tbl[] = {
 	{ONE,	 ONE,	ONE,	ONE},		/* ADD */
 };
 
-int sc_hwset_src_image_format(struct sc_dev *sc, struct sc_frame *frame)
+int sc_hwset_src_image_format(struct sc_dev *sc, const struct sc_fmt *fmt)
 {
-	u32 val = frame->sc_fmt->cfg_val;
-
-	if (sc_fmt_is_sbwc_lossy(frame->sc_fmt->pixelformat))
-		val |= SCALER_CFG_SBWC_LOSSY_BYTES32NUM(frame->byte32num);
-
-	writel(val, sc->regs + SCALER_SRC_CFG);
+	writel(fmt->cfg_val, sc->regs + SCALER_SRC_CFG);
 	return 0;
 }
 
-int sc_hwset_dst_image_format(struct sc_dev *sc, struct sc_frame *frame)
+int sc_hwset_dst_image_format(struct sc_dev *sc, const struct sc_fmt *fmt)
 {
-	u32 val = frame->sc_fmt->cfg_val;
-
-	if (sc_fmt_is_sbwc_lossy(frame->sc_fmt->pixelformat))
-		val |= SCALER_CFG_SBWC_LOSSY_BYTES32NUM(frame->byte32num);
-
-	writel(val, sc->regs + SCALER_DST_CFG);
+	writel(fmt->cfg_val, sc->regs + SCALER_DST_CFG);
 
 	/*
 	 * When output format is RGB,
 	 * CSC_Y_OFFSET_DST_EN should be 0
 	 * to avoid color distortion
 	 */
-	if (frame->sc_fmt->is_rgb) {
+	if (fmt->is_rgb) {
 		writel(readl(sc->regs + SCALER_CFG) &
 					~SCALER_CFG_CSC_Y_OFFSET_DST,
 				sc->regs + SCALER_CFG);
@@ -553,56 +543,8 @@ void get_blend_value(unsigned int *cfg, u32 val, bool pre_multi)
 		*cfg |= (1 << SCALER_OP_SEL_INV_SHIFT);
 }
 
-void sc_hwset_blend_src_addr(struct sc_dev *sc, struct sc_frame *frame)
-{
-	writel(frame->addr.ioaddr[SC_PLANE_Y],
-			sc->regs + SCALER_BLEND_SRC_BASE_REG);
-}
-
-void sc_set_blendsrc_cfg(struct sc_dev *sc, bool pre_multi,
-				struct sc_src_blend_cfg *src_blend_cfg)
-{
-	u32 val = 0;
-
-	if (!pre_multi && src_blend_cfg->pre_multi)
-		val |= (1 << SCALER_SRC_ALPHA_MUL_EN_SHIFT);
-	else if (pre_multi && !src_blend_cfg->pre_multi)
-		val |= (1 << SCALER_SRC_ALPHA_DIV_EN_SHIFT);
-
-	val |= (src_blend_cfg->blend_src_color_byte_swap
-				<< SCALER_BLEND_SRC_COLOR_BYTE_SWAP_SHIFT);
-	val |= (src_blend_cfg->blend_src_color_format
-				<< SCALER_BLEND_SRC_COLOR_FORMAT_SHIFT);
-
-	/* setting it to 2, as suggested by AP team engineer
-	 * JINWOOK LEE <jdmcjini.lee@samsung.com>
-	 */
-	val |= (2 << SCALER_BLEND_DST_CSC_HOFFSET_SHIFT);
-	val |= (2 << SCALER_BLEND_DST_CSC_VOFFSET_SHIFT);
-	writel(val, sc->regs + SCALER_BLEND_CFG_REG);
-}
-
-void sc_set_blend_src_span(struct sc_dev *sc, u32 val)
-{
-	writel(val, sc->regs + SCALER_BLEND_SRC_SPAN_REG);
-}
-
-void sc_blend_src_pos(struct sc_dev *sc, u32 hpos, u32 vpos)
-{
-	writel((hpos << SCALER_BLEND_SRC_H_POS_SHIFT) |
-				(vpos << SCALER_BLEND_SRC_V_POS_SHIFT),
-				sc->regs + SCALER_BLEND_SRC_POS_REG);
-}
-
-void sc_blend_src_wh(struct sc_dev *sc, u32 width, u32 height)
-{
-	writel((width << SCALER_BLEND_SRC_WH_WIDTH_SHIFT) |
-				(height << SCALER_BLEND_SRC_WH_HEIGHT_SHIFT),
-				sc->regs + SCALER_BLEND_SRC_WH_REG);
-}
-
 void sc_hwset_blend(struct sc_dev *sc, enum sc_blend_op bl_op, bool pre_multi,
-		unsigned char g_alpha, struct sc_src_blend_cfg *src_blend_cfg)
+		unsigned char g_alpha)
 {
 	unsigned int cfg = readl(sc->regs + SCALER_CFG);
 	int idx = bl_op - 1;
@@ -612,29 +554,28 @@ void sc_hwset_blend(struct sc_dev *sc, enum sc_blend_op bl_op, bool pre_multi,
 
 	cfg = readl(sc->regs + SCALER_SRC_BLEND_COLOR);
 	get_blend_value(&cfg, sc_bl_op_tbl[idx].src_color, pre_multi);
+	if (g_alpha < 0xff)
+		cfg |= (SRC_GA << SCALER_OP_SEL_SHIFT);
 	writel(cfg, sc->regs + SCALER_SRC_BLEND_COLOR);
 	sc_dbg("src_blend_color is 0x%x, %d\n", cfg, pre_multi);
 
 	cfg = readl(sc->regs + SCALER_SRC_BLEND_ALPHA);
 	get_blend_value(&cfg, sc_bl_op_tbl[idx].src_alpha, 1);
-	if (g_alpha < 0xff && sc_bl_op_tbl[idx].src_alpha == ONE) {
-		cfg &= ~SCALER_BLEND_GLOBAL_ALPHA_MASK;
+	if (g_alpha < 0xff)
 		cfg |= (SRC_GA << SCALER_OP_SEL_SHIFT) | (g_alpha << 0);
-	}
 	writel(cfg, sc->regs + SCALER_SRC_BLEND_ALPHA);
 	sc_dbg("src_blend_alpha is 0x%x\n", cfg);
 
 	cfg = readl(sc->regs + SCALER_DST_BLEND_COLOR);
-	get_blend_value(&cfg, sc_bl_op_tbl[idx].dst_color,
-			src_blend_cfg->pre_multi);
-	if (g_alpha < 0xff && sc_bl_op_tbl[idx].dst_color == INV_SA)
+	get_blend_value(&cfg, sc_bl_op_tbl[idx].dst_color, pre_multi);
+	if (g_alpha < 0xff)
 		cfg |= ((INV_SAGA & 0xf) << SCALER_OP_SEL_SHIFT);
 	writel(cfg, sc->regs + SCALER_DST_BLEND_COLOR);
 	sc_dbg("dst_blend_color is 0x%x\n", cfg);
 
 	cfg = readl(sc->regs + SCALER_DST_BLEND_ALPHA);
 	get_blend_value(&cfg, sc_bl_op_tbl[idx].dst_alpha, 1);
-	if (g_alpha < 0xff && sc_bl_op_tbl[idx].dst_alpha == INV_SA)
+	if (g_alpha < 0xff)
 		cfg |= ((INV_SAGA & 0xf) << SCALER_OP_SEL_SHIFT);
 	writel(cfg, sc->regs + SCALER_DST_BLEND_ALPHA);
 	sc_dbg("dst_blend_alpha is 0x%x\n", cfg);
@@ -649,21 +590,6 @@ void sc_hwset_blend(struct sc_dev *sc, enum sc_blend_op bl_op, bool pre_multi,
 		cfg = readl(sc->regs + SCALER_CFG);
 		cfg |= SCALER_CFG_BL_DIV_ALPHA_EN;
 		writel(cfg, sc->regs + SCALER_CFG);
-	}
-
-	/* Set source blending configuration */
-	if (sc->variant->blending) {
-		sc_set_blendsrc_cfg(sc, pre_multi, src_blend_cfg);
-
-		/* span in the units of pixels */
-		sc_set_blend_src_span(sc, src_blend_cfg->blend_src_width);
-
-		sc_blend_src_pos(sc,
-				src_blend_cfg->blend_src_h_pos,
-				src_blend_cfg->blend_src_v_pos);
-		sc_blend_src_wh(sc,
-				src_blend_cfg->blend_src_crop_width,
-				src_blend_cfg->blend_src_crop_height);
 	}
 }
 
@@ -853,14 +779,8 @@ void sc_hwset_polyphase_vcoef(struct sc_dev *sc,
 	}
 }
 
-static inline int sc_get_sbwc_span_bytes(const struct sc_fmt *fmt,
-					int width, unsigned short ratio)
+static inline int sc_get_sbwc_span_bytes(const struct sc_fmt *fmt, int width)
 {
-	/* Lossy case */
-	if (fmt->cfg_val & SCALER_CFG_SBWC_LOSSY)
-		return SBWCL_STRIDE(width, ratio);
-
-	/* Lossless case */
 	if ((fmt->cfg_val & SCALER_CFG_10BIT_MASK) == SCALER_CFG_10BIT_SBWC)
 		return width * 5;
 
@@ -872,19 +792,22 @@ void sc_hwset_src_imgsize(struct sc_dev *sc, struct sc_frame *frame)
 	unsigned long cfg = 0;
 
 	cfg &= ~(SCALER_SRC_CSPAN_MASK | SCALER_SRC_YSPAN_MASK);
-	cfg |= frame->width;
 
-	/*
-	 * TODO: C width should be half of Y width
-	 * but, how to get the diffferent c width from user
-	 * like AYV12 format
-	 */
-	if (frame->sc_fmt->num_comp == 2)
-		cfg |= (frame->width << frame->sc_fmt->cspan) << 16;
-	else if (frame->sc_fmt->num_comp == 3) {
-		if (frame->sc_fmt->is_alphablend_fmt)
+	if (sc_fmt_is_sbwc(frame->sc_fmt->pixelformat)) {
+		int span = sc_get_sbwc_span_bytes(frame->sc_fmt, frame->width);
+
+		cfg = span | (span << 16);
+	} else {
+		cfg |= frame->width;
+
+		/*
+		 * TODO: C width should be half of Y width
+		 * but, how to get the diffferent c width from user
+		 * like AYV12 format
+		 */
+		if (frame->sc_fmt->num_comp == 2) {
 			cfg |= (frame->width << frame->sc_fmt->cspan) << 16;
-		else {
+		} else if (frame->sc_fmt->num_comp == 3) {
 			if (sc_fmt_is_ayv12(frame->sc_fmt->pixelformat))
 				cfg |= ALIGN(frame->width >> 1, 16) << 16;
 			else if (frame->sc_fmt->cspan) /* YUV444 */
@@ -924,8 +847,7 @@ void sc_hwset_dst_imgsize(struct sc_dev *sc, struct sc_frame *frame)
 	cfg &= ~(SCALER_DST_CSPAN_MASK | SCALER_DST_YSPAN_MASK);
 
 	if (sc_fmt_is_sbwc(frame->sc_fmt->pixelformat)) {
-		int span = sc_get_sbwc_span_bytes(frame->sc_fmt,
-					frame->width, frame->byte32num);
+		int span = sc_get_sbwc_span_bytes(frame->sc_fmt, frame->width);
 
 		cfg = span | (span << 16);
 	} else {
@@ -952,7 +874,7 @@ void sc_hwset_dst_imgsize(struct sc_dev *sc, struct sc_frame *frame)
 }
 
 int sc_calc_s10b_planesize(u32 pixelformat, u32 width, u32 height,
-		u32 *ysize, u32 *csize, bool only_8bit, unsigned short ratio);
+				u32 *ysize, u32 *csize, bool only_8bit);
 static void sc_hwset_src_2bit_addr(struct sc_dev *sc, struct sc_frame *frame)
 {
 	u32 yaddr_2bit, caddr_2bit;
@@ -962,7 +884,7 @@ static void sc_hwset_src_2bit_addr(struct sc_dev *sc, struct sc_frame *frame)
 
 	sc_calc_s10b_planesize(frame->sc_fmt->pixelformat,
 				frame->width, frame->height,
-				&yaddr_2bit, &caddr_2bit, true, 0);
+				&yaddr_2bit, &caddr_2bit, true);
 	yaddr_2bit += frame->addr.ioaddr[SC_PLANE_Y];
 	caddr_2bit += frame->addr.ioaddr[SC_PLANE_CB];
 
@@ -1005,7 +927,7 @@ static void sc_hwset_dst_2bit_addr(struct sc_dev *sc, struct sc_frame *frame)
 
 	sc_calc_s10b_planesize(frame->sc_fmt->pixelformat,
 				frame->width, frame->height,
-				&yaddr_2bit, &caddr_2bit, true, 0);
+				&yaddr_2bit, &caddr_2bit, true);
 	yaddr_2bit += frame->addr.ioaddr[SC_PLANE_Y];
 	caddr_2bit += frame->addr.ioaddr[SC_PLANE_CB];
 
@@ -1075,8 +997,7 @@ void sc_hwregs_dump(struct sc_dev *sc)
 	sc_print_hex_dump(sc, sc->regs + 0x260, 4);
 	sc_print_hex_dump(sc, sc->regs + 0x278, 4);
 
-	if (sc->version <= SCALER_VERSION(2, 1, 1) ||
-			sc->version == SCALER_VERSION(4, 2, 0))
+	if (sc->version <= SCALER_VERSION(2, 1, 1))
 		sc_print_hex_dump(sc, sc->regs + 0x280, 0x28C - 0x280 + 4);
 	if (sc->version >= SCALER_VERSION(5, 0, 0))
 		sc_print_hex_dump(sc, sc->regs + 0x280, 0x288 - 0x280 + 4);
@@ -1097,11 +1018,6 @@ void sc_hwregs_dump(struct sc_dev *sc)
 
 	if (sc->version >= SCALER_VERSION(5, 0, 0))
 		goto end;
-
-	if (sc->version == SCALER_VERSION(4, 2, 0)) {
-		sc_print_hex_dump(sc, sc->regs + 0x300, 0x304 - 0x300 + 4);
-		sc_print_hex_dump(sc, sc->regs + 0x310, 0x318 - 0x310 + 4);
-	}
 
 	/* shadow registers */
 	sc_print_hex_dump(sc, sc->regs + 0x1004, 0x1004 - 0x1004 + 4);
@@ -1154,7 +1070,6 @@ const static char *sc_irq_err_status[] = {
 	[20] = "illigal dst width",
 	[21] = "illigal dst height",
 	[23] = "illigal scaling ratio",
-	[24] = "illegal format/width/height of blending source",
 	[25] = "illigal pre-scaler width/height",
 	[28] = "AXI Write Error Response",
 	[29] = "AXI Read Error Response",

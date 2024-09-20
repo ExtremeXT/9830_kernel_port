@@ -138,7 +138,8 @@ int sensor_cis_set_registers(struct v4l2_subdev *subdev, const u32 *regs, const 
 
 p_err:
 	if (ret) {
-		cis->stream_state = CIS_STREAM_SET_ERR;
+		if (cis)
+			cis->stream_state = CIS_STREAM_SET_ERR;
 		err("[%s] global/mode setting fail(%d)", __func__, ret);
 	}
 
@@ -172,7 +173,7 @@ int sensor_cis_set_registers_addr8(struct v4l2_subdev *subdev, const u32 *regs, 
 		goto p_err;
 	}
 
-	msleep(3);
+	usleep_range(3000, 3100);
 
 	for (i = 0; i < size; i += I2C_NEXT) {
 		switch (regs[i + I2C_ADDR]) {
@@ -289,19 +290,19 @@ int sensor_cis_check_rev(struct is_cis *cis)
 	if (cis->rev_valid_count) {
 		for (i = 0; i < cis->rev_valid_count; i++) {
 			if (cis->cis_data->cis_rev == cis->rev_valid_values[i]) {
-				pr_info("%s : Sensor version. Rev. 0x%X\n", __func__, cis->cis_data->cis_rev);
+				pr_info("%s : [%d][%d] Sensor version. Rev. 0x%X\n", __func__, cis->device, cis->id, cis->cis_data->cis_rev);
 				break;
 			}
 		}
 
 		if (i == cis->rev_valid_count) {
-			pr_info("%s : Wrong sensor version. Rev. 0x%X\n", __func__, cis->cis_data->cis_rev);
+			pr_info("%s : [%d][%d] Wrong sensor version. Rev. 0x%X\n", __func__, cis->device, cis->id, cis->cis_data->cis_rev);
 #if defined(USE_CAMERA_CHECK_SENSOR_REV)
 			ret = -EINVAL;
 #endif
 		}
 	} else {
-		pr_info("%s : Skip rev checking. Rev. 0x%X\n", __func__, cis->cis_data->cis_rev);
+		pr_info("%s : [%d][%d] Skip rev checking. Rev. 0x%X\n", __func__, cis->device, cis->id, cis->cis_data->cis_rev);
 	}
 
 p_err:
@@ -365,6 +366,26 @@ u32 sensor_cis_calc_dgain_code(u32 permile)
 u32 sensor_cis_calc_dgain_permile(u32 code)
 {
 	return (((code & 0xFF00) >> 8) * 1000) + ((code & 0xFF) * 1000 / 256);
+}
+
+u8 sensor_cis_get_duration_shifter(struct is_cis *cis, u32 input_duration)
+{
+	u8 shifter = 0;
+	u32 shifted_val = input_duration;
+	u64 max_duration_16bit = (u64)0xFF00 * 1000000 * cis->cis_data->line_length_pck / cis->cis_data->pclk;
+
+	if (input_duration > max_duration_16bit) {
+		shifted_val /=  max_duration_16bit;
+		while (shifted_val) {
+			shifted_val >>= 1;
+			shifter++;
+		}
+	}
+
+	dbg_sensor(1, "%s [%d] input_duration(%d), max_duration(%d), shifter(%d)\n",
+		__func__, cis->id, input_duration, max_duration_16bit, shifter);
+
+	return shifter;
 }
 
 int sensor_cis_compensate_gain_for_extremely_br(struct v4l2_subdev *subdev, u32 expo, u32 *again, u32 *dgain)
@@ -552,7 +573,7 @@ int sensor_cis_wait_streamoff(struct v4l2_subdev *subdev)
 	cis_shared_data *cis_data;
 	u32 wait_cnt = 0, time_out_cnt = 250;
 	u8 sensor_fcount = 0;
-	u32 i2c_fail_cnt = 0;
+	u32 i2c_fail_cnt = 0, i2c_fail_max_cnt = 5;
 
 	FIMC_BUG(!subdev);
 
@@ -596,6 +617,13 @@ int sensor_cis_wait_streamoff(struct v4l2_subdev *subdev)
 			i2c_fail_cnt++;
 			err("i2c transfer fail addr(%x), val(%x), try(%d), ret = %d\n",
 				0x0005, sensor_fcount, i2c_fail_cnt, ret);
+
+			if (i2c_fail_cnt >= i2c_fail_max_cnt) {
+				err("[MOD:D:%d] %s, i2c fail, i2c_fail_cnt(%d) >= i2c_fail_max_cnt(%d), sensor_fcount(%d)",
+						cis->id, __func__, i2c_fail_cnt, i2c_fail_max_cnt, sensor_fcount);
+				ret = -EINVAL;
+				goto p_err;
+			}
 		}
 #if defined(USE_RECOVER_I2C_TRANS)
 		if (i2c_fail_cnt >= USE_RECOVER_I2C_TRANS) {
@@ -620,10 +648,8 @@ int sensor_cis_wait_streamoff(struct v4l2_subdev *subdev)
 				cis->id, __func__, sensor_fcount, wait_cnt, time_out_cnt);
 	}
 
-#ifdef CONFIG_SENSOR_RETENTION_USE
-	/* retention mode CRC wait calculation */
-	usleep_range(5000, 5000);
-#endif
+	cis->cis_data->cur_pattern_mode = SENSOR_TEST_PATTERN_MODE_OFF;
+
 p_err:
 	return ret;
 }
@@ -715,14 +741,19 @@ int sensor_cis_wait_streamon(struct v4l2_subdev *subdev)
 		goto p_err;
 	}
 
+	if (cis_data->cur_frame_us_time > 300000 && cis_data->cur_frame_us_time < 2000000) {
+		time_out_cnt = (cis_data->cur_frame_us_time / CIS_STREAM_ON_WAIT_TIME) + 100; // for Hyperlapse night mode
+	}
+
+	if (cis_data->dual_slave == true || cis_data->highres_capture_mode == true) {
+		time_out_cnt = time_out_cnt * 6;
+	}
+
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 	ret = is_sensor_read8(client, 0x0005, &sensor_fcount);
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 	if (ret < 0)
 	    err("i2c transfer fail addr(%x), val(%x), ret = %d\n", 0x0005, sensor_fcount, ret);
-
-	if (cis_data->dual_slave == true)
-		time_out_cnt = time_out_cnt * 2;
 
 	/*
 	 * Read sensor frame counter (sensor_fcount address = 0x0005)
@@ -750,8 +781,9 @@ int sensor_cis_wait_streamon(struct v4l2_subdev *subdev)
 		}
 #endif
 		if (wait_cnt >= time_out_cnt) {
-			err("[MOD:D:%d] %s, Don't sensor stream on and time out, wait_limit(%d) > time_out(%d), sensor_fcount(%d)",
-				cis->id, __func__, wait_cnt, time_out_cnt, sensor_fcount);
+			err("[MOD:D:%d] %s, stream on wait failed (%d), wait_cnt(%d) > time_out_cnt(%d), framecount(%x), dual_slave(%d), highres(%d)",
+				cis->id, __func__, cis_data->cur_frame_us_time, wait_cnt, time_out_cnt,
+				sensor_fcount, cis_data->dual_slave, cis_data->highres_capture_mode);
 			ret = -EINVAL;
 			goto p_err;
 		}
@@ -767,6 +799,8 @@ int sensor_cis_wait_streamon(struct v4l2_subdev *subdev)
 	return 0;
 
 p_err:
+	CALL_CISOPS(cis, cis_log_status, subdev);
+
 	ret_err = CALL_CISOPS(cis, cis_stream_off, subdev);
 	if (ret_err < 0) {
 		err("[MOD:D:%d] stream off fail", cis->id);
@@ -857,3 +891,57 @@ int sensor_cis_active_test(struct v4l2_subdev *subdev)
 
 	return ret;
 }
+
+int sensor_cis_set_test_pattern(struct v4l2_subdev *subdev, camera2_sensor_ctl_t *sensor_ctl)
+{
+	int ret = 0;
+	struct is_cis *cis;
+	struct i2c_client *client;
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+
+	WARN_ON(!cis);
+	WARN_ON(!cis->cis_data);
+
+	client = cis->client;
+	if (unlikely(!client)) {
+		err("client is NULL");
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	dbg_sensor(1, "[MOD:D:%d] %s, cur_pattern_mode(%d), testPatternMode(%d)\n", cis->id, __func__,
+			cis->cis_data->cur_pattern_mode, sensor_ctl->testPatternMode);
+
+	if (cis->cis_data->cur_pattern_mode != sensor_ctl->testPatternMode) {
+		cis->cis_data->cur_pattern_mode = sensor_ctl->testPatternMode;
+		if (sensor_ctl->testPatternMode == SENSOR_TEST_PATTERN_MODE_OFF) {
+			info("%s: set DEFAULT pattern! (testpatternmode : %d)\n", __func__, sensor_ctl->testPatternMode);
+
+			I2C_MUTEX_LOCK(cis->i2c_lock);
+			is_sensor_write16(client, 0x0600, 0x0000);
+			I2C_MUTEX_UNLOCK(cis->i2c_lock);
+		} else if (sensor_ctl->testPatternMode == SENSOR_TEST_PATTERN_MODE_BLACK) {
+			info("%s: set BLACK pattern! (testpatternmode :%d), Data : 0x(%x, %x, %x, %x)\n",
+				__func__, sensor_ctl->testPatternMode,
+				(unsigned short)sensor_ctl->testPatternData[0],
+				(unsigned short)sensor_ctl->testPatternData[1],
+				(unsigned short)sensor_ctl->testPatternData[2],
+				(unsigned short)sensor_ctl->testPatternData[3]);
+
+			I2C_MUTEX_LOCK(cis->i2c_lock);
+			is_sensor_write16(client, 0x0600, 0x0001);
+			is_sensor_write16(client, 0x0602, 0x0040);
+			is_sensor_write16(client, 0x0604, 0x0040);
+			is_sensor_write16(client, 0x0606, 0x0040);
+			is_sensor_write16(client, 0x0608, 0x0040);
+
+			I2C_MUTEX_UNLOCK(cis->i2c_lock);
+		}
+	}
+
+p_err:
+	return ret;
+}
+EXPORT_SYMBOL_GPL(sensor_cis_set_test_pattern);
+

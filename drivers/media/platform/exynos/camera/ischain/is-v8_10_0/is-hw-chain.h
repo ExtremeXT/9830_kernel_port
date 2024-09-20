@@ -292,13 +292,13 @@ enum sysreg_vra_reg_field {
 /* 100K x 32(num of descriptor) x 3(num of 3AA */
 #define IS_TAAISP_SIZE		(0x00ACB0C0)
 
-/* TNR DMA: 123 MB*/
-/* Image: ((Max width * Max height * 14 / 8) + 16) * 2 * 2(buffer) */
-/* Weight: ((Max width * Max height / 2 / 2) * 2 * 2(buffer)) */
-/* Max width: 4624, Max height: 3468 depends on scenario */
+/* TNR DMA: 182.64 MB*/
+/* Image: ((Max width * Max height * 14 / 8) + 16) * 2 * 3 */
+/* Weight: ((Max width * Max height / 2 / 2) * 2 * 3) */
+/* Max width: 4608, Max height: 3456 depends on scenario */
 /* Max 3 instances are supported with SBWC margin (1.05) */
 /* not used for reprocessing instance */
-#define TAAISP_TNR_SIZE		(0x07B00000)
+#define TAAISP_TNR_SIZE		(0x0B6A54C0)
 
 /* CLAHE DMA: 8.44MB :  */
 /* (234912 * 8) bytes per 1 normal instance */
@@ -310,8 +310,8 @@ enum sysreg_vra_reg_field {
 /* DDK HEAP: 60MB */
 #define IS_HEAP_SIZE		(0x03C00000)
 
-/* SETFILE: 10.0MB */
-#define IS_SETFILE_SIZE		(0x00A00000)
+/* SETFILE: 9.0MB */
+#define IS_SETFILE_SIZE		(0x00900000)
 
 #define SYSREG_CSIS_BASE_ADDR	(0x15020000)
 #define SYSREG_IPP_BASE_ADDR	(0x15220000)

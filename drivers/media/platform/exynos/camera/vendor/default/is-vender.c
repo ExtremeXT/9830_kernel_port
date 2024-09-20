@@ -293,7 +293,8 @@ int is_vender_preprocessor_gpio_on(struct is_vender *vender, u32 scenario, u32 g
 	return ret;
 }
 
-int is_vender_sensor_gpio_on_sel(struct is_vender *vender, u32 scenario, u32 *gpio_scenario)
+int is_vender_sensor_gpio_on_sel(struct is_vender *vender, u32 scenario, u32 *gpio_scenario
+	, void *module_data)
 {
 	int ret = 0;
 	return ret;
@@ -335,12 +336,22 @@ int is_vender_sensor_gpio_off(struct is_vender *vender, u32 scenario, u32 gpio_s
 	return ret;
 }
 
+void is_vendor_sensor_suspend(void)
+{
+	return;
+}
+
+void is_vendor_resource_clean(void)
+{
+	return;
+}
+
 void is_vender_itf_open(struct is_vender *vender, struct sensor_open_extended *ext_info)
 {
 	return;
 }
 
-int is_vender_set_torch(struct camera2_shot *shot)
+int is_vender_set_torch(u32 aeflashMode)
 {
 	return 0;
 }

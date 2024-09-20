@@ -43,17 +43,20 @@
 #define SENSOR_NAME "S5K2LA"
 /* #define DEBUG_2LA_PLL */
 
-static const u32 *sensor_2la_global;
-static u32 sensor_2la_global_size;
+static const u32 *sensor_2la_initial_setting;
+static u32 sensor_2la_initial_setting_size;
+static const u32 *sensor_2la_global_1;
+static const u32 *sensor_2la_global_2;
+static u32 sensor_2la_global_size_1;
+static u32 sensor_2la_global_size_2;
 static const u32 **sensor_2la_setfiles;
 static const u32 *sensor_2la_setfile_sizes;
 static const struct sensor_pll_info_compact **sensor_2la_pllinfos;
 static u32 sensor_2la_max_setfile_num;
-
-static const u32 *sensor_2la_dualsync_master;
-static u32 sensor_2la_dualsync_master_size;
 static const u32 *sensor_2la_dualsync_slave;
 static u32 sensor_2la_dualsync_slave_size;
+static const u32 *sensor_2la_dualsync_single;
+static u32 sensor_2la_dualsync_single_size;
 
 /* For Recovery */
 static u32 sensor_2la_frame_duration_backup;
@@ -76,16 +79,72 @@ static bool sensor_2la_cis_is_wdr_mode_on(cis_shared_data *cis_data)
 	return sensor_2la_support_wdr[mode];
 }
 
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+static const struct cam_mipi_sensor_mode *sensor_2la_mipi_sensor_mode;
+static u32 sensor_2la_mipi_sensor_mode_size;
+static const int *sensor_2la_verify_sensor_mode;
+static int sensor_2la_verify_sensor_mode_size;
+
+static int sensor_2la_cis_set_mipi_clock(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+	struct is_cis *cis = NULL;
+	const struct cam_mipi_sensor_mode *cur_mipi_sensor_mode;
+	int mode = 0;
+
+	FIMC_BUG(!subdev);
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+
+	FIMC_BUG(!cis);
+	FIMC_BUG(!cis->cis_data);
+
+	mode = cis->cis_data->sens_config_index_cur;
+
+	dbg_sensor(1, "%s : mipi_clock_index_cur(%d), new(%d)\n", __func__,
+		cis->mipi_clock_index_cur, cis->mipi_clock_index_new);
+
+	if (mode >= sensor_2la_mipi_sensor_mode_size) {
+		err("sensor mode is out of bound");
+		return -1;
+	}
+
+	if (cis->mipi_clock_index_cur != cis->mipi_clock_index_new
+		&& cis->mipi_clock_index_new >= 0) {
+		cur_mipi_sensor_mode = &sensor_2la_mipi_sensor_mode[mode];
+
+		if (cur_mipi_sensor_mode->sensor_setting == NULL) {
+			dbg_sensor(1, "no mipi setting for current sensor mode\n");
+		} else if (cis->mipi_clock_index_new < cur_mipi_sensor_mode->sensor_setting_size) {
+			info("%s: change mipi clock [%d %d]\n", __func__, mode, cis->mipi_clock_index_new);
+			sensor_cis_set_registers(subdev,
+				cur_mipi_sensor_mode->sensor_setting[cis->mipi_clock_index_new].setting,
+				cur_mipi_sensor_mode->sensor_setting[cis->mipi_clock_index_new].setting_size);
+
+			cis->mipi_clock_index_cur = cis->mipi_clock_index_new;
+		} else {
+			err("sensor setting index is out of bound %d %d",
+				cis->mipi_clock_index_new, cur_mipi_sensor_mode->sensor_setting_size);
+		}
+	}
+
+	return ret;
+}
+#endif
+
 static void sensor_2la_set_integration_max_margin(u32 mode, cis_shared_data *cis_data)
 {
 	WARN_ON(!cis_data);
 
 	switch (mode) {
+	case SENSOR_2LA_2016X1134_240FPS:
+	case SENSOR_2LA_2016X1134_120FPS:
+		cis_data->max_margin_coarse_integration_time = 0x20;
+		break;
 	case SENSOR_2LA_4032X3024_30FPS:
 	case SENSOR_2LA_4032X2268_30FPS:
 	case SENSOR_2LA_4032X2268_60FPS:
-	case SENSOR_2LA_2016X1134_240FPS:
-	case SENSOR_2LA_2016X1134_120FPS:
+	case SENSOR_2LA_4032X3024_60FPS:
 		cis_data->max_margin_coarse_integration_time = SENSOR_2LA_COARSE_INTEGRATION_TIME_MAX_MARGIN;
 		break;
 	default:
@@ -231,19 +290,45 @@ int sensor_2la_cis_select_setfile(struct v4l2_subdev *subdev)
 	rev = cis->cis_data->cis_rev;
 
 	switch (rev) {
-	case 0xA000:
-	default:
+	case 0xA000:  /* Before OTP write */
+	case 0xA100:
+	case 0xA101:
+	case 0xA201:
 		info("2la sensor revision(%#x)\n", rev);
-		sensor_2la_global = sensor_2la_setfile_A_Global;
-		sensor_2la_global_size = ARRAY_SIZE(sensor_2la_setfile_A_Global);
+		sensor_2la_initial_setting = sensor_2la_setfile_A_initial_setting;
+		sensor_2la_initial_setting_size = ARRAY_SIZE(sensor_2la_setfile_A_initial_setting);
+		sensor_2la_global_1 = sensor_2la_setfile_A_Global_1;
+		sensor_2la_global_size_1 = ARRAY_SIZE(sensor_2la_setfile_A_Global_1);
+		sensor_2la_global_2 = sensor_2la_setfile_A_Global_2;
+		sensor_2la_global_size_2 = ARRAY_SIZE(sensor_2la_setfile_A_Global_2);
 		sensor_2la_setfiles = sensor_2la_setfiles_A;
 		sensor_2la_setfile_sizes = sensor_2la_setfile_A_sizes;
 		sensor_2la_pllinfos = sensor_2la_pllinfos_A;
 		sensor_2la_max_setfile_num = ARRAY_SIZE(sensor_2la_setfiles_A);
-		sensor_2la_dualsync_master = sensor_2la_setfile_A_dualsync_Master;
-		sensor_2la_dualsync_master_size = sizeof(sensor_2la_setfile_A_dualsync_Master) / sizeof(sensor_2la_setfile_A_dualsync_Master[0]);
-		sensor_2la_dualsync_slave = sensor_2la_setfile_A_dualsync_Slave;
-		sensor_2la_dualsync_slave_size = sizeof(sensor_2la_setfile_A_dualsync_Slave) / sizeof(sensor_2la_setfile_A_dualsync_Slave[0]);
+		break;
+	case 0xA202: /* After OTP write */
+		info("2la sensor revision(%#x)\n", rev);
+		sensor_2la_initial_setting = sensor_2la_setfile_A_initial_setting;
+		sensor_2la_initial_setting_size = ARRAY_SIZE(sensor_2la_setfile_A_initial_setting);
+		sensor_2la_global_2 = sensor_2la_setfile_A_Global_2;
+		sensor_2la_global_size_2 = ARRAY_SIZE(sensor_2la_setfile_A_Global_2);
+		sensor_2la_setfiles = sensor_2la_setfiles_A;
+		sensor_2la_setfile_sizes = sensor_2la_setfile_A_sizes;
+		sensor_2la_pllinfos = sensor_2la_pllinfos_A;
+		sensor_2la_max_setfile_num = ARRAY_SIZE(sensor_2la_setfiles_A);
+		break;
+	default:
+		info("2la sensor revision(%#x)\n", rev);
+		sensor_2la_initial_setting = sensor_2la_setfile_A_initial_setting;
+		sensor_2la_initial_setting_size = ARRAY_SIZE(sensor_2la_setfile_A_initial_setting);
+		sensor_2la_global_1 = sensor_2la_setfile_A_Global_1;
+		sensor_2la_global_size_1 = ARRAY_SIZE(sensor_2la_setfile_A_Global_1);
+		sensor_2la_global_2 = sensor_2la_setfile_A_Global_2;
+		sensor_2la_global_size_2 = ARRAY_SIZE(sensor_2la_setfile_A_Global_2);
+		sensor_2la_setfiles = sensor_2la_setfiles_A;
+		sensor_2la_setfile_sizes = sensor_2la_setfile_A_sizes;
+		sensor_2la_pllinfos = sensor_2la_pllinfos_A;
+		sensor_2la_max_setfile_num = ARRAY_SIZE(sensor_2la_setfiles_A);
 		break;
 	}
 
@@ -289,6 +374,12 @@ int sensor_2la_cis_init(struct v4l2_subdev *subdev)
 	cis->cis_data->cur_height = SENSOR_2LA_MAX_HEIGHT;
 	cis->cis_data->low_expo_start = 33000;
 	cis->need_mode_change = false;
+	cis->long_term_mode.sen_strm_off_on_enable = false;
+	cis->cis_data->cur_pattern_mode = SENSOR_TEST_PATTERN_MODE_OFF;
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+	cis->mipi_clock_index_cur = CAM_MIPI_NOT_INITIALIZED;
+	cis->mipi_clock_index_new = CAM_MIPI_NOT_INITIALIZED;
+#endif
 
 	sensor_2la_cis_data_calculation(sensor_2la_pllinfos[setfile_index], cis->cis_data);
 	sensor_2la_set_integration_max_margin(setfile_index, cis->cis_data);
@@ -458,9 +549,6 @@ int sensor_2la_cis_mode_change(struct v4l2_subdev *subdev, u32 mode)
 	struct is_module_enum *module;
 	struct is_device_sensor_peri *sensor_peri = NULL;
 	struct sensor_open_extended *ext_info = NULL;
-	struct is_device_sensor *device;
-	u32 ex_mode;
-#ifdef CONFIG_SEC_FACTORY
 	struct is_core *core = NULL;
 
 	core = (struct is_core *)dev_get_drvdata(is_dev);
@@ -468,19 +556,12 @@ int sensor_2la_cis_mode_change(struct v4l2_subdev *subdev, u32 mode)
 		err("core device is null");
 		return -EINVAL;
 	}
-#endif
 
 	WARN_ON(!subdev);
 
 	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
 	WARN_ON(!cis);
 	WARN_ON(!cis->cis_data);
-
-	device = (struct is_device_sensor *)v4l2_get_subdev_hostdata(subdev);
-	if (unlikely(!device)) {
-		err("device sensor is null");
-		return -EINVAL;
-	}
 
 	if (mode >= sensor_2la_max_setfile_num) {
 		err("invalid mode(%d)!!", mode);
@@ -495,28 +576,11 @@ int sensor_2la_cis_mode_change(struct v4l2_subdev *subdev, u32 mode)
 
 	sensor_2la_set_integration_max_margin(mode, cis->cis_data);
 
-	I2C_MUTEX_LOCK(cis->i2c_lock);
-
-	/* dual sync for live focus */
-	ex_mode = is_sensor_g_ex_mode(device);
-	if (ex_mode == EX_LIVEFOCUS
-#ifdef CONFIG_SEC_FACTORY
-		|| test_bit(IS_SENSOR_OPEN, &(core->sensor[0].state))
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+	cis->mipi_clock_index_cur = CAM_MIPI_NOT_INITIALIZED;
 #endif
-		) {
-		info("[%s]dual sync slave mode\n", __func__);
-		ret = sensor_cis_set_registers(subdev, sensor_2la_dualsync_slave, sensor_2la_dualsync_slave_size);
-		cis->cis_data->dual_slave = true;
-	} else {
-		info("[%s]dual sync master mode\n", __func__);
-		ret = sensor_cis_set_registers(subdev, sensor_2la_dualsync_master, sensor_2la_dualsync_master_size);
-		cis->cis_data->dual_slave = false;
-	}
 
-	if (ret < 0) {
-		err("dual sync setting fail!!");
-		goto p_err;
-	}
+	I2C_MUTEX_LOCK(cis->i2c_lock);
 
 	info("[%s] sensor mode(%d)\n", __func__, mode);
 	ret = sensor_cis_set_registers(subdev, sensor_2la_setfiles[mode],
@@ -526,7 +590,11 @@ int sensor_2la_cis_mode_change(struct v4l2_subdev *subdev, u32 mode)
 		goto p_err_i2c_unlock;
 	}
 
-	info("[%s] mode changed(%d)\n", __func__, mode);
+	/* EMB Header off */
+	ret = is_sensor_write8(cis->client, 0x0118, 0x00);
+	if (ret < 0){
+		err("EMB header off fail");
+	}
 
 p_err_i2c_unlock:
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
@@ -540,6 +608,7 @@ p_err:
 int sensor_2la_cis_set_global_setting(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
+	u16 rev = 0;
 	struct is_cis *cis = NULL;
 
 	WARN_ON(!subdev);
@@ -550,7 +619,18 @@ int sensor_2la_cis_set_global_setting(struct v4l2_subdev *subdev)
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 	info("[%s] global setting start\n", __func__);
 	/* setfile global setting is at camera entrance */
-	ret |= sensor_cis_set_registers(subdev, sensor_2la_global, sensor_2la_global_size);
+	rev = cis->cis_data->cis_rev;
+
+	/* Before OTP write */
+	if(rev < 0xA202) {
+		ret = sensor_cis_set_registers(subdev, sensor_2la_initial_setting, sensor_2la_initial_setting_size);
+		ret |= sensor_cis_set_registers(subdev, sensor_2la_global_1, sensor_2la_global_size_1);
+		ret |= sensor_cis_set_registers(subdev, sensor_2la_global_2, sensor_2la_global_size_2);
+	} else { /* After OTP write */
+		ret = sensor_cis_set_registers(subdev, sensor_2la_initial_setting, sensor_2la_initial_setting_size);
+		ret |= sensor_cis_set_registers(subdev, sensor_2la_global_2, sensor_2la_global_size_2);
+	}
+
 	if (ret < 0) {
 		err("sensor_2la_set_registers fail!!");
 		goto p_err;
@@ -629,7 +709,7 @@ int sensor_2la_cis_set_size(struct v4l2_subdev *subdev, cis_shared_data *cis_dat
 	/* 1. page_select */
 	ret = is_sensor_write16(client, 0x6028, 0x2000);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
 	/* 2. pixel address region setting */
 	start_x = ((SENSOR_2LA_MAX_WIDTH - cis_data->cur_width * ratio_w) / 2) & (~0x1);
@@ -640,34 +720,34 @@ int sensor_2la_cis_set_size(struct v4l2_subdev *subdev, cis_shared_data *cis_dat
 	if (!(end_x & (0x1)) || !(end_y & (0x1))) {
 		err("Sensor pixel end address must odd\n");
 		ret = -EINVAL;
-		goto p_err;
+		goto p_err_i2c_unlock;
 	}
 
 	ret = is_sensor_write16(client, 0x0344, start_x);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 	ret = is_sensor_write16(client, 0x0346, start_y);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 	ret = is_sensor_write16(client, 0x0348, end_x);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 	ret = is_sensor_write16(client, 0x034A, end_y);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
 	/* 3. output address setting */
 	ret = is_sensor_write16(client, 0x034C, cis_data->cur_width);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 	ret = is_sensor_write16(client, 0x034E, cis_data->cur_height);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
 	/* If not use to binning, sensor image should set only crop */
 	if (!binning) {
 		dbg_sensor(1, "Sensor size set is not binning\n");
-		goto p_err;
+		goto p_err_i2c_unlock;
 	}
 
 	/* 4. sub sampling setting */
@@ -678,16 +758,16 @@ int sensor_2la_cis_set_size(struct v4l2_subdev *subdev, cis_shared_data *cis_dat
 
 	ret = is_sensor_write16(client, 0x0380, even_x);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 	ret = is_sensor_write16(client, 0x0382, odd_x);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 	ret = is_sensor_write16(client, 0x0384, even_y);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 	ret = is_sensor_write16(client, 0x0386, odd_y);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
 #if 0
 	/* 5. binnig setting */
@@ -703,13 +783,13 @@ int sensor_2la_cis_set_size(struct v4l2_subdev *subdev, cis_shared_data *cis_dat
 	/* scaling_mode (0: No scaling, 1: Horizontal, 2: Full, 4:Separate vertical) */
 	ret = is_sensor_write16(client, 0x0400, 0x0000);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 	/* down_scale_m: 1 to 16 upwards (scale_n: 16(fixed))
 	 * down scale factor = down_scale_m / down_scale_n
 	 */
 	ret = is_sensor_write16(client, 0x0404, 0x0010);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
 	cis_data->frame_time = (cis_data->line_readOut_time * cis_data->cur_height / 1000);
 	cis->cis_data->rolling_shutter_skew = (cis->cis_data->cur_height - 1) * cis->cis_data->line_readOut_time;
@@ -721,8 +801,9 @@ int sensor_2la_cis_set_size(struct v4l2_subdev *subdev, cis_shared_data *cis_dat
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec) * 1000000 + (end.tv_usec - st.tv_usec));
 #endif
 
-p_err:
+p_err_i2c_unlock:
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
+p_err:
 	return ret;
 }
 
@@ -761,14 +842,33 @@ int sensor_2la_cis_stream_on(struct v4l2_subdev *subdev)
 
 	dbg_sensor(1, "[MOD:D:%d] %s\n", cis->id, __func__);
 
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+	sensor_2la_cis_set_mipi_clock(subdev);
+#endif
+
 	I2C_MUTEX_LOCK(cis->i2c_lock);
+
 	ret = sensor_2la_cis_group_param_hold_func(subdev, 0x01);
 	if (ret < 0)
 		err("group_param_hold_func failed at stream on");
 
+	if (cis_data->is_data.scene_mode == AA_SCENE_MODE_BOKEH_VIDEO
+		|| cis_data->is_data.scene_mode ==AA_SCENE_MODE_LIVE_OUTFOCUS) {
+		ret = sensor_cis_set_registers(subdev, sensor_2la_dualsync_slave, sensor_2la_dualsync_slave_size);
+		cis->cis_data->dual_slave = true;
+	} else {
+		ret = sensor_cis_set_registers(subdev, sensor_2la_dualsync_single, sensor_2la_dualsync_single_size);
+		cis->cis_data->dual_slave = false;
+	}
+
 	/* Sensor stream on */
-	info("%s\n", __func__);
+	info("%s scene_mode : %d, dual_slave : %d\n", __func__, cis_data->is_data.scene_mode, cis->cis_data->dual_slave);
 	is_sensor_write16(client, 0x0100, 0x0100);
+
+	if (cis->cis_data->dual_slave) {
+		msleep(40);
+		ret = is_sensor_write16(client, 0x0B30, 0x0100);
+	}
 
 	ret = sensor_2la_cis_group_param_hold_func(subdev, 0x00);
 	if (ret < 0)
@@ -782,6 +882,65 @@ int sensor_2la_cis_stream_on(struct v4l2_subdev *subdev)
 	do_gettimeofday(&end);
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
 #endif
+
+p_err:
+	return ret;
+}
+
+int sensor_2la_cis_set_test_pattern(struct v4l2_subdev *subdev, camera2_sensor_ctl_t *sensor_ctl)
+{
+	int ret = 0;
+	struct is_cis *cis;
+	struct i2c_client *client;
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+
+	WARN_ON(!cis);
+	WARN_ON(!cis->cis_data);
+
+	client = cis->client;
+	if (unlikely(!client)) {
+		err("client is NULL");
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	dbg_sensor(1, "[MOD:D:%d] %s, cur_pattern_mode(%d), testPatternMode(%d)\n", cis->id, __func__,
+			cis->cis_data->cur_pattern_mode, sensor_ctl->testPatternMode);
+
+	if (cis->cis_data->cur_pattern_mode != sensor_ctl->testPatternMode) {
+		if (sensor_ctl->testPatternMode == SENSOR_TEST_PATTERN_MODE_OFF) {
+			info("%s: set DEFAULT pattern! (testpatternmode : %d)\n", __func__, sensor_ctl->testPatternMode);
+
+			I2C_MUTEX_LOCK(cis->i2c_lock);
+			is_sensor_write16(client, 0x6226, 0x0000);
+			is_sensor_write16(client, 0xB004, 0x0000);
+			is_sensor_write16(client, 0x0600, 0x0000);
+			I2C_MUTEX_UNLOCK(cis->i2c_lock);
+
+			cis->cis_data->cur_pattern_mode = sensor_ctl->testPatternMode;
+		} else if (sensor_ctl->testPatternMode == SENSOR_TEST_PATTERN_MODE_BLACK) {
+			info("%s: set BLACK pattern! (testpatternmode :%d), Data : 0x(%x, %x, %x, %x)\n",
+				__func__, sensor_ctl->testPatternMode,
+				(unsigned short)sensor_ctl->testPatternData[0],
+				(unsigned short)sensor_ctl->testPatternData[1],
+				(unsigned short)sensor_ctl->testPatternData[2],
+				(unsigned short)sensor_ctl->testPatternData[3]);
+
+			I2C_MUTEX_LOCK(cis->i2c_lock);
+			is_sensor_write16(client, 0x6226, 0x0001);
+			is_sensor_write16(client, 0xB004, 0x0000);
+			is_sensor_write16(client, 0x0600, 0x0001);
+
+			is_sensor_write16(client, 0x0602, 0x0040);
+			is_sensor_write16(client, 0x0604, 0x0040);
+			is_sensor_write16(client, 0x0606, 0x0040);
+			is_sensor_write16(client, 0x0608, 0x0040);
+			I2C_MUTEX_UNLOCK(cis->i2c_lock);
+
+			cis->cis_data->cur_pattern_mode = sensor_ctl->testPatternMode;
+		}
+	}
 
 p_err:
 	return ret;
@@ -854,6 +1013,12 @@ int sensor_2la_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param
 	u16 short_coarse_int = 0;
 	u32 line_length_pck = 0;
 	u32 min_fine_int = 0;
+	u16 coarse_integration_time_shifter = 0;
+
+	u16 cit_shifter_array[17] = {0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5};
+	u16 cit_shifter_val = 0;
+	int cit_shifter_idx = 0;
+	u8 cit_denom_array[6] = {1, 2, 4, 8, 16, 32};
 
 #ifdef DEBUG_SENSOR_TIME
 	struct timeval st, end;
@@ -887,6 +1052,34 @@ int sensor_2la_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param
 	}
 
 	cis_data = cis->cis_data;
+
+	if (cis->long_term_mode.sen_strm_off_on_enable == false) {
+		switch(cis_data->sens_config_index_cur) {
+		case SENSOR_2LA_2016X1134_240FPS:
+		case SENSOR_2LA_2016X1134_120FPS:
+			if (MAX(target_exposure->long_val, target_exposure->short_val) > 80000) {
+				cit_shifter_idx = MIN(MAX(MAX(target_exposure->long_val, target_exposure->short_val) / 80000, 0), 16);
+				cit_shifter_val = MAX(cit_shifter_array[cit_shifter_idx], cis_data->frame_length_lines_shifter);
+			} else {
+				cit_shifter_val = (u16)(cis_data->frame_length_lines_shifter);
+			}
+			target_exposure->long_val = target_exposure->long_val / cit_denom_array[cit_shifter_val];
+			target_exposure->short_val = target_exposure->short_val / cit_denom_array[cit_shifter_val];
+			coarse_integration_time_shifter = ((cit_shifter_val<<8) & 0xFF00) + (cit_shifter_val & 0x00FF);
+			break;
+		default:
+			if (MAX(target_exposure->long_val, target_exposure->short_val) > 160000) {
+				cit_shifter_idx = MIN(MAX(MAX(target_exposure->long_val, target_exposure->short_val) / 160000, 0), 16);
+				cit_shifter_val = MAX(cit_shifter_array[cit_shifter_idx], cis_data->frame_length_lines_shifter);
+			} else {
+				cit_shifter_val = (u16)(cis_data->frame_length_lines_shifter);
+			}
+			target_exposure->long_val = target_exposure->long_val / cit_denom_array[cit_shifter_val];
+			target_exposure->short_val = target_exposure->short_val / cit_denom_array[cit_shifter_val];
+			coarse_integration_time_shifter = ((cit_shifter_val<<8) & 0xFF00) + (cit_shifter_val & 0x00FF);
+			break;
+		}
+	}
 
 	dbg_sensor(1, "[MOD:D:%d] %s, vsync_cnt(%d), target long(%d), short(%d)\n", cis->id, __func__,
 			cis_data->sen_vsync_count, target_exposure->long_val, target_exposure->short_val);
@@ -929,7 +1122,7 @@ int sensor_2la_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param
 	hold = sensor_2la_cis_group_param_hold_func(subdev, 0x01);
 	if (hold < 0) {
 		ret = hold;
-		goto p_err;
+		goto p_err_i2c_unlock;
 	}
 
 	/* WDR mode */
@@ -942,13 +1135,20 @@ int sensor_2la_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param
 	/* Short exposure */
 	ret = is_sensor_write16(client, 0x0202, short_coarse_int);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
 	/* Long exposure */
 	if (sensor_2la_cis_is_wdr_mode_on(cis_data)) {
 		ret = is_sensor_write16(client, 0x0226, long_coarse_int);
 		if (ret < 0)
-			goto p_err;
+			goto p_err_i2c_unlock;
+	}
+
+	/* CIT shifter */
+	if (cis->long_term_mode.sen_strm_off_on_enable == false) {
+		ret = is_sensor_write16(client, 0x0704, coarse_integration_time_shifter);
+		if (ret < 0)
+			goto p_err_i2c_unlock;
 	}
 
 	dbg_sensor(1, "[MOD:D:%d] %s, vsync_cnt(%d), vt_pic_clk_freq_khz (%d),"
@@ -963,7 +1163,7 @@ int sensor_2la_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
 #endif
 
-p_err:
+p_err_i2c_unlock:
 	if (hold > 0) {
 		hold = sensor_2la_cis_group_param_hold_func(subdev, 0x00);
 		if (hold < 0)
@@ -971,6 +1171,7 @@ p_err:
 	}
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
+p_err:
 	return ret;
 }
 
@@ -1152,6 +1353,11 @@ int sensor_2la_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 frame_dura
 	u64 vt_pic_clk_freq_khz = 0;
 	u32 line_length_pck = 0;
 	u16 frame_length_lines = 0;
+	u8 frame_length_lines_shifter = 0;
+
+	u8 fll_shifter_array[17] = {0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5};
+	int fll_shifter_idx = 0;
+	u8 fll_denom_array[6] = {1, 2, 4, 8, 16, 32};
 
 #ifdef DEBUG_SENSOR_TIME
 	struct timeval st, end;
@@ -1173,13 +1379,38 @@ int sensor_2la_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 frame_dura
 		goto p_err;
 	}
 
-	sensor_2la_frame_duration_backup = frame_duration;
-
 	cis_data = cis->cis_data;
 
 	if (frame_duration < cis_data->min_frame_us_time) {
 		dbg_sensor(1, "frame duration is less than min(%d)\n", frame_duration);
 		frame_duration = cis_data->min_frame_us_time;
+	}
+
+	sensor_2la_frame_duration_backup = frame_duration;
+	cis_data->cur_frame_us_time = frame_duration;
+
+	if (cis->long_term_mode.sen_strm_off_on_enable == false) {
+		switch(cis_data->sens_config_index_cur) {
+		case SENSOR_2LA_2016X1134_240FPS:
+		case SENSOR_2LA_2016X1134_120FPS:
+			if (frame_duration > 80000) {
+				fll_shifter_idx = MIN(MAX(frame_duration / 80000, 0), 16);
+				frame_length_lines_shifter = fll_shifter_array[fll_shifter_idx];
+				frame_duration = frame_duration / fll_denom_array[frame_length_lines_shifter];
+			} else {
+				frame_length_lines_shifter = 0x0;
+			}
+			break;
+		default:
+			if (frame_duration > 160000) {
+				fll_shifter_idx = MIN(MAX(frame_duration / 160000, 0), 16);
+				frame_length_lines_shifter = fll_shifter_array[fll_shifter_idx];
+				frame_duration = frame_duration / fll_denom_array[frame_length_lines_shifter];
+			} else {
+				frame_length_lines_shifter = 0x0;
+			}
+			break;
+		}
 	}
 
 	vt_pic_clk_freq_khz = cis_data->pclk / (1000);
@@ -1195,23 +1426,30 @@ int sensor_2la_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 frame_dura
 	hold = sensor_2la_cis_group_param_hold_func(subdev, 0x01);
 	if (hold < 0) {
 		ret = hold;
-		goto p_err;
+		goto p_err_i2c_unlock;
 	}
 
 	ret = is_sensor_write16(client, 0x0340, frame_length_lines);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
-	cis_data->cur_frame_us_time = frame_duration;
+	/* frame duration shifter */
+	if (cis->long_term_mode.sen_strm_off_on_enable == false) {
+		ret = is_sensor_write8(client, 0x0702, frame_length_lines_shifter);
+		if (ret < 0)
+			goto p_err_i2c_unlock;
+	}
+
 	cis_data->frame_length_lines = frame_length_lines;
 	cis_data->max_coarse_integration_time = cis_data->frame_length_lines - cis_data->max_margin_coarse_integration_time;
+	cis_data->frame_length_lines_shifter = frame_length_lines_shifter;
 
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
 #endif
 
-p_err:
+p_err_i2c_unlock:
 	if (hold > 0) {
 		hold = sensor_2la_cis_group_param_hold_func(subdev, 0x00);
 		if (hold < 0)
@@ -1219,6 +1457,7 @@ p_err:
 	}
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
+p_err:
 	return ret;
 }
 
@@ -1331,6 +1570,68 @@ int sensor_2la_cis_adjust_analog_gain(struct v4l2_subdev *subdev, u32 input_agai
 	return ret;
 }
 
+int sensor_2la_cis_long_term_exposure(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+	struct is_cis *cis;
+	struct is_long_term_expo_mode *lte_mode;
+	unsigned char cit_lshift_val = 0;
+	unsigned char shift_count = 0;
+#ifdef USE_SENSOR_LONG_EXPOSURE_SHOT
+	u32 lte_expousre = 0;
+#endif
+
+	WARN_ON(!subdev);
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+	lte_mode = &cis->long_term_mode;
+
+	I2C_MUTEX_LOCK(cis->i2c_lock);
+	/* LTE mode or normal mode set */
+	if (lte_mode->sen_strm_off_on_enable) {
+		if (lte_mode->expo[0] > 125000) {
+#ifdef USE_SENSOR_LONG_EXPOSURE_SHOT
+			lte_expousre = lte_mode->expo[0];
+			cit_lshift_val = (unsigned char)(lte_mode->expo[0] / 125000);
+			while (cit_lshift_val) {
+				cit_lshift_val = cit_lshift_val / 2;
+				lte_expousre = lte_expousre / 2;
+				shift_count++;
+			}
+			lte_mode->expo[0] = lte_expousre;
+#else
+			cit_lshift_val = (unsigned char)(lte_mode->expo[0] / 125000);
+			while (cit_lshift_val) {
+				cit_lshift_val = cit_lshift_val / 2;
+				if (cit_lshift_val > 0)
+					shift_count++;
+			}
+			lte_mode->expo[0] = 125000;
+#endif
+			ret |= is_sensor_write16(cis->client, 0xFCFC, 0x4000);
+			ret |= is_sensor_write8(cis->client, 0x0702, shift_count);
+			ret |= is_sensor_write8(cis->client, 0x0704, shift_count);
+		}
+	} else {
+		cit_lshift_val = 0;
+		ret |= is_sensor_write16(cis->client, 0xFCFC, 0x4000);
+		ret |= is_sensor_write8(cis->client, 0x0702, cit_lshift_val);
+		ret |= is_sensor_write8(cis->client, 0x0704, cit_lshift_val);
+	}
+
+	I2C_MUTEX_UNLOCK(cis->i2c_lock);
+
+	info("%s enable(%d) shift_count(%d) exp(%d)",
+		__func__, lte_mode->sen_strm_off_on_enable, shift_count, lte_mode->expo[0]);
+
+	if (ret < 0) {
+		pr_err("ERR[%s]: LTE register setting fail\n", __func__);
+		return ret;
+	}
+
+	return ret;
+}
+
 int sensor_2la_cis_set_analog_gain(struct v4l2_subdev *subdev, struct ae_param *again)
 {
 	int ret = 0;
@@ -1382,19 +1683,19 @@ int sensor_2la_cis_set_analog_gain(struct v4l2_subdev *subdev, struct ae_param *
 	hold = sensor_2la_cis_group_param_hold_func(subdev, 0x01);
 	if (hold < 0) {
 		ret = hold;
-		goto p_err;
+		goto p_err_i2c_unlock;
 	}
 
 	ret = is_sensor_write16(client, 0x0204, analog_gain);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
 #endif
 
-p_err:
+p_err_i2c_unlock:
 	if (hold > 0) {
 		hold = sensor_2la_cis_group_param_hold_func(subdev, 0x00);
 		if (hold < 0)
@@ -1402,6 +1703,7 @@ p_err:
 	}
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
+p_err:
 	return ret;
 }
 
@@ -1438,12 +1740,12 @@ int sensor_2la_cis_get_analog_gain(struct v4l2_subdev *subdev, u32 *again)
 	hold = sensor_2la_cis_group_param_hold_func(subdev, 0x01);
 	if (hold < 0) {
 		ret = hold;
-		goto p_err;
+		goto p_err_i2c_unlock;
 	}
 
 	ret = is_sensor_read16(client, 0x0204, &analog_gain);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
 	*again = sensor_cis_calc_again_permile(analog_gain);
 
@@ -1455,7 +1757,7 @@ int sensor_2la_cis_get_analog_gain(struct v4l2_subdev *subdev, u32 *again)
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
 #endif
 
-p_err:
+p_err_i2c_unlock:
 	if (hold > 0) {
 		hold = sensor_2la_cis_group_param_hold_func(subdev, 0x00);
 		if (hold < 0)
@@ -1463,6 +1765,7 @@ p_err:
 	}
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
+p_err:
 	return ret;
 }
 
@@ -1627,7 +1930,7 @@ int sensor_2la_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 	hold = sensor_2la_cis_group_param_hold_func(subdev, 0x01);
 	if (hold < 0) {
 		ret = hold;
-		goto p_err;
+		goto p_err_i2c_unlock;
 	}
 
 	/*
@@ -1640,9 +1943,9 @@ int sensor_2la_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 	/* Short digital gain */
 	ret = is_sensor_write16(client, 0x020E, short_gain);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
-#if 0 // TEMP_2020
+#if 0
 	/* Long digital gain */
 	if (sensor_2la_cis_is_wdr_mode_on(cis_data)) {
 		ret = is_sensor_write16(client, 0x0C80, long_gain);
@@ -1656,7 +1959,7 @@ int sensor_2la_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
 #endif
 
-p_err:
+p_err_i2c_unlock:
 	if (hold > 0) {
 		hold = sensor_2la_cis_group_param_hold_func(subdev, 0x00);
 		if (hold < 0)
@@ -1664,6 +1967,7 @@ p_err:
 	}
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
+p_err:
 	return ret;
 }
 
@@ -1700,7 +2004,7 @@ int sensor_2la_cis_get_digital_gain(struct v4l2_subdev *subdev, u32 *dgain)
 	hold = sensor_2la_cis_group_param_hold_func(subdev, 0x01);
 	if (hold < 0) {
 		ret = hold;
-		goto p_err;
+		goto p_err_i2c_unlock;
 	}
 
 	/*
@@ -1712,7 +2016,7 @@ int sensor_2la_cis_get_digital_gain(struct v4l2_subdev *subdev, u32 *dgain)
 
 	ret = is_sensor_read16(client, 0x020E, &digital_gain);
 	if (ret < 0)
-		goto p_err;
+		goto p_err_i2c_unlock;
 
 	*dgain = sensor_cis_calc_dgain_permile(digital_gain);
 
@@ -1724,7 +2028,7 @@ int sensor_2la_cis_get_digital_gain(struct v4l2_subdev *subdev, u32 *dgain)
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
 #endif
 
-p_err:
+p_err_i2c_unlock:
 	if (hold > 0) {
 		hold = sensor_2la_cis_group_param_hold_func(subdev, 0x00);
 		if (hold < 0)
@@ -1732,6 +2036,7 @@ p_err:
 	}
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
+p_err:
 	return ret;
 }
 
@@ -1827,6 +2132,106 @@ p_err:
 	return ret;
 }
 
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+static int sensor_2la_cis_update_mipi_info(struct v4l2_subdev *subdev)
+{
+	struct is_cis *cis = NULL;
+	struct is_device_sensor *device;
+	const struct cam_mipi_sensor_mode *cur_mipi_sensor_mode;
+	int found = -1;
+
+	device = (struct is_device_sensor *)v4l2_get_subdev_hostdata(subdev);
+	if (device == NULL) {
+		err("device is NULL");
+		return -1;
+	}
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+	if (cis == NULL) {
+		err("cis is NULL");
+		return -1;
+	}
+
+	if (device->cfg->mode >= sensor_2la_mipi_sensor_mode_size) {
+		err("sensor mode is out of bound");
+		return -1;
+	}
+
+	cur_mipi_sensor_mode = &sensor_2la_mipi_sensor_mode[device->cfg->mode];
+
+	if (cur_mipi_sensor_mode->mipi_channel_size == 0 ||
+		cur_mipi_sensor_mode->mipi_channel == NULL) {
+		dbg_sensor(1, "skip select mipi channel\n");
+		return -1;
+	}
+
+	found = is_vendor_select_mipi_by_rf_channel(cur_mipi_sensor_mode->mipi_channel,
+				cur_mipi_sensor_mode->mipi_channel_size);
+	if (found != -1) {
+		if (found < cur_mipi_sensor_mode->sensor_setting_size) {
+			device->cfg->mipi_speed = cur_mipi_sensor_mode->sensor_setting[found].mipi_rate;
+			cis->mipi_clock_index_new = found;
+			info("%s - update mipi rate : %d\n", __func__, device->cfg->mipi_speed);
+		} else {
+			err("sensor setting size is out of bound");
+		}
+	}
+
+	return 0;
+}
+
+static int sensor_2la_cis_get_mipi_clock_string(struct v4l2_subdev *subdev, char *cur_mipi_str)
+{
+	struct is_cis *cis = NULL;
+	struct is_device_sensor *device;
+	const struct cam_mipi_sensor_mode *cur_mipi_sensor_mode;
+	int mode = 0;
+
+	cur_mipi_str[0] = '\0';
+
+	device = (struct is_device_sensor *)v4l2_get_subdev_hostdata(subdev);
+	if (device == NULL) {
+		err("device is NULL");
+		return -1;
+	}
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+	if (cis == NULL) {
+		err("cis is NULL");
+		return -1;
+	}
+
+	if (cis->cis_data->stream_on) {
+		mode = cis->cis_data->sens_config_index_cur;
+
+		if (mode >= sensor_2la_mipi_sensor_mode_size) {
+			err("sensor mode is out of bound");
+			return -1;
+		}
+
+		cur_mipi_sensor_mode = &sensor_2la_mipi_sensor_mode[mode];
+
+		if (cur_mipi_sensor_mode->sensor_setting_size == 0 ||
+			cur_mipi_sensor_mode->sensor_setting == NULL) {
+			err("sensor_setting is not available");
+			return -1;
+		}
+
+		if (cis->mipi_clock_index_new < 0 ||
+			cur_mipi_sensor_mode->sensor_setting[cis->mipi_clock_index_new].str_mipi_clk == NULL) {
+			err("mipi_clock_index_new is not available");
+			return -1;
+		}
+
+		sprintf(cur_mipi_str, "%s",
+			cur_mipi_sensor_mode->sensor_setting[cis->mipi_clock_index_new].str_mipi_clk);
+	}
+
+	return 0;
+}
+#endif
+
+
 int sensor_2la_cis_recover_stream_on(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
@@ -1892,9 +2297,15 @@ static struct is_cis_ops cis_ops_2la = {
 	.cis_wait_streamoff = sensor_cis_wait_streamoff,
 	.cis_wait_streamon = sensor_cis_wait_streamon,
 	.cis_data_calculation = sensor_2la_cis_data_calc,
+	.cis_set_long_term_exposure = sensor_2la_cis_long_term_exposure,
+	.cis_set_test_pattern = sensor_2la_cis_set_test_pattern,
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+	.cis_update_mipi_info = sensor_2la_cis_update_mipi_info,
+	.cis_get_mipi_clock_string = sensor_2la_cis_get_mipi_clock_string,
+#endif
 	.cis_check_rev_on_init = sensor_cis_check_rev_on_init,
 	.cis_set_initial_exposure = sensor_cis_set_initial_exposure,
-	.cis_recover_stream_on = sensor_2la_cis_recover_stream_on,
+	.cis_recover_stream_on = sensor_2la_cis_recover_stream_on, /* for ESD recovery */
 };
 
 static int cis_2la_probe(struct i2c_client *client,
@@ -1913,6 +2324,11 @@ static int cis_2la_probe(struct i2c_client *client,
 	struct device *dev;
 	struct device_node *dnode;
 	int i;
+	u16 rev = 0;
+
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+	int index;
+#endif
 
 	WARN_ON(!client);
 	WARN_ON(!is_dev);
@@ -1975,6 +2391,10 @@ static int cis_2la_probe(struct i2c_client *client,
 		sensor_peri->module->client = cis->client;
 		cis->i2c_lock = NULL;
 		cis->ctrl_delay = N_PLUS_TWO_FRAME;
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+		cis->mipi_clock_index_cur = CAM_MIPI_NOT_INITIALIZED;
+		cis->mipi_clock_index_new = CAM_MIPI_NOT_INITIALIZED;
+#endif
 		cis->cis_data = kzalloc(sizeof(cis_shared_data), GFP_KERNEL);
 		if (!cis->cis_data) {
 			err("cis_data is NULL");
@@ -2016,24 +2436,80 @@ static int cis_2la_probe(struct i2c_client *client,
 		setfile = "default";
 	}
 
+	rev = cis->cis_data->cis_rev;
+
 	if (strcmp(setfile, "default") == 0 ||
 			strcmp(setfile, "setA") == 0) {
 		probe_info("%s setfile_A\n", __func__);
-		sensor_2la_global = sensor_2la_setfile_A_Global;
-		sensor_2la_global_size = ARRAY_SIZE(sensor_2la_setfile_A_Global);
+		/* Before OTP write */
+		if(rev < 0xA202) {
+			sensor_2la_initial_setting = sensor_2la_setfile_A_initial_setting;
+			sensor_2la_initial_setting_size = ARRAY_SIZE(sensor_2la_setfile_A_initial_setting);
+			sensor_2la_global_1 = sensor_2la_setfile_A_Global_1;
+			sensor_2la_global_size_1 = ARRAY_SIZE(sensor_2la_setfile_A_Global_1);
+			sensor_2la_global_2 = sensor_2la_setfile_A_Global_2;
+			sensor_2la_global_size_2 = ARRAY_SIZE(sensor_2la_setfile_A_Global_2);
+		} else { /* After OTP write */
+			sensor_2la_initial_setting = sensor_2la_setfile_A_initial_setting;
+			sensor_2la_initial_setting_size = ARRAY_SIZE(sensor_2la_setfile_A_initial_setting);
+			sensor_2la_global_2 = sensor_2la_setfile_A_Global_2;
+			sensor_2la_global_size_2 = ARRAY_SIZE(sensor_2la_setfile_A_Global_2);
+		}
 		sensor_2la_setfiles = sensor_2la_setfiles_A;
 		sensor_2la_setfile_sizes = sensor_2la_setfile_A_sizes;
 		sensor_2la_pllinfos = sensor_2la_pllinfos_A;
 		sensor_2la_max_setfile_num = ARRAY_SIZE(sensor_2la_setfiles_A);
+		sensor_2la_dualsync_slave = sensor_2la_dual_slave_A_settings;
+		sensor_2la_dualsync_slave_size = ARRAY_SIZE(sensor_2la_dual_slave_A_settings);
+		sensor_2la_dualsync_single = sensor_2la_dual_single_A_settings;
+		sensor_2la_dualsync_single_size = ARRAY_SIZE(sensor_2la_dual_single_A_settings);
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+		sensor_2la_mipi_sensor_mode = sensor_2la_setfile_A_mipi_sensor_mode;
+		sensor_2la_mipi_sensor_mode_size = ARRAY_SIZE(sensor_2la_setfile_A_mipi_sensor_mode);
+		sensor_2la_verify_sensor_mode = sensor_2la_setfile_A_verify_sensor_mode;
+		sensor_2la_verify_sensor_mode_size = ARRAY_SIZE(sensor_2la_setfile_A_verify_sensor_mode);
+#endif
 	} else {
 		err("%s setfile index out of bound, take default (setfile_A)", __func__);
-		sensor_2la_global = sensor_2la_setfile_A_Global;
-		sensor_2la_global_size = ARRAY_SIZE(sensor_2la_setfile_A_Global);
+		if(rev < 0xA202) {
+			sensor_2la_initial_setting = sensor_2la_setfile_A_initial_setting;
+			sensor_2la_initial_setting_size = ARRAY_SIZE(sensor_2la_setfile_A_initial_setting);
+			sensor_2la_global_1 = sensor_2la_setfile_A_Global_1;
+			sensor_2la_global_size_1 = ARRAY_SIZE(sensor_2la_setfile_A_Global_1);
+			sensor_2la_global_2 = sensor_2la_setfile_A_Global_2;
+			sensor_2la_global_size_2 = ARRAY_SIZE(sensor_2la_setfile_A_Global_2);
+		} else { /* After OTP write */
+			sensor_2la_initial_setting = sensor_2la_setfile_A_initial_setting;
+			sensor_2la_initial_setting_size = ARRAY_SIZE(sensor_2la_setfile_A_initial_setting);
+			sensor_2la_global_2 = sensor_2la_setfile_A_Global_2;
+			sensor_2la_global_size_2 = ARRAY_SIZE(sensor_2la_setfile_A_Global_2);
+		}
 		sensor_2la_setfiles = sensor_2la_setfiles_A;
 		sensor_2la_setfile_sizes = sensor_2la_setfile_A_sizes;
 		sensor_2la_pllinfos = sensor_2la_pllinfos_A;
 		sensor_2la_max_setfile_num = ARRAY_SIZE(sensor_2la_setfiles_A);
+		sensor_2la_dualsync_slave = sensor_2la_dual_slave_A_settings;
+		sensor_2la_dualsync_slave_size = ARRAY_SIZE(sensor_2la_dual_slave_A_settings);
+		sensor_2la_dualsync_single = sensor_2la_dual_single_A_settings;
+		sensor_2la_dualsync_single_size = ARRAY_SIZE(sensor_2la_dual_single_A_settings);
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+		sensor_2la_mipi_sensor_mode = sensor_2la_setfile_A_mipi_sensor_mode;
+		sensor_2la_mipi_sensor_mode_size = ARRAY_SIZE(sensor_2la_setfile_A_mipi_sensor_mode);
+		sensor_2la_verify_sensor_mode = sensor_2la_setfile_A_verify_sensor_mode;
+		sensor_2la_verify_sensor_mode_size = ARRAY_SIZE(sensor_2la_setfile_A_verify_sensor_mode);
+#endif
 	}
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+	for (i = 0; i < sensor_2la_verify_sensor_mode_size; i++) {
+		index = sensor_2la_verify_sensor_mode[i];
+
+		if (is_vendor_verify_mipi_channel(sensor_2la_mipi_sensor_mode[index].mipi_channel,
+					sensor_2la_mipi_sensor_mode[index].mipi_channel_size)) {
+			panic("wrong mipi channel");
+			break;
+		}
+	}
+#endif
 
 	probe_info("%s done\n", __func__);
 

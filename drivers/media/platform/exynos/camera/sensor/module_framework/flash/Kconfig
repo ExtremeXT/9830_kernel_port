@@ -39,13 +39,6 @@ config CAMERA_FLASH_S2MU107_OBJ
         help
           Use to build S2MU107 driver.
 
-config CAMERA_FLASH_S2MU106_OBJ
-        bool "Use S2MU106"
-	depends on CAMERA_FLASH_SELECT
-        default n
-        help
-          Use to build S2MU106 driver.
-
 config CAMERA_FLASH_GPIO_OBJ
         bool "Use GPIO"
 	depends on CAMERA_FLASH_SELECT
@@ -67,16 +60,10 @@ config CAMERA_FLASH_KTD2692_OBJ
         help
           Use to build KTD2692 driver.
 
-config CAMERA_FLASH_SM5714_OBJ
-        bool "Use SM5714"
+config CAMERA_FLASH_RT8547_OBJ
+        bool "Use RT8547"
 	depends on CAMERA_FLASH_SELECT
         default n
         help
-          Use to build SM5714 driver.
+          Use to build RT8547 driver.
 
-config CAMERA_FLASH_AW36518_OBJ
-        bool "Use AW36518"
-        depends on CAMERA_FLASH_SELECT
-        default n
-        help
-          Use to build AW36518 driver.

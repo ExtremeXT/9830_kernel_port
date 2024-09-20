@@ -26,7 +26,7 @@
  */
 #define EXYNOS_PMU_INFORM2 0x0808
 #define EXYNOS_PMU_INFORM3 0x080C
-#define EXYNOS_PMU_PS_HOLD_CONTROL 0x330C
+#define EXYNOS_PMU_PS_HOLD_CONTROL 0x030C
 
 /*
  * Bootstat @ /proc/boot_stat
@@ -71,10 +71,12 @@ extern void sec_initcall_debug_add(initcall_t fn, unsigned long long t);
  * Param op.
  */
 #ifdef CONFIG_SEC_PARAM
-#define CM_OFFSET			CONFIG_CM_OFFSET
-#define CM_OFFSET_LIMIT			(CM_OFFSET + 3)
-#define WC_OFFSET			CONFIG_WC_OFFSET
+#define CM_OFFSET				CONFIG_CM_OFFSET
+#define CM_OFFSET_LIMIT			CM_OFFSET + 4
+#define WC_OFFSET				CONFIG_WC_OFFSET
 #define WC_OFFSET_LIMIT			WC_OFFSET
+#define PD_OFFSET				CONFIG_PD_OFFSET
+#define PD_OFFSET_LIMIT			PD_OFFSET + 4
 #define FMM_LOCK_OFFSET			CONFIG_FMM_LOCK_OFFSET
 
 enum {

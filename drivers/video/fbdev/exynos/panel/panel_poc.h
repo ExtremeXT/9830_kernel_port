@@ -55,6 +55,7 @@ enum {
 	POC_WRITE_ENTER_SEQ,
 	POC_WRITE_STT_SEQ,
 	POC_WRITE_DAT_SEQ,
+	POC_WRITE_DAT_STT_END_SEQ,
 	POC_WRITE_END_SEQ,
 	POC_WRITE_EXIT_SEQ,
 
@@ -96,11 +97,15 @@ enum {
 	POC_MTP_PARTITION_END = POC_MTP_PARTITION_2,
 	/* MCD PARTITION */
 	POC_MCD_PARTITION,
+	POC_GM2_PARTITION,
+	POC_GM2_VBIAS_PARTITION = POC_GM2_PARTITION,
+	POC_GM2_PARTITION_END = POC_GM2_VBIAS_PARTITION,
 	MAX_POC_PARTITION,
 };
 
 #define MAX_NR_DIM_PARTITION	((POC_DIM_PARTITION_END) + 1 - (POC_DIM_PARTITION))
 #define MAX_NR_MTP_PARTITION	((POC_MTP_PARTITION_END) + 1 - (POC_MTP_PARTITION))
+#define MAX_NR_GM2_PARTITION	((POC_GM2_PARTITION_END) + 1 - (POC_GM2_PARTITION))
 
 enum poc_flash_state {
 	POC_FLASH_STATE_UNKNOWN = -1,
@@ -140,6 +145,7 @@ enum {
 #endif
 	POC_OP_INITIALIZE = 29,
 	POC_OP_UNINITIALIZE = 30,
+	POC_OP_GM2_READ = 31,
 	MAX_POC_OP,
 };
 
@@ -255,6 +261,14 @@ enum dim_flash_items {
 	MAX_DIM_FLASH,
 };
 
+struct dim_flash_info {
+	char *name;
+	u32 offset;
+	u32 nrow;
+	u32 ncol;
+};
+#endif
+
 enum {
 	PARTITION_REGION_DATA,
 	PARTITION_REGION_CHKSUM,
@@ -269,14 +283,12 @@ enum {
 	MAX_PARTITION_WRITE_CHECK,
 };
 
-struct dim_flash_info {
-	char *name;
-	u32 offset;
-	u32 nrow;
-	u32 ncol;
+struct poc_partition_data {
+	u32 data_addr;
+	u32 data_size;
 };
-#endif
 
+#define MAX_POC_PARTITION_DATA 4
 struct poc_partition {
 	char *name;
 	u32 addr;
@@ -287,8 +299,8 @@ struct poc_partition {
 	u32 magicnum;
 	u32 magicnum_by_read;
 
-	u32 data_addr;
-	u32 data_size;
+	struct poc_partition_data data[MAX_POC_PARTITION_DATA];
+
 	u32 checksum_addr;
 	u32 checksum_size;
 	u32 magicnum_addr;
@@ -298,7 +310,7 @@ struct poc_partition {
 	int need_preload:1;
 
 	/* result */
-	int preload_done:1;
+	unsigned int preload_done:1;
 	int chksum_ok:1;
 	int write_check;
 	bool cache[MAX_PARTITION_REGION];
@@ -335,6 +347,7 @@ struct panel_poc_data {
 extern int panel_poc_probe(struct panel_device *panel, struct panel_poc_data *poc_data);
 extern int set_panel_poc(struct panel_poc_device *poc_dev, u32 cmd, void *arg);
 extern int read_poc_partition(struct panel_poc_device *poc_dev, int index);
+extern int get_poc_partition_addr(struct panel_poc_device *poc_dev, int index);
 extern int get_poc_partition_size(struct panel_poc_device *poc_dev, int index);
 extern int copy_poc_partition(struct panel_poc_device *poc_dev, u8 *dst,
 		 int index, int offset, int size);
@@ -343,7 +356,7 @@ extern int get_poc_partition_chksum(struct panel_poc_device *poc_dev, int index,
 		u32 *chksum_ok, u32 *chksum_by_calc, u32 *chksum_by_read);
 extern int check_poc_partition_chksum(struct panel_poc_device *poc_dev, int index);
 int cmp_poc_partition_data(struct panel_poc_device *poc_dev,
-		int index, u8 *buf, u32 size);
+		int partition_index, int data_area_index, u8 *buf, u32 size);
 
 extern void copy_poc_wr_addr_maptbl(struct maptbl *tbl, u8 *dst);
 extern void copy_poc_wr_data_maptbl(struct maptbl *tbl, u8 *dst);

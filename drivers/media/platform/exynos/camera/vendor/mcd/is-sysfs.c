@@ -49,7 +49,10 @@ static struct is_common_cam_info common_cam_infos;
 
 extern bool force_caldata_dump;
 #if defined (CONFIG_OIS_USE)
-static bool check_ois_power = false;
+bool check_ois_power = false;
+bool check_shaking_noise;
+int ois_power_count = 0;
+int shaking_power_count = 0;
 int ois_threshold = 150;
 #ifdef CAMERA_2ND_OIS
 int ois_threshold_rear2 = 150;
@@ -415,9 +418,11 @@ static ssize_t camera_camfw_show(char *buf, enum is_cam_info_index cam_index, bo
 		is_sec_get_loaded_fw(&loaded_fw);
 	} else {
 		switch(position) {
+#ifndef USE_CAMFW_POLICY_ED38
 			case SENSOR_POSITION_REAR:
 				loaded_fw = pinfo->header_ver;
 				break;
+#endif
 			case SENSOR_POSITION_REAR_TOF:
 			case SENSOR_POSITION_FRONT_TOF:
 				loaded_fw = "N";
@@ -428,9 +433,11 @@ static ssize_t camera_camfw_show(char *buf, enum is_cam_info_index cam_index, bo
 		}
 	}
 
+#ifndef USE_CAMFW_POLICY_ED38
 	if (position == SENSOR_POSITION_REAR)
 		phone_fw = pinfo->header_ver;
 	else
+#endif
 		phone_fw = "N";
 
 	other_vendor = test_bit(IS_ROM_STATE_OTHER_VENDOR, &finfo->rom_state);
@@ -730,6 +737,8 @@ static ssize_t camera_afcal_show(char *buf, enum is_cam_info_index cam_index)
 	int rom_cal_index;
 	char *cal_buf;
 	bool is_front = false;
+	int i;
+	char tempbuf[30] = {0, };
 
 	is_get_cam_info_from_index(&cam_info, cam_index);
 
@@ -756,44 +765,52 @@ static ssize_t camera_afcal_show(char *buf, enum is_cam_info_index cam_index)
 	}
 
 	if (rom_cal_index == 1) {
-		if (finfo->rom_sensor2_af_cal_macro_addr == -1) {
-			return sprintf(buf, "10 N N N N %d N N N %d\n",
-				*((s32*)&cal_buf[finfo->rom_sensor2_af_cal_d50_addr]),
-				*((s32*)&cal_buf[finfo->rom_sensor2_af_cal_pan_addr]));
-		} else if (finfo->rom_sensor2_af_cal_d50_addr != -1) {
-			return sprintf(buf, "10 %d N N N %d N N N %d\n",
-				*((s32*)&cal_buf[finfo->rom_sensor2_af_cal_macro_addr]),
-				*((s32*)&cal_buf[finfo->rom_sensor2_af_cal_d50_addr]),
+		if (is_front) {
+			return sprintf(buf, "1 %d %d\n",
+				*((s32*)&cal_buf[finfo->rom_sensor2_af_cal_d_addr[0]]),
 				*((s32*)&cal_buf[finfo->rom_sensor2_af_cal_pan_addr]));
 		} else {
-			if (is_front)
-				return sprintf(buf, "1 %d %d\n",
-					*((s32*)&cal_buf[finfo->rom_sensor2_af_cal_macro_addr]),
-					*((s32*)&cal_buf[finfo->rom_sensor2_af_cal_pan_addr]));
-			else
-				return sprintf(buf, "10 %d N N N N N N N %d\n",
-					*((s32*)&cal_buf[finfo->rom_sensor2_af_cal_macro_addr]),
-					*((s32*)&cal_buf[finfo->rom_sensor2_af_cal_pan_addr]));
+			char tmpChar[5] = {0, };
+			strcpy(tempbuf, "10");
+
+			for (i = 0; i < AF_CAL_D_MAX; i++) {
+				if (finfo->rom_sensor2_af_cal_d_addr[i] == -1) {
+					strncat(tempbuf, " N", strlen(" N"));
+				}
+				else {
+					sprintf(tmpChar, " %d", *((s32*)&cal_buf[finfo->rom_sensor2_af_cal_d_addr[i]]));
+					strncat(tempbuf, tmpChar, strlen(tmpChar));
+				}
+			}
+
+			sprintf(tmpChar, " %d", *((s32*)&cal_buf[finfo->rom_sensor2_af_cal_pan_addr]));
+			strncat(tempbuf, tmpChar, strlen(tmpChar));
+
+			return sprintf(buf, "%s\n", tempbuf);;
 		}
 	} else {
-		if (finfo->rom_af_cal_macro_addr == -1) {
-			return sprintf(buf, "10 N N N N %d N N N %d\n",
-				*((s32*)&cal_buf[finfo->rom_af_cal_d50_addr]),
-				*((s32*)&cal_buf[finfo->rom_af_cal_pan_addr]));
-		} else if (finfo->rom_af_cal_d50_addr != -1) {
-			return sprintf(buf, "10 %d N N N %d N N N %d\n",
-				*((s32*)&cal_buf[finfo->rom_af_cal_macro_addr]),
-				*((s32*)&cal_buf[finfo->rom_af_cal_d50_addr]),
+		if (is_front) {
+			return sprintf(buf, "1 %d %d\n",
+				*((s32*)&cal_buf[finfo->rom_af_cal_d_addr[0]]),
 				*((s32*)&cal_buf[finfo->rom_af_cal_pan_addr]));
 		} else {
-			if (is_front)
-				return sprintf(buf, "1 %d %d\n",
-					*((s32*)&cal_buf[finfo->rom_af_cal_macro_addr]),
-					*((s32*)&cal_buf[finfo->rom_af_cal_pan_addr]));
-			else
-				return sprintf(buf, "10 %d N N N N N N N %d\n",
-					*((s32*)&cal_buf[finfo->rom_af_cal_macro_addr]),
-					*((s32*)&cal_buf[finfo->rom_af_cal_pan_addr]));
+			char tmpChar[5] = {0, };
+			strcpy(tempbuf, "10");
+
+			for (i = 0; i < AF_CAL_D_MAX; i++) {
+				if (finfo->rom_af_cal_d_addr[i] == -1) {
+					strncat(tempbuf, " N", strlen(" N"));
+				}
+				else {
+					sprintf(tmpChar, " %d", *((s32*)&cal_buf[finfo->rom_af_cal_d_addr[i]]));
+					strncat(tempbuf, tmpChar, strlen(tmpChar));
+				}
+			}
+
+			sprintf(tmpChar, " %d", *((s32*)&cal_buf[finfo->rom_af_cal_pan_addr]));
+			strncat(tempbuf, tmpChar, strlen(tmpChar));
+
+			return sprintf(buf, "%s\n", tempbuf);;
 		}
 	}
 
@@ -893,8 +910,8 @@ static ssize_t camera_tilt_show(char *buf, enum is_cam_info_index cam_index)
 	int rom_type;
 	int rom_dualcal_id;
 	int rom_dualcal_index;
-	s32 *x = NULL, *y = NULL, *z = NULL, *sx = NULL, *sy = NULL;
-	s32 *range = NULL, *max_err = NULL, *avg_err = NULL, *dll_version = NULL;
+	char tempbuf[25] = {0, };
+	int i = 0;
 
 	is_get_cam_info_from_index(&cam_info, cam_index);
 
@@ -926,6 +943,8 @@ static ssize_t camera_tilt_show(char *buf, enum is_cam_info_index cam_index)
 		goto err_tilt;
 	}
 
+	strcat(buf, "1");
+
 	switch (rom_dualcal_index)
 	{
 	case ROM_DUALCAL_SLAVE0:
@@ -934,55 +953,96 @@ static ssize_t camera_tilt_show(char *buf, enum is_cam_info_index cam_index)
 			err(" NG, invalid ROM dual tilt value, dualcal_index[%d]", rom_dualcal_index);
 			goto err_tilt;
 		}
-		x = (s32 *)&cal_buf[finfo->rom_dualcal_slave0_tilt_list[0]];
-		y = (s32 *)&cal_buf[finfo->rom_dualcal_slave0_tilt_list[1]];
-		z = (s32 *)&cal_buf[finfo->rom_dualcal_slave0_tilt_list[2]];
-		sx = (s32 *)&cal_buf[finfo->rom_dualcal_slave0_tilt_list[3]];
-		sy = (s32 *)&cal_buf[finfo->rom_dualcal_slave0_tilt_list[4]];
-		range = (s32 *)&cal_buf[finfo->rom_dualcal_slave0_tilt_list[5]];
-		max_err = (s32 *)&cal_buf[finfo->rom_dualcal_slave0_tilt_list[6]];
-		avg_err = (s32 *)&cal_buf[finfo->rom_dualcal_slave0_tilt_list[7]];
-		dll_version = (s32 *)&cal_buf[finfo->rom_dualcal_slave0_tilt_list[8]];
 
-		return sprintf(buf, "1 %d %d %d %d %d %d %d %d %d\n",
-							*x, *y, *z, *sx, *sy, *range, *max_err, *avg_err, *dll_version);
+		for (i = 0; i < IS_ROM_DUAL_TILT_MAX_LIST - 1; i++) {
+			sprintf(tempbuf, " %d", *((s32 *)&cal_buf[finfo->rom_dualcal_slave0_tilt_list[i]]));
+			strncat(buf, tempbuf, strlen(tempbuf));
+			memset(tempbuf, 0, sizeof(tempbuf));
+		}
+
+		if (finfo->rom_dualcal_slave0_tilt_list_len == IS_ROM_DUAL_TILT_MAX_LIST) {
+			strcat(buf, " ");
+			memcpy(tempbuf, &cal_buf[finfo->rom_dualcal_slave0_tilt_list[i]], IS_DUAL_TILT_PROJECT_NAME_SIZE);
+			tempbuf[IS_DUAL_TILT_PROJECT_NAME_SIZE] = '\0';
+			for (i = 0; i < IS_DUAL_TILT_PROJECT_NAME_SIZE; i++) {
+				if (tempbuf[i] == 0xFF && i == 0) {
+					sprintf(tempbuf, "NONE");
+					break;
+				}
+				if (tempbuf[i] == 0) {
+					tempbuf[i] = '\0';
+					break;
+				}
+			}
+			strncat(buf, tempbuf, strlen(tempbuf));
+		}
+		strncat(buf, "\n", strlen("\n"));
+
+		return strlen(buf);
 	case ROM_DUALCAL_SLAVE1:
 		if (finfo->rom_dualcal_slave1_tilt_list_len < 0
 			|| finfo->rom_dualcal_slave1_tilt_list_len > IS_ROM_DUAL_TILT_MAX_LIST) {
 			err(" NG, invalid ROM dual tilt value, dualcal_index[%d]", rom_dualcal_index);
 			goto err_tilt;
 		}
-		x = (s32 *)&cal_buf[finfo->rom_dualcal_slave1_tilt_list[0]];
-		y = (s32 *)&cal_buf[finfo->rom_dualcal_slave1_tilt_list[1]];
-		z = (s32 *)&cal_buf[finfo->rom_dualcal_slave1_tilt_list[2]];
-		sx = (s32 *)&cal_buf[finfo->rom_dualcal_slave1_tilt_list[3]];
-		sy = (s32 *)&cal_buf[finfo->rom_dualcal_slave1_tilt_list[4]];
-		range = (s32 *)&cal_buf[finfo->rom_dualcal_slave1_tilt_list[5]];
-		max_err = (s32 *)&cal_buf[finfo->rom_dualcal_slave1_tilt_list[6]];
-		avg_err = (s32 *)&cal_buf[finfo->rom_dualcal_slave1_tilt_list[7]];
-		dll_version = (s32 *)&cal_buf[finfo->rom_dualcal_slave1_tilt_list[8]];
 
-		return sprintf(buf, "1 %d %d %d %d %d %d %d %d %d\n",
-							*x, *y, *z, *sx, *sy, *range, *max_err, *avg_err, *dll_version);
+		for (i = 0; i < IS_ROM_DUAL_TILT_MAX_LIST - 1; i++) {
+			sprintf(tempbuf, " %d", *((s32 *)&cal_buf[finfo->rom_dualcal_slave1_tilt_list[i]]));
+			strncat(buf, tempbuf, strlen(tempbuf));
+			memset(tempbuf, 0, sizeof(tempbuf));
+		}
+
+		if (finfo->rom_dualcal_slave1_tilt_list_len == IS_ROM_DUAL_TILT_MAX_LIST) {
+			strcat(buf, " ");
+			memcpy(tempbuf, &cal_buf[finfo->rom_dualcal_slave1_tilt_list[i]], IS_DUAL_TILT_PROJECT_NAME_SIZE);
+			tempbuf[IS_DUAL_TILT_PROJECT_NAME_SIZE] = '\0';
+			for (i = 0; i < IS_DUAL_TILT_PROJECT_NAME_SIZE; i++) {
+				if (tempbuf[i] == 0xFF && i == 0) {
+					sprintf(tempbuf, "NONE");
+					break;
+				}
+				if (tempbuf[i] == 0) {
+					tempbuf[i] = '\0';
+					break;
+				}
+			}
+			strncat(buf, tempbuf, strlen(tempbuf));
+		}
+		strncat(buf, "\n", strlen("\n"));
+
+		return strlen(buf);
 	case ROM_DUALCAL_SLAVE2:
 		if (finfo->rom_dualcal_slave2_tilt_list_len < 0
 			|| finfo->rom_dualcal_slave2_tilt_list_len > IS_ROM_DUAL_TILT_MAX_LIST) {
 			err(" NG, invalid ROM dual tilt value, dualcal_index[%d]", rom_dualcal_index);
 			goto err_tilt;
 		}
-		x = (s32 *)&cal_buf[finfo->rom_dualcal_slave2_tilt_list[0]];
-		y = (s32 *)&cal_buf[finfo->rom_dualcal_slave2_tilt_list[1]];
-		z = (s32 *)&cal_buf[finfo->rom_dualcal_slave2_tilt_list[2]];
-		sx = (s32 *)&cal_buf[finfo->rom_dualcal_slave2_tilt_list[3]];
-		sy = (s32 *)&cal_buf[finfo->rom_dualcal_slave2_tilt_list[4]];
-		range = (s32 *)&cal_buf[finfo->rom_dualcal_slave2_tilt_list[5]];
-		max_err = (s32 *)&cal_buf[finfo->rom_dualcal_slave2_tilt_list[6]];
-		avg_err = (s32 *)&cal_buf[finfo->rom_dualcal_slave2_tilt_list[7]];
-		dll_version = (s32 *)&cal_buf[finfo->rom_dualcal_slave2_tilt_list[8]];
 
-		return sprintf(buf, "1 %d %d %d %d %d %d %d %d %d\n",
-							*x, *y, *z, *sx, *sy, *range, *max_err, *avg_err, *dll_version);
+		for (i = 0; i < IS_ROM_DUAL_TILT_MAX_LIST - 1; i++) {
+			sprintf(tempbuf, " %d", *((s32 *)&cal_buf[finfo->rom_dualcal_slave2_tilt_list[i]]));
+			strncat(buf, tempbuf, strlen(tempbuf));
+			memset(tempbuf, 0, sizeof(tempbuf));
+		}
 
+		if (finfo->rom_dualcal_slave2_tilt_list_len == IS_ROM_DUAL_TILT_MAX_LIST) {
+			strcat(buf, " ");
+			memcpy(tempbuf, &cal_buf[finfo->rom_dualcal_slave2_tilt_list[i]], IS_DUAL_TILT_PROJECT_NAME_SIZE);
+			tempbuf[IS_DUAL_TILT_PROJECT_NAME_SIZE] = '\0';
+			for (i = 0; i < IS_DUAL_TILT_PROJECT_NAME_SIZE; i++) {
+				if (tempbuf[i] == 0xFF && i == 0) {
+					sprintf(tempbuf, "NONE");
+					break;
+				}
+				if (tempbuf[i] == 0) {
+					tempbuf[i] = '\0';
+					break;
+				}
+			}
+			strncat(buf, tempbuf, strlen(tempbuf));
+		}
+		strncat(buf, "\n", strlen("\n"));
+
+		return strlen(buf);
 	default:
 		err("not defined tilt cal values");
 		break;
@@ -1069,30 +1129,6 @@ static ssize_t camera_paf_offset_show(char *buf, bool is_mid, int f_index)
 }
 
 /* end of common function for sysfs */
-
-#if defined (CONFIG_OIS_USE)
-static bool read_ois_version(void)
-{
-	bool ret = true;
-	struct is_vender_specific *specific = sysfs_core->vender.private_data;
-	bool camera_running;
-
-	camera_running = is_vendor_check_camera_running(SENSOR_POSITION_REAR);
-
-	if (!camera_running) {
-		if (!specific->ois_ver_read || force_caldata_dump) {
-			is_ois_gpio_on(sysfs_core);
-			msleep(150);
-
-			ret = is_ois_check_fw(sysfs_core);
-			if (!camera_running) {
-				is_ois_gpio_off(sysfs_core);
-			}
-		}
-	}
-	return ret;
-}
-#endif
 
 static ssize_t camera_rear_sensorid_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -1234,7 +1270,7 @@ static ssize_t camera_ssrm_camera_info_store(struct device *dev,
 	ret_count = sscanf(buf, "%d%d%d%d%d%d%d%d", &temp.operation, &temp.cameraID, &temp.previewMinFPS,
 		&temp.previewMaxFPS, &temp.previewSizeWidth,  &temp.previewSizeHeight, &temp.sensorOn, &temp.shotMode);
 
-	if (ret_count > sizeof(SsrmCameraInfo)/sizeof(int)) {
+	if (ret_count > sizeof(SsrmCameraInfo)/(sizeof(int))) {
 		return -EINVAL;
 	}
 
@@ -1880,7 +1916,149 @@ static ssize_t camera_rear_tof_moduleid_show(struct device *dev,
 }
 #endif
 
+static int camera_tof_laser_error_flag(int position, u32 mode, int *value)
+{
+	struct is_core *core;
+	struct is_device_sensor *device;
+	struct is_module_enum *module;
+	struct is_device_sensor_peri *sensor_peri;
+	struct is_cis *cis = NULL;
+	int i;
+
+	core = (struct is_core *)dev_get_drvdata(is_dev);
+	if (!core) {
+		err("%s: core is NULL", __func__);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < IS_SENSOR_COUNT; i++) {
+		device = &core->sensor[i];
+		is_search_sensor_module_with_position(&core->sensor[i],
+				position, &module);
+		if (module)
+			break;
+	}
+
+	WARN_ON(!module);
+
+	sensor_peri = (struct is_device_sensor_peri *)module->private_data;
+
+	WARN_ON(!sensor_peri);
+
+	if (sensor_peri->subdev_cis) {
+		cis = (struct is_cis *)v4l2_get_subdevdata(sensor_peri->subdev_cis);
+		CALL_CISOPS(cis, cis_get_tof_laser_error_flag, sensor_peri->subdev_cis, mode, value);
+	}
+	return *value;
+}
+
+static ssize_t camera_rear_tof_laser_error_flag_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int value;
+
+	if (!is_dev) {
+		dev_err(dev, "%s: is_dev is not yet probed", __func__);
+		return -ENODEV;
+	}
+
+	if (camera_tof_laser_error_flag(SENSOR_POSITION_REAR_TOF, 0, &value) < 0) {
+		return sprintf(buf, "NG\n");
+	}
+
+	return sprintf(buf, "%x\n", value);
+}
+
+static ssize_t camera_rear_tof_laser_error_flag_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	u16 mode;
+	int value;
+	int ret_count;
+
+	if (!is_dev) {
+		dev_err(dev, "%s: is_dev is not yet probed", __func__);
+		return -ENODEV;
+	}
+
+	ret_count = sscanf(buf, "%d", &mode);
+
+	if (ret_count != 1) {
+		return -EINVAL;
+	}
+
+	camera_tof_laser_error_flag(SENSOR_POSITION_REAR_TOF, mode, &value);
+
+	return count;
+}
+
+static ssize_t camera_rear_tof_state_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct is_core *core;
+	struct is_device_sensor *device;
+	struct is_module_enum *module;
+	int i;
+
+	core = (struct is_core *)dev_get_drvdata(is_dev);
+	if (!core) {
+		err("%s: core is NULL", __func__);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < IS_SENSOR_COUNT; i++) {
+		device = &core->sensor[i];
+		is_search_sensor_module_with_position(&core->sensor[i],
+				SENSOR_POSITION_REAR_TOF, &module);
+		if (module)
+			break;
+	}
+
+	WARN_ON(!module);
+
+	return sprintf(buf, "%d", test_bit(IS_SENSOR_OPEN, &device->state));
+}
+
 #ifdef CAMERA_REAR_TOF_CAL
+static ssize_t camera_rear_tof_get_validation_data_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct is_rom_info *finfo;
+	struct is_cam_info *cam_info;
+	int position;
+	int rom_type;
+	int rom_id;
+	int rom_cal_index;
+	char *cal_buf;
+	u16 val_data[2];
+
+	is_get_cam_info_from_index(&cam_info, CAM_INFO_REAR_TOF);
+
+	position = cam_info->internal_id;
+	is_vendor_get_rom_info_from_position(position, &rom_type, &rom_id, &rom_cal_index);
+
+	if (rom_type == CAM_INFO_CAL_MEM_TYPE_NONE) {
+		err("%s: not support, no rom for camera[%d][%d]", __func__, CAM_INFO_REAR_TOF, position);
+		goto err;
+	} else if (rom_id == ROM_ID_NOTHING) {
+		err("%s: invalid ROM ID [%d][%d]", __func__, position, rom_id);
+		goto err;
+	}
+
+	read_from_firmware_version(rom_id);
+
+	is_sec_get_sysfs_finfo(&finfo, rom_id);
+	is_sec_get_cal_buf(&cal_buf, rom_id);
+
+	val_data[0] = *(u16*)&cal_buf[finfo->rom_tof_cal_validation_addr[1]]; 		/* 2Byte from 11EE (300mm validation) */
+	val_data[1] = *(u16*)&cal_buf[finfo->rom_tof_cal_validation_addr[0]];		/* 2Byte from 11D0 (500mm validation) */
+
+	return sprintf(buf, "%d,%d", val_data[0]/100, val_data[1]/100);
+
+err:
+	return 0;
+}
+
 static ssize_t camera_rear_tofcal_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -2028,45 +2206,6 @@ static ssize_t camera_rear_tofcal_uid_show(struct device *dev,
 	return sprintf(buf, "%d\n", specific->rear_tof_mode_id);
 }
 
-static ssize_t camera_rear_tof_dual_cal_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct is_rom_info *finfo;
-	struct is_cam_info *cam_info;
-	int position;
-	int rom_type;
-	int rom_id;
-	int rom_cal_index;
-	char *cal_buf;
-	s32 cal_size;
-
-	is_get_cam_info_from_index(&cam_info, CAM_INFO_REAR);
-
-	position = cam_info->internal_id;
-	is_vendor_get_rom_info_from_position(position, &rom_type, &rom_id, &rom_cal_index);
-
-	if (rom_type == CAM_INFO_CAL_MEM_TYPE_NONE) {
-		err("%s: not support, no rom for camera[%d][%d]", __func__, CAM_INFO_REAR, position);
-		goto err;
-	} else if (rom_id == ROM_ID_NOTHING) {
-		err("%s: invalid ROM ID [%d][%d]", __func__, position, rom_id);
-		goto err;
-	}
-
-	read_from_firmware_version(rom_id);
-
-	is_sec_get_sysfs_finfo(&finfo, rom_id);
-	is_sec_get_cal_buf(&cal_buf, rom_id);
-
-	cal_size = finfo->rom_dualcal_slave2_size;
-
-	memcpy(buf, &cal_buf[finfo->rom_dualcal_slave2_start_addr], cal_size);
-	return cal_size;
-
-err:
-	return 0;
-}
-
 static ssize_t camera_rear_tof_cal_result_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -2106,6 +2245,47 @@ static ssize_t camera_rear_tof_cal_result_show(struct device *dev,
 
 err:
 	return sprintf(buf, "NG\n");
+}
+#endif
+#ifdef CAMERA_REAR_TOF_DUAL_CAL
+static ssize_t camera_rear_tof_dual_cal_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct is_rom_info *finfo;
+	struct is_cam_info *cam_info;
+	int position;
+	int rom_type;
+	int rom_id;
+	int rom_cal_index;
+	char *cal_buf;
+	s32 cal_size = 0;
+
+	is_get_cam_info_from_index(&cam_info, CAM_INFO_REAR);
+
+	position = cam_info->internal_id;
+	is_vendor_get_rom_info_from_position(position, &rom_type, &rom_id, &rom_cal_index);
+
+	if (rom_type == CAM_INFO_CAL_MEM_TYPE_NONE) {
+		err("%s: not support, no rom for camera[%d][%d]", __func__, CAM_INFO_REAR, position);
+		goto err;
+	} else if (rom_id == ROM_ID_NOTHING) {
+		err("%s: invalid ROM ID [%d][%d]", __func__, position, rom_id);
+		goto err;
+	}
+
+	read_from_firmware_version(rom_id);
+
+	is_sec_get_sysfs_finfo(&finfo, rom_id);
+	is_sec_get_cal_buf(&cal_buf, rom_id);
+
+	if (finfo->rom_dualcal_slave2_size != -1) {
+		cal_size = finfo->rom_dualcal_slave2_size;
+		memcpy(buf, &cal_buf[finfo->rom_dualcal_slave2_start_addr], cal_size);
+	}
+	return cal_size;
+
+err:
+	return 0;
 }
 #endif
 #ifdef CAMERA_REAR_TOF_TILT
@@ -2286,7 +2466,13 @@ static ssize_t camera_rear_tof_check_pd_store(struct device *dev,
 	}
 
 	ret_count = sscanf(buf, "%d", &value);
+
+	if (ret_count != 1) {
+		return -EINVAL;
+	}
+
 	camera_tof_set_laser_current(SENSOR_POSITION_REAR_TOF, value);
+
 	return count;
 }
 
@@ -2386,6 +2572,56 @@ static ssize_t camera_rear_tof_freq_show(struct device *dev,
 	}
 
 	return sprintf(buf, "%d\n", value);
+}
+
+static ssize_t camera_rear_tof_freq_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct is_core *core;
+	struct is_device_sensor *device;
+	struct is_module_enum *module;
+	struct is_device_sensor_peri *sensor_peri;
+	struct is_cis *cis = NULL;
+	int i, value, ret_count;
+
+	if (!is_dev) {
+		dev_err(dev, "%s: is_dev is not yet probed", __func__);
+		return -ENODEV;
+	}
+
+	core = (struct is_core *)dev_get_drvdata(is_dev);
+	if (!core) {
+		err("%s: core is NULL", __func__);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < IS_SENSOR_COUNT; i++) {
+		device = &core->sensor[i];
+
+		is_search_sensor_module_with_position(&core->sensor[i],
+				SENSOR_POSITION_REAR_TOF, &module);
+		if (module)
+			break;
+	}
+
+	WARN_ON(!module);
+
+	sensor_peri = (struct is_device_sensor_peri *)module->private_data;
+
+	WARN_ON(!sensor_peri);
+
+	ret_count = sscanf(buf, "%d", &value);
+
+	if (ret_count != 1) {
+		return -EINVAL;
+	}
+
+	if (sensor_peri->subdev_cis) {
+		cis = (struct is_cis *)v4l2_get_subdevdata(sensor_peri->subdev_cis);
+		CALL_CISOPS(cis, cis_set_tof_tx_freq, sensor_peri->subdev_cis, value);
+	}
+
+	return count;
 }
 #endif
 #endif
@@ -2689,7 +2925,13 @@ static ssize_t camera_front_tof_check_pd_store(struct device *dev,
 	}
 
 	ret_count = sscanf(buf, "%d", &value);
+
+	if (ret_count != 1) {
+		return -EINVAL;
+	}
+
 	camera_tof_set_laser_current(SENSOR_POSITION_FRONT_TOF, value);
+
 	return count;
 }
 
@@ -2914,34 +3156,112 @@ static ssize_t camera_hw_init_show(struct device *dev,
 }
 
 #if defined (CONFIG_OIS_USE)
-static ssize_t camera_ois_power_store(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+void ois_factory_resource_clean(void)
+{
+	struct is_vender *vender;
 
+	vender = &sysfs_core->vender;
+
+	info("%s ois power count = %d, shaking power count = %d\n", __func__, ois_power_count, shaking_power_count);
+
+	if (check_ois_power) {
+		is_ois_gpio_off(sysfs_core);
+		check_ois_power = false;
+		info("%s ois_power off before entering suspend.\n", __func__);
+	} else if (check_shaking_noise) {
+		is_vendor_shaking_gpio_off(vender);
+		info("%s shaking_power off before entering suspend.\n", __func__);
+	}
+
+	return;
+}
+
+void ois_power_control(int onoff)
 {
 	bool camera_running;
+	bool camera_running2;
+	struct is_vender *vender;
+
+	vender = &sysfs_core->vender;
 
 	is_vender_check_hw_init_running();
 
 	camera_running = is_vendor_check_camera_running(SENSOR_POSITION_REAR);
+	camera_running2 = is_vendor_check_camera_running(SENSOR_POSITION_REAR2);
+
+	switch (onoff) {
+	case 0:
+		if (!camera_running && !camera_running2 && check_ois_power) {
+			is_ois_gpio_off(sysfs_core);
+			check_ois_power = false;
+			pr_info("%s ois_power off.\n", __func__);
+		} else {
+			pr_info("%s Do not set OIS power off.\n", __func__);
+		}
+		break;
+	case 1:
+		if (!camera_running && !camera_running2 && !check_ois_power) {
+			check_ois_power = true;
+
+			if (check_shaking_noise) {
+				is_vendor_shaking_gpio_off(vender);
+				pr_info("%s shaking off before start ois power on.\n", __func__);
+			}
+
+			is_ois_gpio_on(sysfs_core);
+			msleep(150);
+			pr_info("%s ois_power on.\n", __func__);
+		} else {
+			pr_info("%s Do not set OIS power on .\n", __func__);
+		}
+		ois_power_count++;
+		break;
+	default:
+		pr_debug("%s\n", __func__);
+		break;
+	}
+
+	return;
+}
+
+static bool read_ois_version(void)
+{
+	bool ret = true;
+	struct is_vender_specific *specific = sysfs_core->vender.private_data;
+
+	pr_info("%s\n", __func__);
+
+	if (!specific->ois_ver_read || force_caldata_dump) {
+#ifndef CONFIG_CAMERA_USE_INTERNAL_MCU
+		ois_power_control(1);
+#endif
+		ret = is_ois_check_fw(sysfs_core);
+#ifndef CONFIG_CAMERA_USE_INTERNAL_MCU
+		ois_power_control(0);
+#endif
+	}
+
+ 	return ret;
+}
+
+static ssize_t camera_ois_power_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+
+{
+	pr_info("%s: %c\n", __func__, buf[0]);
 
 	switch (buf[0]) {
 	case '0':
-		if (!camera_running) {
-			is_ois_gpio_off(sysfs_core);
-		} else {
-			err("cannot control OIS PowerOff  because camera is working.\n");
-		}
-		check_ois_power = false;
+		ois_power_control(0);
 		break;
 	case '1':
-		is_ois_gpio_on(sysfs_core);
-		check_ois_power = true;
-		msleep(150);
+		ois_power_control(1);
 		break;
 	default:
 		pr_debug("%s: %c\n", __func__, buf[0]);
 		break;
 	}
+
 	return count;
 }
 
@@ -2956,6 +3276,23 @@ static ssize_t camera_ois_autotest_store(struct device *dev,
 	}
 
 	ois_threshold = value;
+
+	return count;
+}
+
+static ssize_t camera_ois_set_mode_store(struct device *dev,
+				    struct device_attribute *attr, const char *buf, size_t count)
+{
+	int value = 0;
+
+	if (kstrtoint(buf, 10, &value)) {
+		err("convert fail");
+	}
+
+	if (check_ois_power)
+		is_ois_set_mode(sysfs_core, value);
+	else
+		err("OIS power is not enabled.");
 
 	return count;
 }
@@ -3055,8 +3392,9 @@ static ssize_t camera_ois_rear3_gain_show(struct device *dev,
 	xgain = (ois_pinfo->tele_xgg[3] << 24) | (ois_pinfo->tele_xgg[2] << 16) | (ois_pinfo->tele_xgg[1] << 8) | (ois_pinfo->tele_xgg[0]);
 	ygain = (ois_pinfo->tele_ygg[3] << 24) | (ois_pinfo->tele_ygg[2] << 16) | (ois_pinfo->tele_ygg[1] << 8) | (ois_pinfo->tele_ygg[0]);
 
-	if ((ois_pinfo->tele_xgg[0] == 'F' || ois_pinfo->tele_xgg[0] == 'f') &&
-		(ois_pinfo->tele_ygg[0] == 'F' || ois_pinfo->tele_ygg[0] == 'f')) {
+	info("%s xgain/ygain = 0x%08x/0x%08x", __func__, xgain, ygain);
+
+	if ((xgain == 0xFFFFFFFF) && (ygain == 0xFFFFFFFF)) {
 		return sprintf(buf, "%d\n", 2);
 	} else if (ois_pinfo->tele_cal_mark[0] != 0xBB) {
 		return sprintf(buf, "%d\n", 1);
@@ -3077,8 +3415,9 @@ static ssize_t camera_ois_rear3_supperssion_ratio_show(struct device *dev,
 	xratio = (ois_pinfo->tele_supperssion_xratio[1] << 8) | (ois_pinfo->tele_supperssion_xratio[0]);
 	yratio = (ois_pinfo->tele_supperssion_yratio[1] << 8) | (ois_pinfo->tele_supperssion_yratio[0]);
 
-	if ((ois_pinfo->tele_supperssion_xratio[0] == 'F' || ois_pinfo->tele_supperssion_xratio[0] == 'f') &&
-		(ois_pinfo->tele_supperssion_yratio[0] == 'F' || ois_pinfo->tele_supperssion_yratio[0] == 'f')) {
+	info("%s xratio/yratio = %d.%d/%d.%d", __func__, xratio / 100, xratio % 100, yratio / 100, yratio % 100);
+
+	if ((xratio == 0xFFFF) && (yratio == 0xFFFF)) {
 		return sprintf(buf, "%d\n", 2);
 	} else if (ois_pinfo->tele_cal_mark[0] != 0xBB) {
 		return sprintf(buf, "%d\n", 1);
@@ -3207,15 +3546,41 @@ static ssize_t camera_ois_calibrationtest_show(struct device *dev,
 	}
 }
 
+static ssize_t camera_ois_hall_position_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	u16 targetPos[4] = {0, };
+	u16 hallPos[4] = {0, };
+	bool camera_running;
+	bool camera_running2;
+
+	camera_running = is_vendor_check_camera_running(SENSOR_POSITION_REAR);
+	camera_running2 = is_vendor_check_camera_running(SENSOR_POSITION_REAR2);
+
+	if (camera_running || camera_running2)
+		is_ois_get_hall_pos(sysfs_core, targetPos, hallPos);
+	else
+		err("Camera power is not enabled.");
+
+	return sprintf(buf, "%u,%u,%u,%u,%u,%u,%u,%u",
+		targetPos[0], targetPos[1], targetPos[2], targetPos[3],
+		hallPos[0], hallPos[1], hallPos[2], hallPos[3]);
+}
+
 static ssize_t camera_rear_aperture_halltest_show(struct device *dev,
 				    struct device_attribute *attr, char *buf)
 {
 	u16 hall_value = 0;
 	bool result = false;
 
+	if (check_ois_power) {
 #ifdef CONFIG_CAMERA_USE_MCU
-	result = is_aperture_hall_test(sysfs_core, &hall_value);
+		result = is_aperture_hall_test(sysfs_core, &hall_value);
 #endif
+	} else {
+		err("OIS power is not enabled.");
+	}
+
 	if (result)
 		return sprintf(buf, "%d,0x%04x\n", result, hall_value);
 	else
@@ -3275,8 +3640,9 @@ static ssize_t camera_ois_rear_gain_show(struct device *dev,
 	xgain = (ois_pinfo->wide_xgg[3] << 24) | (ois_pinfo->wide_xgg[2] << 16) | (ois_pinfo->wide_xgg[1] << 8) | (ois_pinfo->wide_xgg[0]);
 	ygain = (ois_pinfo->wide_ygg[3] << 24) | (ois_pinfo->wide_ygg[2] << 16) | (ois_pinfo->wide_ygg[1] << 8) | (ois_pinfo->wide_ygg[0]);
 
-	if ((ois_pinfo->wide_xgg[0] == 'F' || ois_pinfo->wide_xgg[0] == 'f') &&
-		(ois_pinfo->wide_ygg[0] == 'F' || ois_pinfo->wide_ygg[0] == 'f')) {
+	info("%s xgain/ygain = 0x%08x/0x%08x", __func__, xgain, ygain);
+
+	if ((xgain == 0xFFFFFFFF) && (ygain == 0xFFFFFFFF)) {
 		return sprintf(buf, "%d\n", 2);
 	} else if (ois_pinfo->wide_cal_mark[0]!= 0xBB) {
 		return sprintf(buf, "%d\n", 1);
@@ -3297,8 +3663,9 @@ static ssize_t camera_ois_rear_supperssion_ratio_show(struct device *dev,
 	xratio = (ois_pinfo->wide_supperssion_xratio[1] << 8) | (ois_pinfo->wide_supperssion_xratio[0]);
 	yratio = (ois_pinfo->wide_supperssion_yratio[1] << 8) | (ois_pinfo->wide_supperssion_yratio[0]);
 
-	if ((ois_pinfo->wide_supperssion_xratio[0] == 'F' || ois_pinfo->wide_supperssion_xratio[0] == 'f') &&
-		(ois_pinfo->wide_supperssion_yratio[0] == 'F' || ois_pinfo->wide_supperssion_yratio[0] == 'f')) {
+	info("%s xratio/yratio = %d.%d/%d.%d", __func__, xratio / 100, xratio % 100, yratio / 100, yratio % 100);
+
+	if ((xratio == 0xFFFF) && (yratio == 0xFFFF)) {
 		return sprintf(buf, "%d\n", 2);
 	} else if (ois_pinfo->wide_cal_mark[0] != 0xBB) {
 		return sprintf(buf, "%d\n", 1);
@@ -3333,6 +3700,120 @@ static ssize_t camera_ois_reset_check(struct device *dev,
 
 	return sprintf(buf, "%d", ois_pinfo->reset_check);
 }
+
+static ssize_t camera_ois_shaking_noise_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+
+{
+	bool camera_running;
+	bool camera_running2;
+	struct is_vender *vender;
+
+	vender = &sysfs_core->vender;
+
+#if defined(CONFIG_SEC_FACTORY)
+	return 0;
+#endif
+	pr_info("%s: %c\n", __func__, buf[0]);
+
+	is_vender_check_hw_init_running();
+
+	camera_running = is_vendor_check_camera_running(SENSOR_POSITION_REAR);
+	camera_running2 = is_vendor_check_camera_running(SENSOR_POSITION_REAR2);
+
+	switch (buf[0]) {
+	case '0':
+		if (!camera_running && !camera_running2 && check_shaking_noise && !check_ois_power) {
+			is_vendor_shaking_gpio_off(vender);
+			pr_info("%s shaking_power off.\n", __func__);
+		} else {
+			pr_info("%s Do not set shaking power off.\n", __func__);
+		}
+
+		check_shaking_noise = false;
+		break;
+	case '1':
+		if (!camera_running && !camera_running2 && !check_shaking_noise && !check_ois_power) {
+			is_vendor_shaking_gpio_on(vender);
+			pr_info("%s shaking_power on.\n", __func__);
+		} else {
+			pr_info("%s Do not set shaking power on.\n", __func__);
+		}
+
+		shaking_power_count++;
+		break;
+	default:
+		pr_debug("%s: %c\n", __func__, buf[0]);
+		break;
+	}
+	return count;
+}
+
+static ssize_t camera_ois_check_cross_talk_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	u16 hall_data[11] = {0, };
+	int result = 0;
+
+	if (check_ois_power) {
+		is_ois_check_cross_talk(sysfs_core, hall_data);
+		result = 1;
+	} else {
+		err("OIS power is not enabled.");
+		result = 0;
+	}
+
+	return sprintf(buf, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", result, hall_data[0], hall_data[1],
+		hall_data[2], hall_data[3], hall_data[4], hall_data[5], hall_data[6], hall_data[7], hall_data[8], hall_data[9]);
+}
+
+static ssize_t camera_ois_read_ext_clock_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	u32 clock = 0;
+
+	if (check_ois_power) {
+		is_ois_read_ext_clock(sysfs_core, &clock);
+	} else {
+		err("OIS power is not enabled.");
+	}
+
+	return sprintf(buf, "%ld\n", clock);
+}
+
+static ssize_t camera_ois_rear3_read_cross_talk_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct is_ois_info *ois_pinfo = NULL;
+	int xvalue = 0;
+	int yvalue = 0;
+	int xvalue_pre = 0;
+	int yvalue_pre = 0;
+	int xvalue_post = 0;
+	int yvalue_post = 0;
+
+	is_ois_get_phone_version(&ois_pinfo);
+	xvalue = (ois_pinfo->tele_xcoef[1] << 8) | (ois_pinfo->tele_xcoef[0]);
+	yvalue = (ois_pinfo->tele_ycoef[1] << 8) | (ois_pinfo->tele_ycoef[0]);
+
+	info("%s value =  0x%02x, 0x%02x, 0x%02x, 0x%02x", __func__, ois_pinfo->tele_xcoef[0], ois_pinfo->tele_xcoef[1],
+		ois_pinfo->tele_ycoef[0], ois_pinfo->tele_ycoef[1]);
+
+	if ((ois_pinfo->tele_xcoef[0] == 0xFF && ois_pinfo->tele_xcoef[1] == 0xFF) &&
+		(ois_pinfo->tele_ycoef[0] == 0xFF && ois_pinfo->tele_ycoef[1] == 0xFF)) {
+		return sprintf(buf, "NONE\n");
+	} else if (ois_pinfo->tele_cal_mark[0] != 0xBB) {
+		return sprintf(buf, "NONE\n");
+	} else {
+		xvalue_pre = xvalue / 100;
+		yvalue_pre = yvalue / 100;
+		xvalue_post = abs(xvalue) - abs(xvalue_pre) * 100;
+		yvalue_post = abs(yvalue) - abs(yvalue_pre) * 100;
+		return sprintf(buf, "%d.%d%d,%d.%d%d\n", xvalue_pre, xvalue_post / 10, xvalue_post % 10,
+			yvalue_pre, yvalue_post / 10, yvalue_post % 10);
+	}
+}
+
 #endif
 
 #ifdef FORCE_CAL_LOAD
@@ -3487,24 +3968,14 @@ static ssize_t camera_rear_moduleid_show(struct device *dev,
 }
 
 #if defined(CONFIG_CAMERA_EEPROM_SUPPORT_FRONT)
+#ifndef CAMERA_FRONT_FIXED_FOCUS
 static ssize_t camera_front_afcal_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	return camera_afcal_show(buf, CAM_INFO_FRONT);
 }
 
-static ssize_t camera_front_moduleid_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	return camera_moduleid_show(buf, CAM_INFO_FRONT);
-}
-
-static ssize_t camera_front_mtf_exif_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	return camera_mtf_exif_show(buf, CAM_INFO_FRONT, FNUMBER_1ST);
-}
-
+#ifdef ROM_PAF_CAL_DATA_START_ADDR_FRONT
 static ssize_t camera_front_paf_cal_check_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -3519,6 +3990,19 @@ static ssize_t camera_front_paf_cal_check_show(struct device *dev,
 	paf_err_data_result = *data | ( *(data + 1) << 8) | ( *(data + 2) << 16) | (*(data + 3) << 24);
 
 	return sprintf(buf, "%08X\n", paf_err_data_result);
+}
+#endif
+#endif
+static ssize_t camera_front_moduleid_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return camera_moduleid_show(buf, CAM_INFO_FRONT);
+}
+
+static ssize_t camera_front_mtf_exif_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return camera_mtf_exif_show(buf, CAM_INFO_FRONT, FNUMBER_1ST);
 }
 
 static ssize_t camera_front_sensorid_exif_show(struct device *dev,
@@ -3629,7 +4113,7 @@ static ssize_t camera_rear_camfw_all_show(struct device *dev,
 	for (i = 0; i < loop; i++) {
 		sprintf(path, IS_FW_PATH"%s", rta_fw_list[i]);
 		ret = camera_fw_show_sub(path, fw_ver,
-						(-LIBRARY_VER_OFS), IS_HEADER_VER_SIZE);
+						(-IS_HEADER_VER_OFFSET), IS_HEADER_VER_SIZE);
 		if (ret == 0) {
 			if (cnt++ > 0)
 				strcat(output, ",");
@@ -4088,7 +4572,7 @@ static DEVICE_ATTR(rear_camtype, S_IRUGO, camera_rear_camtype_show, NULL);
 static DEVICE_ATTR(rear_calcheck, S_IRUGO, camera_rear_calcheck_show, NULL);
 
 static DEVICE_ATTR(rear_caminfo, S_IRUGO, camera_rear_info_show, NULL);
-static DEVICE_ATTR(rear_camfw, S_IRUGO, camera_rear_camfw_show, camera_rear_camfw_write);
+static DEVICE_ATTR(rear_camfw, S_IRUGO|S_IWUSR, camera_rear_camfw_show, camera_rear_camfw_write);
 static DEVICE_ATTR(rear_camfw_full, S_IRUGO, camera_rear_camfw_full_show, NULL);
 static DEVICE_ATTR(rear_checkfw_user, S_IRUGO, camera_rear_checkfw_user_show, NULL);
 static DEVICE_ATTR(rear_checkfw_factory, S_IRUGO, camera_rear_checkfw_factory_show, NULL);
@@ -4162,6 +4646,8 @@ static DEVICE_ATTR(rear_tof_camfw, S_IRUGO, camera_rear_tof_camfw_show, camera_r
 static DEVICE_ATTR(rear_tof_camfw_full, S_IRUGO, camera_rear_tof_camfw_full_show, NULL);
 static DEVICE_ATTR(rear_tof_checkfw_factory, S_IRUGO, camera_rear_tof_checkfw_factory_show, NULL);
 static DEVICE_ATTR(rear_tof_sensorid_exif, S_IRUGO, camera_rear_tof_sensorid_exif_show, NULL);
+static DEVICE_ATTR(rear_tof_laser_error_flag, 0644, camera_rear_tof_laser_error_flag_show, camera_rear_tof_laser_error_flag_store);
+static DEVICE_ATTR(rear_tof_state, S_IRUGO, camera_rear_tof_state_show, NULL);
 #ifdef CAMERA_REAR4_TOF_MODULEID
 static DEVICE_ATTR(rear4_moduleid, S_IRUGO, camera_rear_tof_moduleid_show, NULL);
 static DEVICE_ATTR(SVC_rear_module4, S_IRUGO, camera_rear_tof_moduleid_show, NULL);
@@ -4171,14 +4657,17 @@ static DEVICE_ATTR(rear_tofcal, S_IRUGO, camera_rear_tofcal_show, NULL);
 static DEVICE_ATTR(rear_tofcal_extra, S_IRUGO, camera_rear_tofcal_extra_show, NULL);
 static DEVICE_ATTR(rear_tofcal_size, S_IRUGO, camera_rear_tofcal_size_show, NULL);
 static DEVICE_ATTR(rear_tofcal_uid, S_IRUGO, camera_rear_tofcal_uid_show, NULL);
-static DEVICE_ATTR(rear_tof_dual_cal, S_IRUGO, camera_rear_tof_dual_cal_show, NULL);
 static DEVICE_ATTR(rear_tof_cal_result, S_IRUGO, camera_rear_tof_cal_result_show, NULL);
+static DEVICE_ATTR(rear_tof_get_validation, S_IRUGO, camera_rear_tof_get_validation_data_show, NULL);
+#endif
+#ifdef CAMERA_REAR_TOF_DUAL_CAL
+static DEVICE_ATTR(rear_tof_dual_cal, S_IRUGO, camera_rear_tof_dual_cal_show, NULL);
 #endif
 #ifdef CAMERA_REAR_TOF_TILT
 static DEVICE_ATTR(rear_tof_tilt, S_IRUGO, camera_rear_tof_tilt_show, NULL);
 #endif
 #if defined(USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION) || defined(USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION_SYSFS_ENABLE)
-static DEVICE_ATTR(rear_tof_freq, S_IRUGO, camera_rear_tof_freq_show, NULL);
+static DEVICE_ATTR(rear_tof_freq, 0644, camera_rear_tof_freq_show, camera_rear_tof_freq_store);
 #endif
 #ifdef CAMERA_REAR2_TOF_TILT
 static DEVICE_ATTR(rear2_tof_tilt, S_IRUGO, camera_rear2_tof_tilt_show, NULL);
@@ -4202,9 +4691,13 @@ static DEVICE_ATTR(front_mipi_clock, 0440, camera_front_mipi_clock_show, NULL);
 #if defined(CONFIG_CAMERA_EEPROM_SUPPORT_FRONT)
 static DEVICE_ATTR(front_camfw_full, S_IRUGO, camera_front_camfw_full_show, NULL);
 static DEVICE_ATTR(front_checkfw_factory, S_IRUGO, camera_front_checkfw_factory_show, NULL);
+#ifndef CAMERA_FRONT_FIXED_FOCUS
 static DEVICE_ATTR(front_afcal, S_IRUGO, camera_front_afcal_show, NULL);
-static DEVICE_ATTR(front_mtf_exif, S_IRUGO, camera_front_mtf_exif_show, NULL);
+#ifdef ROM_PAF_CAL_DATA_START_ADDR_FRONT
 static DEVICE_ATTR(front_paf_cal_check, S_IRUGO, camera_front_paf_cal_check_show, NULL);
+#endif
+#endif
+static DEVICE_ATTR(front_mtf_exif, S_IRUGO, camera_front_mtf_exif_show, NULL);
 static DEVICE_ATTR(front_sensorid_exif, S_IRUGO, camera_front_sensorid_exif_show, NULL);
 static DEVICE_ATTR(front_awb_master, S_IRUGO, camera_front_awb_master_show, NULL);
 static DEVICE_ATTR(front_awb_module, S_IRUGO, camera_front_awb_module_show, NULL);
@@ -4274,6 +4767,7 @@ static DEVICE_ATTR(selftest, S_IRUGO, camera_ois_selftest_show, NULL);
 static DEVICE_ATTR(ois_power, S_IWUSR, NULL, camera_ois_power_store);
 static DEVICE_ATTR(autotest, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH,
 		camera_ois_autotest_show, camera_ois_autotest_store);
+static DEVICE_ATTR(ois_set_mode, S_IWUSR, NULL, camera_ois_set_mode_store);
 #ifdef CAMERA_2ND_OIS
 static DEVICE_ATTR(autotest_2nd, S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH,
 		camera_ois_autotest_2nd_show, camera_ois_autotest_2nd_store);
@@ -4282,6 +4776,7 @@ static DEVICE_ATTR(ois_supperssion_ratio_rear3, S_IRUGO, camera_ois_rear3_supper
 #endif
 static DEVICE_ATTR(ois_rawdata, S_IRUGO, camera_ois_rawdata_show, NULL);
 static DEVICE_ATTR(calibrationtest, S_IRUGO, camera_ois_calibrationtest_show, NULL);
+static DEVICE_ATTR(ois_hall_position, S_IRUGO, camera_ois_hall_position_show, NULL);
 static DEVICE_ATTR(rear_aperture_halltest, S_IRUGO, camera_rear_aperture_halltest_show, NULL);
 static DEVICE_ATTR(oisfw, S_IRUGO, camera_ois_version_show, NULL);
 static DEVICE_ATTR(ois_diff, S_IRUGO, camera_ois_diff_show, NULL);
@@ -4289,6 +4784,10 @@ static DEVICE_ATTR(ois_exif, S_IRUGO, camera_ois_exif_show, NULL);
 static DEVICE_ATTR(ois_gain_rear, S_IRUGO, camera_ois_rear_gain_show, NULL);
 static DEVICE_ATTR(ois_supperssion_ratio_rear, S_IRUGO, camera_ois_rear_supperssion_ratio_show, NULL);
 static DEVICE_ATTR(reset_check, S_IRUGO, camera_ois_reset_check, NULL);
+static DEVICE_ATTR(prevent_shaking_noise, S_IWUSR, NULL, camera_ois_shaking_noise_store);
+static DEVICE_ATTR(check_cross_talk, S_IRUGO, camera_ois_check_cross_talk_show, NULL);
+static DEVICE_ATTR(ois_ext_clk, S_IRUGO, camera_ois_read_ext_clock_show, NULL);
+static DEVICE_ATTR(rear3_read_cross_talk, S_IRUGO, camera_ois_rear3_read_cross_talk_show, NULL);
 #endif
 #ifdef FORCE_CAL_LOAD
 static DEVICE_ATTR(rear_force_cal_load, S_IRUGO, camera_rear_force_cal_load_show, NULL);
@@ -4437,14 +4936,18 @@ int is_create_sysfs(struct is_core *core)
 			pr_err("failed to create front device file, %s\n",
 					dev_attr_front_mtf_exif.attr.name);
 		}
+#ifndef CAMERA_FRONT_FIXED_FOCUS
+#ifdef ROM_PAF_CAL_DATA_START_ADDR_FRONT
 		if (device_create_file(camera_front_dev, &dev_attr_front_paf_cal_check) < 0) {
 			pr_err("failed to create front device file, %s\n",
 					dev_attr_front_paf_cal_check.attr.name);
 		}
+#endif
 		if (device_create_file(camera_front_dev, &dev_attr_front_afcal) < 0) {
 			pr_err("failed to create front device file, %s\n",
 					dev_attr_front_afcal.attr.name);
 		}
+#endif
 		if (device_create_file(camera_front_dev, &dev_attr_front_awb_master) < 0) {
 			pr_err("failed to create front device file, %s\n",
 					dev_attr_front_awb_master.attr.name);
@@ -4881,6 +5384,14 @@ int is_create_sysfs(struct is_core *core)
 					dev_attr_SVC_rear_module4.attr.name);
 		}
 #endif
+		if (device_create_file(camera_rear_dev, &dev_attr_rear_tof_laser_error_flag) < 0) {
+			pr_err("failed to create rear device file, %s\n",
+					dev_attr_rear_tof_laser_error_flag.attr.name);
+		}
+		if (device_create_file(camera_rear_dev, &dev_attr_rear_tof_state) < 0) {
+			pr_err("failed to create rear device file, %s\n",
+					dev_attr_rear_tof_state.attr.name);
+		}
 #ifdef CAMERA_REAR_TOF_CAL
 		if (device_create_file(camera_rear_dev, &dev_attr_rear_tofcal) < 0) {
 			pr_err("failed to create rear device file, %s\n",
@@ -4898,13 +5409,19 @@ int is_create_sysfs(struct is_core *core)
 			pr_err("failed to create rear device file, %s\n",
 					dev_attr_rear_tofcal_uid.attr.name);
 		}
-		if (device_create_file(camera_rear_dev, &dev_attr_rear_tof_dual_cal) < 0) {
-			pr_err("failed to create rear device file, %s\n",
-					dev_attr_rear_tof_dual_cal.attr.name);
-		}
 		if (device_create_file(camera_rear_dev, &dev_attr_rear_tof_cal_result) < 0) {
 			pr_err("failed to create rear device file, %s\n",
 					dev_attr_rear_tof_cal_result.attr.name);
+		}
+		if (device_create_file(camera_rear_dev, &dev_attr_rear_tof_get_validation) < 0) {
+			pr_err("failed to create rear device file, %s\n",
+					dev_attr_rear_tof_get_validation.attr.name);
+		}
+#endif
+#ifdef CAMERA_REAR_TOF_DUAL_CAL
+		if (device_create_file(camera_rear_dev, &dev_attr_rear_tof_dual_cal) < 0) {
+			pr_err("failed to create rear device file, %s\n",
+					dev_attr_rear_tof_dual_cal.attr.name);
 		}
 #endif
 #ifdef CAMERA_REAR_TOF_TILT
@@ -5052,6 +5569,10 @@ int is_create_sysfs(struct is_core *core)
 			pr_err("failed to create ois device file, %s\n",
 				dev_attr_ois_power.attr.name);
 		}
+		if (device_create_file(camera_ois_dev, &dev_attr_ois_set_mode) < 0) {
+			pr_err("failed to create ois device file, %s\n",
+				dev_attr_ois_set_mode.attr.name);
+		}
 		if (device_create_file(camera_ois_dev, &dev_attr_autotest) < 0) {
 			pr_err("failed to create ois device file, %s\n",
 				dev_attr_autotest.attr.name);
@@ -5078,6 +5599,10 @@ int is_create_sysfs(struct is_core *core)
 			pr_err("failed to create ois device file, %s\n",
 				dev_attr_calibrationtest.attr.name);
 		}
+		if (device_create_file(camera_ois_dev, &dev_attr_ois_hall_position) < 0) {
+			pr_err("failed to create ois device file, %s\n",
+				dev_attr_ois_hall_position.attr.name);
+		}
 		if (device_create_file(camera_ois_dev, &dev_attr_oisfw) < 0) {
 			pr_err("failed to create ois device file, %s\n",
 				dev_attr_oisfw.attr.name);
@@ -5101,6 +5626,22 @@ int is_create_sysfs(struct is_core *core)
 		if (device_create_file(camera_ois_dev, &dev_attr_reset_check) < 0) {
 			pr_err("failed to create ois device file, %s\n",
 				dev_attr_reset_check.attr.name);
+		}
+		if (device_create_file(camera_ois_dev, &dev_attr_prevent_shaking_noise) < 0) {
+			pr_err("failed to create ois device file, %s\n",
+				dev_attr_prevent_shaking_noise.attr.name);
+		}
+		if (device_create_file(camera_ois_dev, &dev_attr_check_cross_talk) < 0) {
+			pr_err("failed to create ois device file, %s\n",
+				dev_attr_check_cross_talk.attr.name);
+		}
+		if (device_create_file(camera_ois_dev, &dev_attr_ois_ext_clk) < 0) {
+			pr_err("failed to create ois device file, %s\n",
+				dev_attr_ois_ext_clk.attr.name);
+		}
+		if (device_create_file(camera_ois_dev, &dev_attr_rear3_read_cross_talk) < 0) {
+			pr_err("failed to create ois device file, %s\n",
+				dev_attr_rear3_read_cross_talk.attr.name);
 		}
 	}
 #endif
@@ -5157,12 +5698,16 @@ int is_destroy_sysfs(struct is_core *core)
 		device_remove_file(camera_front_dev, &dev_attr_front_caminfo);
 		device_remove_file(camera_front_dev, &dev_attr_front_camfw);
 #if defined(CONFIG_CAMERA_EEPROM_SUPPORT_FRONT)
+#ifndef CAMERA_FRONT_FIXED_FOCUS
 		device_remove_file(camera_front_dev, &dev_attr_front_afcal);
+#ifdef ROM_PAF_CAL_DATA_START_ADDR_FRONT
+		device_remove_file(camera_front_dev, &dev_attr_front_paf_cal_check);
+#endif
+#endif
 		device_remove_file(camera_front_dev, &dev_attr_front_camfw_full);
 		device_remove_file(camera_front_dev, &dev_attr_front_checkfw_factory);
 		device_remove_file(camera_front_dev, &dev_attr_front_moduleid);
 		device_remove_file(camera_front_dev, &dev_attr_front_mtf_exif);
-		device_remove_file(camera_front_dev, &dev_attr_front_paf_cal_check);
 		device_remove_file(camera_front_dev, &dev_attr_front_sensorid_exif);
 		device_remove_file(camera_front_dev, &dev_attr_front_awb_master);
 		device_remove_file(camera_front_dev, &dev_attr_front_awb_module);
@@ -5314,13 +5859,18 @@ int is_destroy_sysfs(struct is_core *core)
 #ifdef CAMERA_REAR4_TOF_MODULEID
 		device_remove_file(camera_rear_dev, &dev_attr_rear4_moduleid);
 #endif
+		device_remove_file(camera_rear_dev, &dev_attr_rear_tof_laser_error_flag);
+		device_remove_file(camera_rear_dev, &dev_attr_rear_tof_state);
 #ifdef CAMERA_REAR_TOF_CAL
 		device_remove_file(camera_rear_dev, &dev_attr_rear_tofcal);
 		device_remove_file(camera_rear_dev, &dev_attr_rear_tofcal_extra);
 		device_remove_file(camera_rear_dev, &dev_attr_rear_tofcal_size);
 		device_remove_file(camera_rear_dev, &dev_attr_rear_tofcal_uid);
-		device_remove_file(camera_rear_dev, &dev_attr_rear_tof_dual_cal);
 		device_remove_file(camera_rear_dev, &dev_attr_rear_tof_cal_result);
+		device_remove_file(camera_rear_dev, &dev_attr_rear_tof_get_validation);
+#endif
+#ifdef CAMERA_REAR_TOF_DUAL_CAL
+		device_remove_file(camera_rear_dev, &dev_attr_rear_tof_dual_cal);
 #endif
 #ifdef CAMERA_REAR_TOF_TILT
 		device_remove_file(camera_rear_dev, &dev_attr_rear_tof_tilt);
@@ -5377,6 +5927,7 @@ int is_destroy_sysfs(struct is_core *core)
 	if (camera_ois_dev) {
 		device_remove_file(camera_ois_dev, &dev_attr_selftest);
 		device_remove_file(camera_ois_dev, &dev_attr_ois_power);
+		device_remove_file(camera_ois_dev, &dev_attr_ois_set_mode);
 		device_remove_file(camera_ois_dev, &dev_attr_autotest);
 #ifdef CAMERA_2ND_OIS
 		device_remove_file(camera_ois_dev, &dev_attr_autotest_2nd);
@@ -5385,12 +5936,17 @@ int is_destroy_sysfs(struct is_core *core)
 #endif
 		device_remove_file(camera_ois_dev, &dev_attr_ois_rawdata);
 		device_remove_file(camera_ois_dev, &dev_attr_calibrationtest);
+		device_remove_file(camera_ois_dev, &dev_attr_ois_hall_position);
 		device_remove_file(camera_ois_dev, &dev_attr_oisfw);
 		device_remove_file(camera_ois_dev, &dev_attr_ois_diff);
 		device_remove_file(camera_ois_dev, &dev_attr_ois_exif);
 		device_remove_file(camera_ois_dev, &dev_attr_ois_gain_rear);
 		device_remove_file(camera_ois_dev, &dev_attr_ois_supperssion_ratio_rear);
 		device_remove_file(camera_ois_dev, &dev_attr_reset_check);
+		device_remove_file(camera_ois_dev, &dev_attr_prevent_shaking_noise);
+		device_remove_file(camera_ois_dev, &dev_attr_check_cross_talk);
+		device_remove_file(camera_ois_dev, &dev_attr_ois_ext_clk);
+		device_remove_file(camera_ois_dev, &dev_attr_rear3_read_cross_talk);
 	}
 #endif
 #ifdef SECURE_CAMERA_IRIS

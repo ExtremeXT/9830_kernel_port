@@ -1,5 +1,5 @@
 /*
- * linux/drivers/video/fbdev/exynos/dpu30/disp_err.h
+ * linux/drivers/video/fbdev/exynos/dpu_9810/disp_err.h
  *
  * Source file for display error info
  *
@@ -34,10 +34,24 @@ struct disp_check_cb_info {
 #define DEFINE_DISP_CHECK_CB_INFO(name, cb_func, cb_data) \
 	struct disp_check_cb_info name = __DISP_CHECK_CB_INFO_INITIALIZER(cb_func, cb_data)
 
+typedef int (disp_cb)(void *data, void *arg);
+struct disp_cb_info {
+	disp_cb *cb;
+	void *data;
+};
+
+#define __DISP_CB_INFO_INITIALIZER(cb, cb_data) \
+{ .cb = (disp_cb *)cb, .data = cb_data }
+#define DEFINE_DISP_CB_INFO(name, cb_func, cb_data) \
+	struct disp_cb_info name = __DISP_CB_INFO_INITIALIZER(cb_func, cb_data)
+
 typedef int (disp_error_cb)(void *data,
+		struct disp_check_cb_info *info);
+typedef int (disp_powerdown_cb)(void *data,
 		struct disp_check_cb_info *info);
 struct disp_error_cb_info {
 	disp_error_cb *error_cb;
+	disp_powerdown_cb *powerdown_cb;
 	void *data;
 };
 
@@ -50,6 +64,7 @@ struct disp_error_cb_info {
 #define DISP_CHECK_STATUS_OK	(0)
 #define DISP_CHECK_STATUS_NODEV	(1 << 0)	/* UB_CON_DET */
 #define DISP_CHECK_STATUS_ELOFF	(1 << 1)	/* DISP_DET */
+
 #define IS_DISP_CHECK_STATUS_DISCONNECTED(_status_) ((_status_) & (DISP_CHECK_STATUS_NODEV))
 #define IS_DISP_CHECK_STATUS_NOK(_status_) ((_status_) != (DISP_CHECK_STATUS_OK))
 

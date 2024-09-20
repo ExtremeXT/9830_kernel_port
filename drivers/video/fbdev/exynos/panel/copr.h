@@ -12,6 +12,7 @@
 #define __COPR_H__
 
 #include "panel.h"
+#include "panel_debug.h"
 #include "timenval.h"
 #include <linux/ktime.h>
 #include <linux/wait.h>
@@ -243,8 +244,7 @@ static inline void SET_COPR_REG_GAMMA(struct copr_info *copr, bool copr_gamma)
 	else if (copr->props.version == COPR_VER_5)
 		copr->props.reg.v5.copr_gamma = copr_gamma;
 	else
-		pr_warn("%s unsupprted in ver%d\n",
-				__func__, copr->props.version);
+		panel_warn("unsupprted in ver%d\n", copr->props.version);
 }
 
 static inline void SET_COPR_REG_E(struct copr_info *copr, int r, int g, int b)
@@ -270,19 +270,16 @@ static inline void SET_COPR_REG_E(struct copr_info *copr, int r, int g, int b)
 		copr->props.reg.v5.copr_eg = g;
 		copr->props.reg.v5.copr_eb = b;
 	} else {
-		pr_warn("%s unsupprted in ver%d\n",
-				__func__, copr->props.version);
+		panel_warn("unsupprted in ver%d\n", copr->props.version);
 	}
 }
 
 static inline void SET_COPR_REG_EC(struct copr_info *copr, int r, int g, int b)
 {
 	if (copr->props.version == COPR_VER_0) {
-		pr_warn("%s unsupprted in ver%d\n",
-				__func__, copr->props.version);
+		panel_warn("unsupprted in ver%d\n", copr->props.version);
 	} else if (copr->props.version == COPR_VER_1) {
-		pr_warn("%s unsupprted in ver%d\n",
-				__func__, copr->props.version);
+		panel_warn("unsupprted in ver%d\n", copr->props.version);
 	} else if (copr->props.version == COPR_VER_2) {
 		copr->props.reg.v2.copr_erc = r;
 		copr->props.reg.v2.copr_egc = g;
@@ -296,16 +293,14 @@ static inline void SET_COPR_REG_EC(struct copr_info *copr, int r, int g, int b)
 		copr->props.reg.v5.copr_egc = g;
 		copr->props.reg.v5.copr_ebc = b;
 	} else {
-		pr_warn("%s unsupprted in ver%d\n",
-				__func__, copr->props.version);
+		panel_warn("unsupprted in ver%d\n", copr->props.version);
 	}
 }
 
 static inline void SET_COPR_REG_CNT_RE(struct copr_info *copr, int cnt_re)
 {
 	if (copr->props.version == COPR_VER_0)
-		pr_warn("%s unsupprted in ver%d\n",
-				__func__, copr->props.version);
+		panel_warn("unsupprted in ver%d\n", copr->props.version);
 	else if (copr->props.version == COPR_VER_1)
 		copr->props.reg.v1.cnt_re = cnt_re;
 	else if (copr->props.version == COPR_VER_2)
@@ -315,8 +310,7 @@ static inline void SET_COPR_REG_CNT_RE(struct copr_info *copr, int cnt_re)
 	else if (copr->props.version == COPR_VER_5)
 		copr->props.reg.v5.cnt_re = cnt_re;
 	else
-		pr_warn("%s unsupprted in ver%d\n",
-				__func__, copr->props.version);
+		panel_warn("unsupprted in ver%d\n", copr->props.version);
 }
 
 static inline void SET_COPR_REG_ROI(struct copr_info *copr, struct copr_roi *roi, int nr_roi)
@@ -384,8 +378,7 @@ static inline int get_copr_reg_copr_en(struct copr_info *copr)
 	else if (copr->props.version == COPR_VER_5)
 		copr_en = copr->props.reg.v5.copr_en;
 	else
-		pr_warn("%s unsupprted in ver%d\n",
-				__func__, copr->props.version);
+		panel_warn("unsupprted in ver%d\n", copr->props.version);
 
 	return copr_en;
 }

@@ -30,8 +30,6 @@
 #include "is-device-sensor.h"
 #include "is-votfmgr.h"
 
-static void csi_free_irq(struct is_device_csi *csi);
-
 inline void csi_frame_start_inline(struct is_device_csi *csi)
 {
 	u32 inc = 1;
@@ -55,8 +53,10 @@ inline void csi_frame_start_inline(struct is_device_csi *csi)
 			if (inc > 1) {
 				mwarn("[CSI%d] interrupt lost(%d)", csi, csi->ch, inc);
 			} else if (inc == 0) {
+#if 0
 				mwarn("[CSI%d] hw_fcount(%d) is not incresed",
 					csi, csi->ch, hw_fcount);
+#endif
 				inc = 1;
 			}
 		}
@@ -75,8 +75,8 @@ inline void csi_frame_start_inline(struct is_device_csi *csi)
 
 	sensor = v4l2_get_subdev_hostdata(*csi->subdev);
 	if (!sensor) {
-	    err("sensor is NULL");
-	    BUG();
+		err("sensor is NULL");
+		BUG();
 	}
 
 	/*
@@ -210,6 +210,11 @@ static inline void csi_s_output_dma(struct is_device_csi *csi, u32 vc, bool enab
 	csi_hw_s_output_dma(csi->vc_reg[csi->scm][vc], vc, enable);
 }
 
+static inline void csi_s_frameptr(struct is_device_csi *csi, u32 vc, u32 number, bool clear)
+{
+	csi_hw_s_frameptr(csi->vc_reg[csi->scm][vc], vc, number, clear);
+}
+
 static void csi_s_buf_addr_wrap(void *data, unsigned long id, struct is_frame *frame)
 {
 	struct is_device_csi *csi;
@@ -219,6 +224,13 @@ static void csi_s_buf_addr_wrap(void *data, unsigned long id, struct is_frame *f
 	if (!csi) {
 		err("failed to get CSI");
 		return;
+	}
+
+	/* Move frameptr for shadowing N+1 frame DVA update */
+	if (csi->f_id_dec && (vc == CSI_VIRTUAL_CH_0)) {
+		u32 frameptr = atomic_inc_return(&csi->bufring_cnt) % BUF_SWAP_CNT;
+		frameptr *= csi->dma_batch_num;
+		csi_s_frameptr(csi, vc, frameptr, false);
 	}
 
 	csi_s_buf_addr(csi, frame, vc);
@@ -278,8 +290,7 @@ static inline void csi_s_config_dma(struct is_device_csi *csi, struct is_vci_con
 				framecfg.width);
 		}
 
-		csi_hw_s_config_dma(csi->vc_reg[csi->scm][vc], vc, &framecfg, vci_config[vc].extformat,
-					csi->sensor_cfg->dummy_pixel[vc]);
+		csi_hw_s_config_dma(csi->vc_reg[csi->scm][vc], vc, &framecfg, vci_config[vc].extformat);
 
 		/* vc: determine for vc0 img format for otf path
 		 * dma_subdev->vc_ch[csi->scm]: actual channel at each vc used,
@@ -296,11 +307,6 @@ static inline void csi_s_multibuf_addr(struct is_device_csi *csi, struct is_fram
 
 	csi_hw_s_multibuf_dma_addr(csi->vc_reg[csi->scm][vc], vc, index,
 				(u32)frame->dvaddr_buffer[0]);
-}
-
-static inline void csi_s_frameptr(struct is_device_csi *csi, u32 vc, u32 number, bool clear)
-{
-	csi_hw_s_frameptr(csi->vc_reg[csi->scm][vc], vc, number, clear);
 }
 
 static struct is_framemgr *csis_get_vc_framemgr(struct is_device_csi *csi, u32 vc)
@@ -731,8 +737,8 @@ static void csi_dma_tag(struct v4l2_subdev *subdev,
 		data_type = CSIS_NOTIFY_DMA_END;
 	} else {
 		/* get internal VC buffer for embedded data */
-		if ((csi->sensor_cfg->output[vc].type == VC_EMBEDDED)
-			|| (csi->sensor_cfg->output[vc].type == VC_EMBEDDED2)) {
+		if ((csi->sensor_cfg->output[vc].type == VC_EMBEDDED) ||
+			(csi->sensor_cfg->output[vc].type == VC_EMBEDDED2)) {
 			u32 frameptr = csi_hw_g_frameptr(csi->vc_reg[csi->scm][vc], vc);
 
 			if (frameptr < framemgr->num_frames) {
@@ -782,8 +788,9 @@ static void csi_err_check(struct is_device_csi *csi, u32 *err_id, enum csis_hw_t
 	int vc, err, votf_ch = 0;
 	unsigned long prev_err_flag = 0;
 	struct is_subdev *dma_subdev;
+#if 0
 	struct is_device_sensor *sensor;
-	unsigned long vc0_err_id = 0;
+#endif
 
 	/* 1. Check error */
 	for (vc = CSI_VIRTUAL_CH_0; vc < CSI_VIRTUAL_CH_MAX; vc++) {
@@ -802,8 +809,7 @@ static void csi_err_check(struct is_device_csi *csi, u32 *err_id, enum csis_hw_t
 		csi->error_id[vc] |= err_id[vc];
 
 	/* 4. VC ch0 only exception case */
-	vc0_err_id = (unsigned long)err_id[CSI_VIRTUAL_CH_0];
-	err = find_first_bit(&vc0_err_id, CSIS_ERR_END);
+	err = find_first_bit((unsigned long *)&err_id[CSI_VIRTUAL_CH_0], CSIS_ERR_END);
 	while (err < CSIS_ERR_END) {
 		switch (err) {
 		case CSIS_ERR_LOST_FE_VC:
@@ -818,6 +824,8 @@ static void csi_err_check(struct is_device_csi *csi, u32 *err_id, enum csis_hw_t
 		case CSIS_ERR_LOST_FS_VC:
 			/* disable next dma */
 			csi_s_output_dma(csi, CSI_VIRTUAL_CH_0, false);
+
+			csi->crc_flag = true; /* to prevent ESD kernel panic */
 			break;
 		case CSIS_ERR_CRC:
 		case CSIS_ERR_MAL_CRC:
@@ -829,6 +837,7 @@ static void csi_err_check(struct is_device_csi *csi, u32 *err_id, enum csis_hw_t
 				csi->dma_subdev[CSI_VIRTUAL_CH_0]->vc_ch[csi->scm],
 				CSI_VIRTUAL_CH_0, atomic_read(&csi->fcount), err);
 
+#if 0
 			if (!test_bit(CSIS_ERR_CRC, &prev_err_flag)
 				&& !test_bit(CSIS_ERR_MAL_CRC, &prev_err_flag)
 				&& !test_bit(CSIS_ERR_CRC_CPHY, &prev_err_flag)) {
@@ -836,12 +845,13 @@ static void csi_err_check(struct is_device_csi *csi, u32 *err_id, enum csis_hw_t
 				if (sensor)
 					is_sensor_dump(sensor);
 			}
+#endif
 		default:
 			break;
 		}
 
 		/* Check next bit */
-		err = find_next_bit(&vc0_err_id, CSIS_ERR_END, err + 1);
+		err = find_next_bit((unsigned long *)&err_id[CSI_VIRTUAL_CH_0], CSIS_ERR_END, err + 1);
 	}
 }
 
@@ -849,7 +859,6 @@ static void csi_err_print(struct is_device_csi *csi)
 {
 	const char *err_str = NULL;
 	int vc, err;
-	unsigned long err_id = 0;
 #ifdef USE_CAMERA_HW_BIG_DATA
 	bool err_report = false;
 #endif
@@ -859,8 +868,7 @@ static void csi_err_print(struct is_device_csi *csi)
 		if (!csi->error_id[vc])
 			continue;
 
-		err_id = (unsigned long)csi->error_id[vc];
-		err = find_first_bit(&err_id, CSIS_ERR_END);
+		err = find_first_bit((unsigned long *)&csi->error_id[vc], CSIS_ERR_END);
 		while (err < CSIS_ERR_END) {
 			switch (err) {
 			case CSIS_ERR_ID:
@@ -904,7 +912,7 @@ static void csi_err_print(struct is_device_csi *csi)
 				is_sec_copy_err_cnt_to_file();
 #endif
 #endif
-				exynos_bcm_dbg_stop(CAMERA_DRIVER);
+				exynos_bcm_dbg_stop(PANIC_HANDLE);
 
 				is_debug_s2d(false, "[DMA%d][VC P%d, L%d] CSIS error!! %s",
 					csi->dma_subdev[vc]->dma_ch[csi->scm],
@@ -977,7 +985,7 @@ static void csi_err_print(struct is_device_csi *csi)
 #endif
 
 			/* Check next bit */
-			err = find_next_bit(&err_id, CSIS_ERR_END, err + 1);
+			err = find_next_bit((unsigned long *)&csi->error_id[vc], CSIS_ERR_END, err + 1);
 		}
 	}
 
@@ -1021,7 +1029,9 @@ static void csi_err_handle(struct is_device_csi *csi)
 		core = device->private_data;
 
 		/* Call sensor DTP */
+#ifdef CONFIG_SEC_FACTORY /* for ESD recovery */
 		set_bit(IS_SENSOR_FRONT_DTP_STOP, &device->state);
+#endif
 
 		/* Disable CSIS */
 		csi_hw_disable(csi->base_reg);
@@ -1442,13 +1452,8 @@ static irqreturn_t is_isr_csi_dma(int irq, void *data)
 		}
 
 		if (dma_frame_str & (1 << vc)) {
-			if (csi->f_id_dec && (vc == CSI_VIRTUAL_CH_0)) {
-				int bufring_cnt = atomic_inc_return(&csi->bufring_cnt);
-				u32 number = csi->dma_batch_num * (bufring_cnt % BUF_SWAP_CNT);
-
-				csi_s_frameptr(csi, vc, number, false);
+			if (csi->f_id_dec && (vc == CSI_VIRTUAL_CH_0))
 				csi_frame_start_inline(csi);
-			}
 
 			dma_subdev = csi->dma_subdev[vc];
 
@@ -2038,10 +2043,6 @@ static int csi_stream_on(struct v4l2_subdev *subdev,
 		goto err_config_phy;
 	}
 
-#if defined(SECURE_CAMERA_FACE) && defined(PROTECT_SYSREG_IS)
-	/* if sysreg_is is secure, skip phy reset */
-	if (device->ex_scenario != IS_SCENARIO_SECURE) {
-#endif
 	/* PHY be configured in PHY driver */
 	ret = csi_hw_s_phy_set(csi->phy, sensor_cfg->lanes, sensor_cfg->mipi_speed, settle, csi->ch,
 				csi->use_cphy);
@@ -2049,9 +2050,6 @@ static int csi_stream_on(struct v4l2_subdev *subdev,
 		merr("[CSI%d] csi_hw_s_phy_set is fail", csi, csi->ch);
 		goto err_set_phy;
 	}
-#if defined(SECURE_CAMERA_FACE) && defined(PROTECT_SYSREG_IS)
-	}
-#endif
 
 	/* CSIS core setting */
 	csi_hw_s_lane(base_reg, &csi->image, sensor_cfg->lanes, sensor_cfg->mipi_speed, csi->use_cphy);
@@ -2141,8 +2139,11 @@ static int csi_stream_on(struct v4l2_subdev *subdev,
 		}
 	}
 
-	/* if sensor's output otf was enabled, enable line irq */
-	if (!test_bit(IS_SENSOR_OTF_OUTPUT, &device->state)) {
+	/*
+	 * A csis line interrupt does not used any more in actual scenario.
+	 * But it can be used for debugging.
+	 */
+	if (unlikely(debug_csi >= 5)) {
 		/* update line_fcount for sensor_notify_by_line */
 		device->line_fcount = atomic_read(&csi->fcount) + 1;
 		minfo("[CSI%d] start line irq cnt(%d)\n", csi, csi->ch, device->line_fcount);
@@ -2233,7 +2234,7 @@ static int csi_stream_off(struct v4l2_subdev *subdev,
 	atomic_dec(&csi_dma->rcount);
 	spin_unlock(&csi_dma->barrier);
 
-	if (!test_bit(IS_SENSOR_OTF_OUTPUT, &device->state))
+	if (csi->tasklet_csis_line.func)
 		tasklet_kill(&csi->tasklet_csis_line);
 
 	if (test_bit(CSIS_DMA_ENABLE, &csi->state)) {
@@ -2398,9 +2399,6 @@ static int csi_s_format(struct v4l2_subdev *subdev,
 
 		w = vci_cfg->width;
 		h = vci_cfg->height;
-
-		if (sensor_cfg->dummy_pixel[vc])
-			w += sensor_cfg->dummy_pixel[vc];
 
 		/* VC type dependent value setting */
 		switch (vci_cfg->type) {

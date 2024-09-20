@@ -248,12 +248,11 @@ static void default_frame_work_fn(struct kthread_work *work)
 		atomic_dec(&group->rcount);
 
 	stripe_region_num = frame->stripe_info.region_num;
+	if (stripe_region_num
 #ifdef ENABLE_STRIPE_SYNC_PROCESSING
-	if (!CHK_MODECHANGE_SCN(frame->shot->ctl.aa.captureIntent)
-			&& stripe_region_num) {
-#else
-	if (stripe_region_num) {
+		&& !CHK_MODECHANGE_SCN(frame->shot->ctl.aa.captureIntent)
 #endif
+	) {
 		/* Prevent other frame comming while stripe processing */
 		while (stripe_region_num--)
 			is_group_shot(groupmgr, group, frame);
@@ -279,12 +278,11 @@ static void default_frame_dwork_fn(struct kthread_work *work)
 		atomic_dec(&group->rcount);
 
 	stripe_region_num = frame->stripe_info.region_num;
+	if (stripe_region_num
 #ifdef ENABLE_STRIPE_SYNC_PROCESSING
-	if (!CHK_MODECHANGE_SCN(frame->shot->ctl.aa.captureIntent)
-		&& stripe_region_num) {
-#else
-	if (stripe_region_num) {
+		&& !CHK_MODECHANGE_SCN(frame->shot->ctl.aa.captureIntent)
 #endif
+	) {
 		/* Prevent other frame comming while stripe processing */
 		while (stripe_region_num--)
 			is_group_shot(groupmgr, group, frame);

@@ -29,9 +29,7 @@ int is_ischain_mcs_stripe_cfg(struct is_group* group,
 	struct is_fmt *fmt = framecfg->format;
 	u32 region_id = frame->stripe_info.region_id;
 	u32 stripe_w, dma_offset = 0;
-	u32 scn_check_remosaic = 0;
 
-	scn_check_remosaic = CHK_MODECHANGE_SCN(frame->shot->ctl.aa.captureIntent);
 	if (!region_id) {
 		/* Left region */
 		if (test_bit(IS_GROUP_OTF_INPUT, &group->state)) {
@@ -74,18 +72,13 @@ int is_ischain_mcs_stripe_cfg(struct is_group* group,
 		}
 
 		if (!test_bit(IS_GROUP_OTF_INPUT, &group->state)) {
-			if (scn_check_remosaic) {
+			if (stream->stripe_h_pix_nums[region_id]) {
 				dma_offset = frame->stripe_info.in.h_pix_num;
-				dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE;
+				dma_offset += STRIPE_MARGIN_WIDTH * ((2 * (region_id - 1)) + 1);
+				dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE * incrop->h;
 			} else {
-				if (stream->stripe_h_pix_nums[region_id]) {
-					dma_offset = frame->stripe_info.in.h_pix_num;
-					dma_offset += STRIPE_MARGIN_WIDTH * ((2 * (region_id - 1)) + 1);
-					dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE * incrop->h;
-				} else {
-					dma_offset = frame->stripe_info.in.h_pix_num - STRIPE_MARGIN_WIDTH;
-					dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE;
-				}
+				dma_offset = frame->stripe_info.in.h_pix_num - STRIPE_MARGIN_WIDTH;
+				dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE;
 			}
 
 			frame->stripe_info.in.h_pix_num += stripe_w;
@@ -93,31 +86,24 @@ int is_ischain_mcs_stripe_cfg(struct is_group* group,
 			frame->stripe_info.in.prev_h_pix_num = frame->stripe_info.in.h_pix_num;
 		}
 
-		if (!scn_check_remosaic)
-			stripe_w += STRIPE_MARGIN_WIDTH;
+		stripe_w += STRIPE_MARGIN_WIDTH;
 	} else {
 		/* Right region */
 		stripe_w = incrop->w - frame->stripe_info.in.h_pix_num;
 
 		if (!test_bit(IS_GROUP_OTF_INPUT, &group->state)) {
-			if (scn_check_remosaic) {
+			if (stream->stripe_h_pix_nums[region_id]) {
 				dma_offset = frame->stripe_info.in.h_pix_num;
-				dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE;
+				dma_offset += STRIPE_MARGIN_WIDTH * ((2 * (region_id - 1)) + 1);
+				dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE * incrop->h;
 			} else {
-				if (stream->stripe_h_pix_nums[region_id]) {
-					dma_offset = frame->stripe_info.in.h_pix_num;
-					dma_offset += STRIPE_MARGIN_WIDTH * ((2 * (region_id - 1)) + 1);
-					dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE * incrop->h;
-				} else {
-					dma_offset = frame->stripe_info.in.h_pix_num - STRIPE_MARGIN_WIDTH;
-					dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE;
-				}
+				dma_offset = frame->stripe_info.in.h_pix_num - STRIPE_MARGIN_WIDTH;
+				dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE;
 			}
 		}
 	}
 
-	if (!scn_check_remosaic)
-		stripe_w += STRIPE_MARGIN_WIDTH;
+	stripe_w += STRIPE_MARGIN_WIDTH;
 	incrop->w = stripe_w;
 
 	/**
@@ -132,9 +118,9 @@ int is_ischain_mcs_stripe_cfg(struct is_group* group,
 	if (!test_bit(IS_GROUP_OTF_INPUT, &group->state))
 		frame->dvaddr_buffer[0] = frame->stripe_info.region_base_addr[0] + dma_offset;
 
-	msrdbgs(3, "stripe_in_crop[%d][%d, %d, %d, %d] offset %x\n", subdev, subdev, frame,
+	msrdbgs(3, "stripe_in_crop[%d][%d, %d, %d, %d]\n", subdev, subdev, frame,
 			frame->stripe_info.region_id,
-			incrop->x, incrop->y, incrop->w, incrop->h, dma_offset);
+			incrop->x, incrop->y, incrop->w, incrop->h);
 	msrdbgs(3, "stripe_ot_crop[%d][%d, %d, %d, %d]\n", subdev, subdev, frame,
 			frame->stripe_info.region_id,
 			otcrop->x, otcrop->y, otcrop->w, otcrop->h);
@@ -159,7 +145,6 @@ static int is_ischain_mcs_cfg(struct is_subdev *leader,
 	struct param_control *control;
 	struct is_device_ischain *device;
 	struct is_crop incrop_cfg, otcrop_cfg;
-	u32 scn_check_remosaic = 0;
 
 	device = (struct is_device_ischain *)device_data;
 
@@ -186,11 +171,9 @@ static int is_ischain_mcs_cfg(struct is_subdev *leader,
 
 	if (IS_ENABLED(CHAIN_USE_STRIPE_PROCESSING)	&& frame
 			&& frame->stripe_info.region_num
-			&& device->sensor->use_stripe_flag) {
+			&& device->sensor->use_stripe_flag)
 		is_ischain_mcs_stripe_cfg(group, leader, frame,
 				&incrop_cfg, &otcrop_cfg, &queue->framecfg);
-		scn_check_remosaic = CHK_MODECHANGE_SCN(frame->shot->ctl.aa.captureIntent);
-	}
 
 	input = is_itf_g_param(device, frame, PARAM_MCS_INPUT);
 	if (test_bit(IS_GROUP_OTF_INPUT, &group->state)) {
@@ -201,8 +184,8 @@ static int is_ischain_mcs_cfg(struct is_subdev *leader,
 	} else {
 		input->otf_cmd = OTF_INPUT_COMMAND_DISABLE;
 		input->dma_cmd = DMA_INPUT_COMMAND_ENABLE;
-		input->width = incrop->w;
-		input->height = incrop->h;
+		input->width = leader->input.canv.w;
+		input->height = leader->input.canv.h;
 		input->dma_crop_offset_x = leader->input.canv.x + incrop_cfg.x;
 		input->dma_crop_offset_y = leader->input.canv.y + incrop_cfg.y;
 		input->dma_crop_width = incrop_cfg.w;
@@ -216,17 +199,11 @@ static int is_ischain_mcs_cfg(struct is_subdev *leader,
 		/*
 		 * HW spec: DMA stride should be aligned by 16 byte.
 		 */
-		if (scn_check_remosaic) {
-			input->dma_stride_y = ALIGN(max(input->width * format->bitsperpixel[0] / BITS_PER_BYTE,
-						queue->framecfg.bytesperline[0]), 16);
-			input->dma_stride_c = ALIGN(max(input->width * format->bitsperpixel[1] / BITS_PER_BYTE,
-						queue->framecfg.bytesperline[1]), 16);
-		} else {
-			input->dma_stride_y = ALIGN(max(input->dma_crop_width * format->bitsperpixel[0] / BITS_PER_BYTE,
-						queue->framecfg.bytesperline[0]), 16);
-			input->dma_stride_c = ALIGN(max(input->dma_crop_width * format->bitsperpixel[1] / BITS_PER_BYTE,
-						queue->framecfg.bytesperline[1]), 16);
-		}
+		input->dma_stride_y = ALIGN(max(input->dma_crop_width * format->bitsperpixel[0] / BITS_PER_BYTE,
+					queue->framecfg.bytesperline[0]), 16);
+		input->dma_stride_c = ALIGN(max(input->dma_crop_width * format->bitsperpixel[1] / BITS_PER_BYTE,
+					queue->framecfg.bytesperline[1]), 16);
+
 	}
 
 	input->otf_format = OTF_INPUT_FORMAT_YUV422;

@@ -11,7 +11,6 @@
  */
 
 
-#include <linux/pm_qos.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/clk-provider.h>
@@ -54,9 +53,6 @@
 #define MIF_L7 676000
 #endif
 
-struct pm_qos_request exynos_npu_qos_cam;
-struct pm_qos_request exynos_npu_qos_mem;
-
 struct system_pwr sysPwr;
 
 #define OFFSET_END	0xFFFFFFFF
@@ -72,7 +68,7 @@ enum npu_system_resume_steps {
 	NPU_SYS_RESUME_COMPLETED
 };
 
-static int npu_firmware_load(struct npu_system *system);
+static int npu_firmware_load(struct npu_system *system, int mode);
 
 #ifdef CONFIG_EXYNOS_NPU_DRAM_FW_LOG_BUF
 #define DRAM_KERNEL_LOG_BUF_SIZE	(2048*1024)
@@ -82,16 +78,16 @@ static int npu_firmware_load(struct npu_system *system);
 static struct npu_memory_buffer dram_kernel_log_buf = {
 	.size = DRAM_KERNEL_LOG_BUF_SIZE,
 };
-static struct npu_memory_buffer fw_report_buf = {
+static struct npu_memory_v_buf fw_report_buf = {
 	.size = DRAM_FW_REPORT_BUF_SIZE,
 };
-static struct npu_memory_buffer fw_profile_buf = {
+static struct npu_memory_v_buf fw_profile_buf = {
 	.size = DRAM_FW_PROFILE_BUF_SIZE,
 };
 
 int npu_system_alloc_fw_dram_log_buf(struct npu_system *system)
 {
-	int ret;
+	int ret = 0;
 	BUG_ON(!system);
 
 	npu_info("start: initialization.\n");
@@ -108,26 +104,26 @@ int npu_system_alloc_fw_dram_log_buf(struct npu_system *system)
 
 	npu_store_log_init(dram_kernel_log_buf.vaddr, dram_kernel_log_buf.size);
 
-	if (!fw_report_buf.vaddr) {
-		ret = npu_memory_alloc(&system->memory, &fw_report_buf);
+	if (!fw_report_buf.v_buf) {
+		ret = npu_memory_v_alloc(&system->memory, &fw_report_buf);
 		if (ret) {
 			npu_err("fail(%d) in FW report buffer memory allocation\n", ret);
 			return ret;
 		}
-		npu_fw_report_init(fw_report_buf.vaddr, fw_report_buf.size);
+		npu_fw_report_init(fw_report_buf.v_buf, fw_report_buf.size);
 	} else {//Case of fw_report is already allocated by ion memory
-		npu_dbg("fw_report is already initialized - %pK.\n", fw_report_buf.vaddr);
+		npu_dbg("fw_report is already initialized - %pK.\n", fw_report_buf.v_buf);
 	}
 
-	if (!fw_profile_buf.vaddr) {
-		ret = npu_memory_alloc(&system->memory, &fw_profile_buf);
+	if (!fw_profile_buf.v_buf) {
+		ret = npu_memory_v_alloc(&system->memory, &fw_profile_buf);
 		if (ret) {
 			npu_err("fail(%d) in FW profile memory allocation\n", ret);
 			return ret;
 		}
-		npu_fw_profile_init(fw_profile_buf.vaddr, fw_profile_buf.size);
+		npu_fw_profile_init(fw_profile_buf.v_buf, fw_profile_buf.size);
 	} else {//Case of fw_profile is already allocated by ion memory
-		npu_dbg("fw_profile is already initialized - %pK.\n", fw_profile_buf.vaddr);
+		npu_dbg("fw_profile is already initialized - %pK.\n", fw_profile_buf.v_buf);
 	}
 
 	/* Initialize firmware utc handler with dram log buf */
@@ -138,12 +134,12 @@ int npu_system_alloc_fw_dram_log_buf(struct npu_system *system)
 	}
 
 	npu_info("complete : initialization.\n");
-	return 0;
+	return ret;
 }
 
 static int npu_system_free_fw_dram_log_buf(struct npu_system *system)
 {
-	int ret;
+	int ret = 0;
 
 	BUG_ON(!system);
 
@@ -157,7 +153,7 @@ static int npu_system_free_fw_dram_log_buf(struct npu_system *system)
 	}
 
 	npu_info("DRAM log buffer for kernel freed.\n");
-	ret = 0;
+	return ret;
 
 err_exit:
 	return ret;
@@ -168,139 +164,20 @@ err_exit:
 #define npu_system_free_fw_dram_log_buf(t)	(0)
 #endif	/* CONFIG_EXYNOS_NPU_DRAM_FW_LOG_BUF */
 
-/* -------------------------------------------------------------------------- */
-/* func in probe */
-static int npu_clk_get(struct npu_system *system, struct device *dev)
-{
-	const char **clk_ids;
-	struct clk *clk;
-	int ret, i;
-
-	BUG_ON(!system);
-	BUG_ON(!dev);
-
-	system->clk_count = of_property_count_strings(dev->of_node, "clock-names");
-	if (IS_ERR_VALUE((unsigned long)system->clk_count)) {
-		probe_err("invalid clk list in %s node", dev->of_node->name);
-		return -EINVAL;
-	}
-
-	clk_ids = (const char **)devm_kmalloc(dev,
-				(system->clk_count + 1) * sizeof(const char *),
-				GFP_KERNEL);
-	if (!clk_ids) {
-		probe_err("failed to alloc for clock ids");
-		return -ENOMEM;
-	}
-
-	for (i = 0; i < system->clk_count; i++) {
-		ret = of_property_read_string_index(dev->of_node, "clock-names",
-								i, &clk_ids[i]);
-		if (ret) {
-			probe_err("failed to read clocks name %d from %s node\n",
-					i, dev->of_node->name);
-			return ret;
-		}
-	}
-	clk_ids[system->clk_count] = NULL;
-
-	system->clocks = (struct clk **) devm_kmalloc(dev,
-			(system->clk_count + 1) * sizeof(struct clk *), GFP_KERNEL);
-	if (!system->clocks) {
-		probe_err("couldn't alloc clk list");
-		return -ENOMEM;
-	}
-
-	for (i = 0; clk_ids[i] != NULL; i++) {
-		clk = devm_clk_get(dev, clk_ids[i]);
-		if (IS_ERR_OR_NULL(clk)) {
-			probe_err("couldn't get %s clock\n", clk_ids[i]);
-			goto err;
-		}
-
-		system->clocks[i] = clk;
-		probe_info("got clock %s\n", clk_ids[i]);
-	}
-	system->clocks[i] = NULL;
-	if (i != system->clk_count) {
-		probe_err("clk count mismatch");
-		goto err;
-	}
-
-	return 0;
-err:
-	return -EINVAL;
-}
-
-static void npu_clk_put(struct npu_system *system, struct device *dev)
-{
-	int i;
-
-	for (i = system->clk_count - 1; i >= 0; i--) {
-		if (!system->clocks[i]) {
-			npu_err("invalid clock in [%d]", i);
-			continue;
-		}
-		devm_clk_put(dev, system->clocks[i]);
-		system->clocks[i] = NULL;
-	}
-}
-
-static int npu_clk_prepare_enable(struct npu_system *system)
-{
-	int i;
-	int ret;
-
-	for (i = 0; i < system->clk_count; i++) {
-		if (!system->clocks[i]) {
-			npu_err("invalid clock in [%d]", i);
-			goto err;
-		}
-		ret = clk_prepare_enable(system->clocks[i]);
-		if (ret) {
-			npu_err("couldn't prepare and enable clock[%d]\n", i);
-			goto err;
-		}
-	}
-	return 0;
-err:
-	/* roll back */
-	for (i = i - 1; i >= 0; i--)
-		clk_disable_unprepare(system->clocks[i]);
-
-	return ret;
-}
-
-static void npu_clk_disable_unprepare(struct npu_system *system)
-{
-	int i;
-
-	for (i = system->clk_count - 1; i >= 0; i--) {
-		if (!system->clocks[i]) {
-			npu_err("invalid clock in [%d]", i);
-			continue;
-		}
-		clk_disable_unprepare(system->clocks[i]);
-		if (__clk_is_enabled(system->clocks[i]))
-			npu_err("tryed to disable clock %d but failed\n", i);
-	}
-}
-/* -------------------------------------------------------------------------- */
-
 int npu_system_probe(struct npu_system *system, struct platform_device *pdev)
 {
 	int ret = 0;
 	struct device *dev;
 	void *addr;
 	int irq;
+	struct npu_device *device;
 
 	BUG_ON(!system);
 	BUG_ON(!pdev);
 
 	dev = &pdev->dev;
+	device = container_of(system, struct npu_device, system);
 	system->pdev = pdev;	/* TODO: Reference counting ? */
-	system->cam_qos = 0;
-	system->mif_qos = 0;
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
@@ -354,7 +231,7 @@ int npu_system_probe(struct npu_system *system, struct platform_device *pdev)
 	}
 
 	/* get npu clock, the order in list matters */
-	ret = npu_clk_get(system, dev);
+	ret = npu_clk_get(&system->clks, dev);
 	if (ret) {
 		probe_err("fail(%d) npu_clk_get\n", ret);
 		goto p_err;
@@ -362,6 +239,12 @@ int npu_system_probe(struct npu_system *system, struct platform_device *pdev)
 
 	/* enable runtime pm */
 	pm_runtime_enable(dev);
+
+	ret = npu_scheduler_probe(device);
+	if (ret) {
+		npu_err("npu_scheduler_probe is fail(%d)\n", ret);
+		goto p_qos_err;
+	}
 
 	ret = npu_qos_probe(system);
 	if (ret) {
@@ -379,7 +262,7 @@ int npu_system_probe(struct npu_system *system, struct platform_device *pdev)
 
 p_qos_err:
 	pm_runtime_disable(dev);
-	npu_clk_put(system, dev);
+	npu_clk_put(&system->clks, dev);
 p_err:
 p_exit:
 	return ret;
@@ -388,13 +271,15 @@ p_exit:
 /* TODO: Implement throughly */
 int npu_system_release(struct npu_system *system, struct platform_device *pdev)
 {
-	int ret;
+	int ret = 0;
 	struct device *dev;
+	struct npu_device *device;
 
 	BUG_ON(!system);
 	BUG_ON(!pdev);
 
 	dev = &pdev->dev;
+	device = container_of(system, struct npu_device, system);
 
 #ifdef CONFIG_PM_SLEEP
 	wake_lock_destroy(&system->npu_wake_lock);
@@ -403,18 +288,18 @@ int npu_system_release(struct npu_system *system, struct platform_device *pdev)
 	pm_runtime_disable(dev);
 
 	/* put npu clock, reverse order in list */
-	npu_clk_put(system, dev);
+	npu_clk_put(&system->clks, dev);
 
-	ret = npu_qos_release(system);
+	ret = npu_scheduler_release(device);
 	if (ret)
-		npu_err("fail(%d) in npu_qos_release\n", ret);
+		npu_err("fail(%d) in npu_scheduler_release\n", ret);
 
 	/* Invoke platform specific release routine */
 	ret = npu_system_soc_release(system, pdev);
 	if (ret)
 		npu_err("fail(%d) in npu_system_soc_release\n", ret);
 
-	return 0;
+	return ret;
 }
 
 int npu_system_open(struct npu_system *system)
@@ -422,10 +307,12 @@ int npu_system_open(struct npu_system *system)
 	int ret = 0;
 #ifdef CONFIG_NPU_HARDWARE
 	struct device *dev;
+	struct npu_device *device;
 
 	BUG_ON(!system);
 	BUG_ON(!system->pdev);
 	dev = &system->pdev->dev;
+	device = container_of(system, struct npu_device, system);
 
 	ret = npu_memory_open(&system->memory);
 	if (ret) {
@@ -439,6 +326,18 @@ int npu_system_open(struct npu_system *system)
 		goto p_err;
 	}
 
+	ret = npu_scheduler_open(device);
+	if (ret) {
+		npu_err("fail(%d) in npu_scheduler_open\n", ret);
+		goto p_err;
+	}
+
+	ret = npu_qos_open(system);
+	if (ret) {
+		npu_err("fail(%d) in npu_qos_open\n", ret);
+		goto p_err;
+	}
+
 	/* Clear resume steps */
 	system->resume_steps = 0;
 p_err:
@@ -449,6 +348,10 @@ p_err:
 int npu_system_close(struct npu_system *system)
 {
 	int ret = 0;
+	struct npu_device *device;
+
+	BUG_ON(!system);
+	device = container_of(system, struct npu_device, system);
 
 #ifdef CONFIG_FIRMWARE_SRAM_DUMP_DEBUGFS
 	ret = npu_util_memdump_close(system);
@@ -458,6 +361,15 @@ int npu_system_close(struct npu_system *system)
 	ret = npu_memory_close(&system->memory);
 	if (ret)
 		npu_err("fail(%d) in npu_memory_close\n", ret);
+
+	ret = npu_scheduler_close(device);
+	if (ret)
+		npu_err("fail(%d) in npu_scheduler_close\n", ret);
+
+	ret = npu_qos_close(system);
+	if (ret)
+		npu_err("fail(%d) in npu_qos_close\n", ret);
+
 	return ret;
 }
 
@@ -494,14 +406,20 @@ int npu_system_resume(struct npu_system *system, u32 mode)
 	}
 	set_bit(NPU_SYS_RESUME_INIT_FWBUF, &system->resume_steps);
 
-	ret = npu_firmware_load(system);
+	npu_info("reset FW working memory : paddr %llu, vaddr %p, daddr %llu, size %lu\n",
+		system->fw_npu_memory_buffer->paddr,
+		system->fw_npu_memory_buffer->vaddr,
+		system->fw_npu_memory_buffer->daddr,
+		system->fw_npu_memory_buffer->size);
+	memset(system->fw_npu_memory_buffer->vaddr, 0, system->fw_npu_memory_buffer->size);
+	ret = npu_firmware_load(system, device->sched->mode);
 	if (ret) {
 		npu_err("fail(%d) in npu_firmware_load\n", ret);
 		goto p_err;
 	}
 	set_bit(NPU_SYS_RESUME_FW_LOAD, &system->resume_steps);
 
-	ret = npu_clk_prepare_enable(system);
+	ret = npu_clk_prepare_enable(&system->clks);
 	if (ret) {
 		npu_err("fail to prepare and enable npu_clk(%d)\n", ret);
 		goto p_err;
@@ -583,7 +501,7 @@ int npu_system_suspend(struct npu_system *system)
 #endif
 
 	BIT_CHECK_AND_EXECUTE(NPU_SYS_RESUME_CLK_PREPARE, &system->resume_steps, "Unprepare clk", {
-		npu_clk_disable_unprepare(system);
+		npu_clk_disable_unprepare(&system->clks);
 	});
 
 	BIT_CHECK_AND_EXECUTE(NPU_SYS_RESUME_FW_LOAD, &system->resume_steps, NULL, ;);
@@ -604,11 +522,13 @@ int npu_system_start(struct npu_system *system)
 {
 	int ret = 0;
 	struct device *dev;
+	struct npu_device *device;
 
 	BUG_ON(!system);
 	BUG_ON(!system->pdev);
 
 	dev = &system->pdev->dev;
+	device = container_of(system, struct npu_device, system);
 
 #ifdef CONFIG_FIRMWARE_SRAM_DUMP_DEBUGFS
 	ret = npu_util_memdump_start(system);
@@ -618,9 +538,9 @@ int npu_system_start(struct npu_system *system)
 	}
 #endif
 
-	ret = npu_qos_start(system);
+	ret = npu_scheduler_start(device);
 	if (ret) {
-		npu_err("fail(%d) in npu_qos_start\n", ret);
+		npu_err("fail(%d) in npu_scheduler_start\n", ret);
 		goto p_err;
 	}
 
@@ -633,11 +553,14 @@ int npu_system_stop(struct npu_system *system)
 {
 	int ret = 0;
 	struct device *dev;
+	struct npu_device *device;
 
 	BUG_ON(!system);
 	BUG_ON(!system->pdev);
 
 	dev = &system->pdev->dev;
+	device = container_of(system, struct npu_device, system);
+
 #ifdef CONFIG_FIRMWARE_SRAM_DUMP_DEBUGFS
 	ret = npu_util_memdump_stop(system);
 	if (ret) {
@@ -646,14 +569,15 @@ int npu_system_stop(struct npu_system *system)
 	}
 #endif
 
-	ret = npu_qos_stop(system);
+	ret = npu_scheduler_stop(device);
 	if (ret) {
-		npu_err("fail(%d) in npu_qos_stop\n", ret);
+		npu_err("fail(%d) in npu_scheduler_stop\n", ret);
 		goto p_err;
 	}
+
 p_err:
 
-	return 0;
+	return ret;
 }
 
 int npu_system_save_result(struct npu_session *session, struct nw_result nw_result)
@@ -664,7 +588,7 @@ int npu_system_save_result(struct npu_session *session, struct nw_result nw_resu
 	return ret;
 }
 
-static int npu_firmware_load(struct npu_system *system)
+static int npu_firmware_load(struct npu_system *system, int mode)
 {
 	int ret = 0;
 #ifdef CONFIG_NPU_HARDWARE
@@ -711,7 +635,7 @@ static int npu_firmware_load(struct npu_system *system)
 				system->fw_npu_memory_buffer->vaddr);
 		ret = npu_firmware_file_read(&system->binary,
 				system->fw_npu_memory_buffer->vaddr,
-				system->fw_npu_memory_buffer->size);
+				system->fw_npu_memory_buffer->size, mode);
 		if (ret) {
 			npu_err("error(%d) in npu_binary_read\n", ret);
 			goto err_exit;
@@ -721,7 +645,7 @@ static int npu_firmware_load(struct npu_system *system)
 	}
 
 	npu_info("complete in npu_firmware_load\n");
-	return 0;
+	return ret;
 err_exit:
 
 	npu_info("error(%d) in npu_firmware_load\n", ret);

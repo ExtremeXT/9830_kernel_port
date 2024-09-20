@@ -21,13 +21,15 @@
 #include <video/mipi_display.h>
 
 #include "./panels/exynos_panel.h"
+#include "./cal_9830/regs-dsim.h"
+#include "./cal_9830/dsim_cal.h"
 
-#if defined(CONFIG_SOC_EXYNOS3830)
-#include "./cal_3830/regs-dsim.h"
-#include "./cal_3830/dsim_cal.h"
-#endif
 #if defined(CONFIG_EXYNOS_COMMON_PANEL)
 #include "disp_err.h"
+#endif
+
+#ifdef CONFIG_SUPPORT_MCD_MOTTO_TUNE
+#include "dsim_motto.h"
 #endif
 
 extern int dsim_log_level;
@@ -50,27 +52,27 @@ extern int dsim_log_level;
 #define dsim_err(fmt, ...)							\
 	do {									\
 		if (dsim_log_level >= 3) {					\
-			pr_err(pr_fmt("dsim: "fmt), ##__VA_ARGS__);			\
+			pr_err(pr_fmt(fmt), ##__VA_ARGS__);			\
 		}								\
 	} while (0)
 
 #define dsim_warn(fmt, ...)							\
 	do {									\
 		if (dsim_log_level >= 4) {					\
-			pr_warn(pr_fmt("dsim: "fmt), ##__VA_ARGS__);			\
+			pr_warn(pr_fmt(fmt), ##__VA_ARGS__);			\
 		}								\
 	} while (0)
 
 #define dsim_info(fmt, ...)							\
 	do {									\
 		if (dsim_log_level >= 6)					\
-			pr_info(pr_fmt("dsim: "fmt), ##__VA_ARGS__);			\
+			pr_info(pr_fmt(fmt), ##__VA_ARGS__);			\
 	} while (0)
 
 #define dsim_dbg(fmt, ...)							\
 	do {									\
 		if (dsim_log_level >= 7)					\
-			pr_info(pr_fmt("dsim: "fmt), ##__VA_ARGS__);			\
+			pr_info(pr_fmt(fmt), ##__VA_ARGS__);			\
 	} while (0)
 
 extern struct dsim_device *dsim_drvdata[MAX_DSIM_CNT];
@@ -207,6 +209,11 @@ struct dsim_fb_handover {
 	size_t phys_size;
 };
 
+#ifdef CONFIG_DYNAMIC_FREQ
+#define DSIM_MODE_POWER_OFF		0
+#define DSIM_MODE_HIBERNATION	1
+#endif
+
 struct exynos_dsim_cmd {
 	u8 type;
 	size_t data_len;
@@ -223,6 +230,7 @@ struct dsim_device {
 	enum dsim_state state;
 	struct device *dev;
 	struct dsim_resources res;
+	struct exynos_pm_domain *pd;
 
 	unsigned int data_lane;
 	u32 data_lane_cnt;
@@ -255,24 +263,27 @@ struct dsim_device {
 	int esd_test;
 	bool esd_recovering;
 #endif
-	unsigned int ddi_seq_size;
-	unsigned char ddi_seq[512];
 
-	int continuous_underrun_max;
-	int continuous_underrun_cnt;
-	bool hold_rpm_on_boot;
-
-	bool wait_lp11;
+#ifdef CONFIG_DYNAMIC_FREQ
+	struct df_status_info *df_status;
+	int df_mode;
+#endif
+#ifdef CONFIG_SUPPORT_MCD_MOTTO_TUNE
+	struct dsim_motto_info motto_info;
+#endif
 };
 
 int dsim_call_panel_ops(struct dsim_device *dsim, u32 cmd, void *arg);
 int dsim_write_data(struct dsim_device *dsim, u32 id, unsigned long d0, u32 d1, bool wait_empty);
+int dsim_sr_write_data(struct dsim_device *dsim, const u8 *cmd, u32 size, u32 align);
+
+
+
 int dsim_read_data(struct dsim_device *dsim, u32 id, u32 addr, u32 cnt, u8 *buf);
 int dsim_wait_for_cmd_done(struct dsim_device *dsim);
 
 int dsim_reset_panel(struct dsim_device *dsim);
 int dsim_set_panel_power(struct dsim_device *dsim, bool on);
-int dsim_check_panel_connect(struct dsim_device *dsim);
 
 void dsim_to_regs_param(struct dsim_device *dsim, struct dsim_regs *regs);
 
@@ -280,7 +291,6 @@ void dsim_reg_recovery_process(struct dsim_device *dsim);
 
 int dsim_write_cmd_set(struct dsim_device *dsim, struct exynos_dsim_cmd cmd_list[],
 		int cmd_cnt, bool wait_vsync);
-int dsim_set_wait_lp11_after_cmds(struct dsim_device *dsim, bool en);
 
 static inline struct dsim_device *get_dsim_drvdata(u32 id)
 {
@@ -414,12 +424,32 @@ static inline u32 dsim_phy_read_mask(u32 id, u32 reg_id, u32 mask)
 	val &= (mask);
 	return val;
 }
+
+static inline u32 dsim_phy_extra_read(u32 id, u32 reg_id)
+{
+	struct dsim_device *dsim = get_dsim_drvdata(id);
+
+	return readl(dsim->res.phy_regs_ex + reg_id);
+}
+
 static inline void dsim_phy_extra_write(u32 id, u32 reg_id, u32 val)
 {
 	struct dsim_device *dsim = get_dsim_drvdata(id);
 
 	writel(val, dsim->res.phy_regs_ex + reg_id);
 }
+
+static inline void dsim_phy_extra_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
+{
+	struct dsim_device *dsim = get_dsim_drvdata(id);
+	u32 old = dsim_phy_extra_read(id, reg_id);
+
+	val = (val & mask) | (old & ~mask);
+	writel(val, dsim->res.phy_regs_ex + reg_id);
+	/* printk("offset : 0x%8x, value : 0x%x\n", reg_id, val); */
+}
+
+
 static inline void dsim_phy_write(u32 id, u32 reg_id, u32 val)
 {
 	struct dsim_device *dsim = get_dsim_drvdata(id);
@@ -471,7 +501,6 @@ static inline bool IS_DSIM_OFF_STATE(struct dsim_device *dsim)
 #define DSIM_IOC_DOZE_SUSPEND		_IOW('D', 21, u32)
 #define DSIM_IOC_SET_FREQ_HOP		_IOW('D', 30, u32)
 #define DSIM_IOC_RECOVERY_PROC		_IOW('D', 40, u32)
-#define DSIM_IOC_SET_VIDEO_FPS		_IOW('D', 50, u32)
 
 #if defined(CONFIG_EXYNOS_READ_ESD_SOLUTION)
 #define DSIM_ESD_OK			0
@@ -480,8 +509,30 @@ static inline bool IS_DSIM_OFF_STATE(struct dsim_device *dsim)
 #endif
 
 #if defined(CONFIG_EXYNOS_COMMON_PANEL)
-#define DSIM_IOC_NOTIFY         _IOW('D', 60, u32)
-#define DSIM_IOC_SET_ERROR_CB   _IOW('D', 61, struct disp_error_cb_info *)
+#define DSIM_IOC_NOTIFY         _IOW('D', 50, u32)
+#define DSIM_IOC_SET_ERROR_CB   _IOW('D', 51, struct disp_error_cb_info *)
+#endif
+
+#ifdef CONFIG_DYNAMIC_FREQ
+#define DSIM_IOC_SET_PRE_FREQ_HOP		_IOW('D', 60, u32)
+#define DSIM_IOC_SET_POST_FREQ_HOP		_IOW('D', 61, u32)
+#endif
+
+
+#ifdef CONFIG_SUPPORT_MCD_MOTTO_TUNE
+#define DSIM_TUNE_SWING_EN 0x80000000
+#define SET_DSIM_SWING_LEVEL(value) (0x00000007 & value)
+#define GET_DSIM_SWING_LEVEL(value) (0x00000007 & value)
+#define DSIM_SUPPORT_SWING_LEVEL	7
+
+#define DSIM_TUNE_IMPEDANCE_EN 0x80000000
+#define SET_DSIM_IMPEDANCE_LEVEL(value) (0x0000000f & value)
+#define DSIM_SUPPORT_IMPEDANCE_LEVEL	15
+
+#define DSIM_TUNE_EMPHASIS_EN 0x80000000
+#define SET_DSIM_EMPHASIS_LEVEL(value) (0x00000003 & value)
+#define GET_DSIM_EMPHASIS_LEVEL(value) (0x00000003 & value)
+#define DSIM_SUPPORT_EMPHASIS_LEVEL	3
 #endif
 
 #endif /* __SAMSUNG_DSIM_H__ */

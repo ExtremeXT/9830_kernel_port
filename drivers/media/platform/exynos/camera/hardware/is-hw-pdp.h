@@ -108,10 +108,12 @@ struct is_pdp {
 	u32				err_cnt_oneshot;
 
 	u32				rmo; /* Backup RDMA MO */
+	int				rmo_tick; /* keep count */
 
 	/* debug */
 	unsigned long long		time_rta_cfg;
 	unsigned long long		time_err;
+	u32 binning;
 };
 
 

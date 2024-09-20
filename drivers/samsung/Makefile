@@ -11,7 +11,7 @@ obj-n				:=
 obj-				:=
 
 obj-$(CONFIG_SEC_DEBUG)		+= debug/
-#obj-$(CONFIG_SEC_MISC)		+= misc/
+obj-$(CONFIG_SEC_MISC)		+= misc/
 obj-$(CONFIG_SEC_PM)		+= pm/
 obj-$(CONFIG_SEC_PERF)		+= perf/
 

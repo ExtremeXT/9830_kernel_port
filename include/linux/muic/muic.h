@@ -4,8 +4,6 @@
  * header file supporting MUIC common information
  *
  * Copyright (C) 2019 Samsung Electronics
- * Sejong Park <sejong123.park@samsung.com>
- * Taejung Kim <tj.kim@samsung.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -42,6 +40,13 @@ enum {
 	MUIC_INTR_DETACH	= 0,
 	MUIC_INTR_ATTACH
 };
+
+#ifndef CONFIG_MUIC_LSI_SOLUTION
+ enum muic_op_mode {
+     OPMODE_MUIC = 0<<0,
+     OPMODE_CCIC = 1<<0,
+ };
+#endif
 
 /* MUIC Dock Observer Callback parameter */
 enum {
@@ -137,7 +142,7 @@ typedef enum {
 	ATTACHED_DEV_UNOFFICIAL_ID_ANY_MUIC,
 	ATTACHED_DEV_UNOFFICIAL_ID_USB_MUIC,
 
-	ATTACHED_DEV_UNOFFICIAL_ID_CDP_MUIC = 11,
+	ATTACHED_DEV_UNOFFICIAL_ID_CDP_MUIC,
 	ATTACHED_DEV_UNDEFINED_CHARGING_MUIC,
 	ATTACHED_DEV_DESKDOCK_MUIC,
 	ATTACHED_DEV_UNKNOWN_VB_MUIC,
@@ -148,7 +153,7 @@ typedef enum {
 	ATTACHED_DEV_JIG_UART_OFF_VB_OTG_MUIC,	/* for otg test */
 	ATTACHED_DEV_JIG_UART_OFF_VB_FG_MUIC,	/* for fuelgauge test */
 
-	ATTACHED_DEV_JIG_UART_ON_MUIC = 21,
+	ATTACHED_DEV_JIG_UART_ON_MUIC,
 	ATTACHED_DEV_JIG_UART_ON_VB_MUIC,	/* VBUS enabled */
 	ATTACHED_DEV_JIG_USB_OFF_MUIC,
 	ATTACHED_DEV_JIG_USB_ON_MUIC,
@@ -159,7 +164,7 @@ typedef enum {
 	ATTACHED_DEV_UNIVERSAL_MMDOCK_MUIC,
 	ATTACHED_DEV_AUDIODOCK_MUIC,
 
-	ATTACHED_DEV_MHL_MUIC = 31,
+	ATTACHED_DEV_MHL_MUIC,
 	ATTACHED_DEV_CHARGING_CABLE_MUIC,
 	ATTACHED_DEV_AFC_CHARGER_PREPARE_MUIC,
 	ATTACHED_DEV_AFC_CHARGER_PREPARE_DUPLI_MUIC,
@@ -170,8 +175,9 @@ typedef enum {
 	ATTACHED_DEV_AFC_CHARGER_12V_MUIC,
 	ATTACHED_DEV_AFC_CHARGER_12V_DUPLI_MUIC,
 
-	ATTACHED_DEV_AFC_CHARGER_ERR_V_MUIC = 41,
+	ATTACHED_DEV_AFC_CHARGER_ERR_V_MUIC,
 	ATTACHED_DEV_AFC_CHARGER_ERR_V_DUPLI_MUIC,
+	ATTACHED_DEV_AFC_CHARGER_DISABLED_MUIC,
 	ATTACHED_DEV_QC_CHARGER_PREPARE_MUIC,
 	ATTACHED_DEV_QC_CHARGER_5V_MUIC,
 	ATTACHED_DEV_QC_CHARGER_ERR_V_MUIC,
@@ -181,7 +187,7 @@ typedef enum {
 	ATTACHED_DEV_HV_ID_ERR_SUPPORTED_MUIC,
 	ATTACHED_DEV_HMT_MUIC,
 
-	ATTACHED_DEV_VZW_ACC_MUIC = 51,
+	ATTACHED_DEV_VZW_ACC_MUIC,
 	ATTACHED_DEV_VZW_INCOMPATIBLE_MUIC,
 	ATTACHED_DEV_USB_LANHUB_MUIC,
 	ATTACHED_DEV_TYPE1_CHG_MUIC,
@@ -192,7 +198,7 @@ typedef enum {
 	ATTACHED_DEV_TYPE3_CHARGER_MUIC,
 	ATTACHED_DEV_NONE_TYPE3_MUIC,
 
-	ATTACHED_DEV_UNSUPPORTED_ID_MUIC = 61,
+	ATTACHED_DEV_UNSUPPORTED_ID_MUIC,
 	ATTACHED_DEV_UNSUPPORTED_ID_VB_MUIC,
 	ATTACHED_DEV_TIMEOUT_OPEN_MUIC,
 	ATTACHED_DEV_WIRELESS_PAD_MUIC,
@@ -283,12 +289,15 @@ struct muic_platform_data {
 	bool afc_disable;
 	bool is_new_factory;
 	bool dcd_timeout;
+	int afc_disabled_updated;
 
 #ifdef CONFIG_MUIC_HV_FORCE_LIMIT
 	int hv_sel;
 	int silent_chg_change_state;
 #endif
-
+#ifndef CONFIG_MUIC_LSI_SOLUTION
+	enum muic_op_mode opmode;
+#endif
 #ifdef CONFIG_MUIC_SYSFS
 	struct device *switch_device;
 	struct mutex sysfs_mutex;
@@ -320,7 +329,11 @@ struct muic_platform_data {
 	void (*jig_uart_cb)(int jig_state);
 
 	/* muic GPIO control function */
+#if defined(CONFIG_MUIC_LSI_SOLUTION)
 	int (*init_gpio_cb) (void *, int switch_sel);
+#else
+	int (*init_gpio_cb) (int switch_sel);
+#endif
 	int (*set_gpio_usb_sel)(int usb_path);
 	int (*set_gpio_uart_sel)(int uart_path);
 	int (*set_safeout)(int safeout_path);
@@ -328,6 +341,18 @@ struct muic_platform_data {
 	/* muic path switch function for rustproof */
 	void (*set_path_switch_suspend)(struct device *dev);
 	void (*set_path_switch_resume)(struct device *dev);
+
+	/* muic AFC voltage switching function */
+	int (*muic_afc_set_voltage_cb)(int voltage);
+
+	/* muic hv charger disable function */
+	int (*muic_hv_charger_disable_cb)(bool en);
+
+	/* muic check charger init function */
+	int (*muic_hv_charger_init_cb)(void);
+
+	/* muic set hiccup mode function */
+	int (*muic_set_hiccup_mode_cb)(int on_off);
 
 	/* muic cable data collecting function */
 	void (*init_cable_data_collect_cb)(void);
@@ -482,6 +507,7 @@ enum muic_param_en {
 
 int get_switch_sel(void);
 int get_afc_mode(void);
+int get_ccic_info(void);
 void muic_set_hmt_status(int status);
 int muic_core_handle_attach(struct muic_platform_data *muic_pdata,
 			muic_attached_dev_t new_dev, int adc, u8 vbvolt);
@@ -496,4 +522,11 @@ int muic_core_hv_state_manager(struct muic_platform_data *muic_pdata,
 void muic_core_hv_init(struct muic_platform_data *muic_pdata);
 bool muic_core_hv_is_hv_dev(struct muic_platform_data *muic_pdata);
 #endif
+int muic_afc_set_voltage(int voltage);
+extern int muic_hv_charger_disable(bool en);
+int muic_hv_charger_init(void);
+int muic_set_hiccup_mode(int on_off);
+#ifdef CONFIG_SEC_FACTORY
+extern void muic_send_attached_muic_cable_intent(int type);
+#endif /* CONFIG_SEC_FACTORY */
 #endif /* __MUIC_H__ */

@@ -338,6 +338,7 @@ static int is_ischain_3ap_tag(struct is_subdev *subdev,
 	otparm.y = 0;
 	otparm.w = taa_param->vdma2_output.width;
 	otparm.h = taa_param->vdma2_output.height;
+
 #ifdef USE_3AA_CROP_AFTER_BDS
 	if (test_bit(IS_ISCHAIN_REPROCESSING, &device->state)) {
 		otparm.x = taa_param->vdma2_output.dma_crop_offset_x;

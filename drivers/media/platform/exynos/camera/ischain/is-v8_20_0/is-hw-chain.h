@@ -57,8 +57,8 @@ enum sysreg_is_reg_field {
 #define GROUP_3AA_MAX_HEIGHT	4928
 #define GROUP_ITP_MAX_WIDTH	3280
 #define GROUP_ITP_MAX_HEIGHT	2464
-#define GROUP_VRA_MAX_WIDTH	320
-#define GROUP_VRA_MAX_HEIGHT	240
+#define GROUP_VRA_MAX_WIDTH	640
+#define GROUP_VRA_MAX_HEIGHT	480
 #define GROUP_MCSC_MFC_MAX_WIDTH	5760
 #define GROUP_MCSC_MFC_MAX_HEIGHT	4320
 
@@ -66,21 +66,19 @@ enum sysreg_is_reg_field {
 #define IS_RESERVE_LIB_SIZE	(0x00600000)
 /* DDK DMA: 5.065MB */
 #define IS_TAAISP_SIZE		(0x00510000)
-/* ME/DRC DMA: 7.5MB */
-#define TAAISP_MEDRC_SIZE		(0x00780000)
+/* ME/DRC DMA: 3840 kB = 3.75MB */
+#define TAAISP_MEDRC_SIZE		(0x003C0000)
 /* ORBMCH DMA: Do not Use */
 #define TAAISP_ORBMCH_SIZE		(0)
 /* CLAHE DMA: Do not Use */
 #define IS_CLAHE_SIZE		(0)
 /* VRA: 8MB */
 #define IS_VRA_SIZE		(0x00800000) /* Need to Fix */
-/* VRA NET ARRAY : 4MB */
-#define VRA_NET_ARR_SIZE		(0x00400000)
-/* DDK HEAP: 35MB */
-#define IS_HEAP_SIZE		(0x02D00000)
+/* DDK HEAP: 60MB */
+#define IS_HEAP_SIZE		(0x03C00000)
 
-/* SETFILE: 7MB */
-#define IS_SETFILE_SIZE		(0x00700000)
+/* SETFILE: 3.5MB */
+#define IS_SETFILE_SIZE		(0x00382000)
 
 #define SYSREG_IS_BASE_ADDR	(0x14520000)
 
@@ -144,6 +142,7 @@ enum base_reg_index {
 #define MCSC_SETFILE_VERSION		(0x14027434)
 /* #define MCSC_DJAG_ENABLE_SENSOR_BRATIO	(2000) */
 #define MCSC_LINE_BUF_SIZE		(3280)
+#define HWFC_DMA_ID_OFFSET     (7)
 
 enum mc_scaler_interrupt_map {
 	INTR_MC_SCALER_FRAME_END		= 0,
@@ -171,13 +170,6 @@ enum mc_scaler_interrupt_map {
 #define VRA_CH1_INTR_CNT_PER_FRAME	(6)
 
 /* Deprecated register. These are maintained for backward compatibility */
-enum vra_interrupt_map {
-	CNN_END_INT			= 1,	/* CNN end interrupt */
-	CNN_AXI_ERR			= 2,	/* CNN BRESP/RRESP errors */
-	CNN_ECC_ERR			= 3,	/* CNN memory ECC error */
-	CNN_END_OF_LAYER	= 4,	/* CNN layer end indication */
-};
-
 enum vra_chain0_interrupt_map {
 	CH0INT_CIN_FR_ST			= 0,
 	CH0INT_CIN_FR_END			= 1,

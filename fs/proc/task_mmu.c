@@ -1792,8 +1792,8 @@ static int writeback_pte_range(pmd_t *pmd, unsigned long addr,
 	struct list_head *list = walk->private;
 	pte_t *pte, ptent;
 	spinlock_t *ptl;
+	LIST_HEAD(swp_entry_list);
 
-	split_huge_pmd(vma, pmd, addr);
 	if (pmd_trans_unstable(pmd))
 		return 0;
 	if (rwsem_is_contended(&mm->mmap_sem))

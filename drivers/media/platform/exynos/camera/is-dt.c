@@ -140,7 +140,6 @@ static int parse_dvfs_data(struct exynos_platform_is *pdata, struct device_node 
 	int i;
 	u32 temp;
 	char *pprop;
-	const char *name;
 
 	pprop = __getname();
 	if (unlikely(!pprop))
@@ -169,9 +168,6 @@ static int parse_dvfs_data(struct exynos_platform_is *pdata, struct device_node 
 
 		snprintf(pprop, PATH_MAX, "%s%s", is_dvfs_dt_arr[i].parse_scenario_nm, "hpg");
 		DT_READ_U32(np, pprop, pdata->dvfs_data[index][is_dvfs_dt_arr[i].scenario_id][IS_DVFS_HPG]);
-
-		snprintf(pprop, PATH_MAX, "%s%s", is_dvfs_dt_arr[i].parse_scenario_nm, "cpu");
-		DT_READ_STR(np, pprop, pdata->dvfs_cpu[index][is_dvfs_dt_arr[i].scenario_id]);
 	}
 	__putname(pprop);
 
@@ -189,7 +185,6 @@ static int parse_dvfs_data(struct exynos_platform_is *pdata, struct device_node 
 		probe_info("[%d][%d][MIF] = %d\n", index, i, pdata->dvfs_data[index][i][IS_DVFS_MIF]);
 		probe_info("[%d][%d][I2C] = %d\n", index, i, pdata->dvfs_data[index][i][IS_DVFS_I2C]);
 		probe_info("[%d][%d][HPG] = %d\n", index, i, pdata->dvfs_data[index][i][IS_DVFS_HPG]);
-		probe_info("[%d][%d][CPU] = %s\n", index, i, pdata->dvfs_cpu[index][i]);
 	}
 #endif
 	return 0;
@@ -772,9 +767,6 @@ static int parse_modes_data(struct exynos_platform_is_module *pdata, struct devi
 	char *str_vc;
 	struct is_sensor_cfg *cfg;
 	u32 format;
-	u32 dummy_idx;
-	u32 vc_num;
-	u32 elems;
 
 	str_vc = __getname();
 	if (unlikely(!str_vc)) {
@@ -831,23 +823,6 @@ static int parse_modes_data(struct exynos_platform_is_module *pdata, struct devi
 		else
 			cfg->binning = min(BINNING(pdata->active_width, cfg->width),
 					BINNING(pdata->active_height, cfg->height));
-
-		for (idx_vc = 0; idx_vc < CSI_VIRTUAL_CH_MAX; idx_vc++)
-			cfg->dummy_pixel[idx_vc] = 0;
-
-		if (opt_np && of_find_property(opt_np, "dummy_pixel", NULL)) {
-			elems = of_property_count_u32_elems(opt_np, "dummy_pixel");
-			if (elems % SENSOR_DUMMY_ELEMS) {
-				err("the length of dummy info. is not a multiple of SENSOR_DUMMY_ELEMS");
-			} else {
-				dummy_idx = 0;
-				while (elems > 0) {
-					of_property_read_u32_index(opt_np, "dummy_pixel", dummy_idx++, &vc_num);
-					of_property_read_u32_index(opt_np, "dummy_pixel", dummy_idx++, &cfg->dummy_pixel[vc_num]);
-					elems = elems - 2;
-				}
-			}
-		}
 
 		for (idx_vc = 0; idx_vc < CSI_VIRTUAL_CH_MAX; idx_vc++) {
 			idx_dt = 0;
@@ -1009,6 +984,10 @@ static int parse_power_seq_data(struct exynos_platform_is_module *pdata, struct 
 				pin->shared_rsc_slock = NULL;
 				pin->shared_rsc_count = NULL;
 				pin->shared_rsc_active = 0;
+			}
+
+			if (of_find_property(node_table[i], "actuator_i2c_delay", NULL)) {
+				of_property_read_u32(node_table[i], "actuator_i2c_delay", &pin->actuator_i2c_delay);
 			}
 
 			dbg("%s: gpio=%d, name=%s, act=%d, val=%d, delay=%d, volt=%d, share=<%d %d %d>\n",
@@ -1217,13 +1196,37 @@ int is_module_parse_dt(struct device *dev,
 	if (ret)
 		probe_warn("setfile_name read is skipped(%d)", ret);
 
-	ret = of_property_read_u32(dnode, "sensor_module_type", &pdata->sensor_module_type);
+	/* vendor data */
+	ret = of_property_read_u32(dnode, "rom_id", &pdata->rom_id);
 	if (ret) {
-		probe_warn("sensor_module_type read is skipped(%d)", ret);
-		pdata->sensor_module_type = SENSOR_TYPE_RGB;
+		probe_info("rom_id dt parsing skipped\n");
+		pdata->rom_id = ROM_ID_NOTHING;
 	}
 
-	/* vendor data */
+	ret = of_property_read_u32(dnode, "rom_type", &pdata->rom_type);
+	if (ret) {
+		probe_info("rom_type dt parsing skipped\n");
+		pdata->rom_type = ROM_TYPE_NONE;
+	}
+
+	ret = of_property_read_u32(dnode, "rom_cal_index", &pdata->rom_cal_index);
+	if (ret) {
+		probe_info("rom_cal_index dt parsing skipped\n");
+		pdata->rom_cal_index = ROM_CAL_NOTHING;
+	}
+
+	ret = of_property_read_u32(dnode, "rom_dualcal_id", &pdata->rom_dualcal_id);
+	if (ret) {
+		probe_info("rom_dualcal_id dt parsing skipped\n");
+		pdata->rom_dualcal_id = ROM_ID_NOTHING;
+	}
+
+
+	ret = of_property_read_u32(dnode, "rom_dualcal_index", &pdata->rom_dualcal_index);
+	if (ret) {
+		probe_info("rom_dualcal_index dt parsing skipped\n");
+		pdata->rom_dualcal_index = ROM_DUALCAL_NOTHING;
+	}
 
 	/* peri */
 	af_np = of_get_child_by_name(dnode, "af");

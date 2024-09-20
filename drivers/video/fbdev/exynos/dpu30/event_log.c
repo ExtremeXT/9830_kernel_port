@@ -62,10 +62,15 @@ static inline void dpu_event_log_decon
 	case DPU_EVT_DECON_RESUME:
 	case DPU_EVT_ENTER_HIBER:
 	case DPU_EVT_EXIT_HIBER:
+	case DPU_EVT_DOZE:
+	case DPU_EVT_DOZE_SUSPEND:
 		log->data.pm.pm_status = pm_runtime_active(decon->dev);
 		log->data.pm.elapsed = ktime_sub(ktime_get(), log->time);
 		break;
 	case DPU_EVT_WIN_CONFIG:
+		memcpy(&log->data.win_raw, &decon->win_raw,
+					sizeof(struct decon_win_rawdata));
+		break;
 	case DPU_EVT_TRIG_UNMASK:
 	case DPU_EVT_TRIG_MASK:
 	case DPU_EVT_FENCE_RELEASE:
@@ -83,6 +88,23 @@ static inline void dpu_event_log_decon
 		log->data.cursor.xpos = decon->cursor.xpos;
 		log->data.cursor.ypos = decon->cursor.ypos;
 		log->data.cursor.elapsed = ktime_sub(ktime_get(), log->time);
+		break;
+	case DPU_EVT_ACQUIRE_RSC:
+	case DPU_EVT_RELEASE_RSC:
+	case DPU_EVT_STORE_RSC:
+		log->data.rsc.prev_used_dpp = decon->prev_used_dpp;
+		log->data.rsc.cur_using_dpp = decon->cur_using_dpp;
+		log->data.rsc.prev_req_win = decon->prev_req_win;
+		log->data.rsc.cur_req_win = decon->cur_req_win;
+		if (IS_DECON_ON_STATE(decon)) {
+			log->data.rsc.hw_ch_info =
+				decon_read(decon->id, RESOURCE_OCCUPANCY_INFO_1);
+			log->data.rsc.hw_win_info =
+				decon_read(decon->id, RESOURCE_OCCUPANCY_INFO_2);
+		} else {
+			log->data.rsc.hw_ch_info = 0xFFFFFFFF;
+			log->data.rsc.hw_win_info = 0xFFFFFFFF;
+		}
 		break;
 	default:
 		/* Any remaining types will be log just time and type */
@@ -255,6 +277,11 @@ void DPU_EVENT_LOG(dpu_event_t type, struct v4l2_subdev *sd, ktime_t time)
 	case DPU_EVT_RSC_CONFLICT:
 	case DPU_EVT_DECON_FRAMESTART:
 	case DPU_EVT_CURSOR_POS:	/* cursor async */
+	case DPU_EVT_ACQUIRE_RSC:
+	case DPU_EVT_RELEASE_RSC:
+	case DPU_EVT_STORE_RSC:
+	case DPU_EVT_DOZE:
+	case DPU_EVT_DOZE_SUSPEND:
 		dpu_event_log_decon(type, sd, time);
 		break;
 	case DPU_EVT_DSIM_FRAMEDONE:
@@ -299,7 +326,8 @@ void DPU_EVENT_LOG(dpu_event_t type, struct v4l2_subdev *sd, ktime_t time)
 	}
 }
 
-void DPU_EVENT_LOG_WINCON(struct v4l2_subdev *sd, struct decon_reg_data *regs)
+void DPU_EVENT_LOG_WINCON(struct v4l2_subdev *sd, struct decon_reg_data *regs,
+		enum dpu_uh_id id)
 {
 	struct decon_device *decon = container_of(sd, struct decon_device, sd);
 	struct dpu_log *log;
@@ -315,6 +343,14 @@ void DPU_EVENT_LOG_WINCON(struct v4l2_subdev *sd, struct decon_reg_data *regs)
 	log->time = ktime_get();
 	log->type = DPU_EVT_UPDATE_HANDLER;
 
+	log->data.reg.win_raw.id = id;
+	log->data.reg.win_raw.idx = regs->idx;
+	log->data.reg.win_raw.fps = decon->lcd_info->fps;
+#if defined(CONFIG_EXYNOS_COMMON_PANEL)
+	memcpy(&log->data.reg.up_region, &regs->up_region,
+			sizeof(struct decon_rect));
+#endif
+
 	for (win = 0; win < decon->dt.max_win; win++) {
 		if (regs->win_regs[win].wincon & WIN_EN_F(win)) {
 			memcpy(&log->data.reg.win_regs[win], &regs->win_regs[win],
@@ -329,16 +365,19 @@ void DPU_EVENT_LOG_WINCON(struct v4l2_subdev *sd, struct decon_reg_data *regs)
 
 	/* window update case : last window */
 	win  = DECON_WIN_UPDATE_IDX;
-	if (regs->dpp_config[win].state == DECON_WIN_STATE_UPDATE) {
+	if (regs->dpp_config[win].state == DECON_WIN_STATE_UPDATE ||
+		regs->dpp_config[win].state == DECON_WIN_STATE_MRESOL) {
 		window_updated = true;
 		memcpy(&log->data.reg.win_config[win], &regs->dpp_config[win],
 				sizeof(struct decon_win_config));
 	}
 
 	/* write-back case : last window */
-	if (decon->dt.out_type == DECON_OUT_WB)
+	if (decon->dt.out_type == DECON_OUT_WB || regs->readback.request) {
+		win = decon->dt.wb_win;
 		memcpy(&log->data.reg.win_config[win], &regs->dpp_config[win],
 				sizeof(struct decon_win_config));
+	}
 
 	if (window_updated) {
 		log->data.reg.win.x = regs->dpp_config[win].dst.x;
@@ -384,49 +423,17 @@ void DPU_EVENT_LOG_CMD(struct v4l2_subdev *sd, u32 cmd_id, unsigned long data, u
 		log->data.cmd_buf.caller[i] = (void *)((size_t)return_address(i + 1));
 }
 
-/* cursor async */
-void DPU_EVENT_LOG_CURSOR(struct v4l2_subdev *sd, struct decon_reg_data *regs)
-{
-	struct decon_device *decon = container_of(sd, struct decon_device, sd);
-	struct dpu_log *log;
-	int idx = atomic_inc_return(&decon->d.event_log_idx) % DPU_EVENT_LOG_MAX;
-	int win = 0;
-
-	if (IS_ERR_OR_NULL(decon->d.event_log))
-		return;
-
-	log = &decon->d.event_log[idx];
-
-	log->time = ktime_get();
-	log->type = DPU_EVT_CURSOR_UPDATE;
-
-	for (win = 0; win < decon->dt.max_win; win++) {
-		if (regs->is_cursor_win[win] && regs->win_regs[win].wincon & WIN_EN_F(win)) {
-			memcpy(&log->data.reg.win_regs[win], &regs->win_regs[win],
-				sizeof(struct decon_window_regs));
-			memcpy(&log->data.reg.win_config[win], &regs->dpp_config[win],
-				sizeof(struct decon_win_config));
-		} else {
-			log->data.reg.win_config[win].state =
-						DECON_WIN_STATE_DISABLED;
-		}
-	}
-	win  = DECON_WIN_UPDATE_IDX;
-	log->data.reg.win_config[win].state = DECON_WIN_STATE_DISABLED;
-}
-
 void DPU_EVENT_LOG_UPDATE_REGION(struct v4l2_subdev *sd,
 		struct decon_frame *req_region, struct decon_frame *adj_region)
 {
 	struct decon_device *decon = container_of(sd, struct decon_device, sd);
-	int idx = 0;
+	int idx = atomic_inc_return(&decon->d.event_log_idx) % DPU_EVENT_LOG_MAX;
 	struct dpu_log *log;
 
 	if (!decon || IS_ERR_OR_NULL(decon->d.debug_event) ||
 			IS_ERR_OR_NULL(decon->d.event_log))
 		return;
 
-	idx = atomic_inc_return(&decon->d.event_log_idx) % DPU_EVENT_LOG_MAX;
 	log = &decon->d.event_log[idx];
 	log->time = ktime_get();
 	log->type = DPU_EVT_WINUP_UPDATE_REGION;
@@ -440,13 +447,12 @@ void DPU_EVENT_LOG_WINUP_FLAGS(struct v4l2_subdev *sd, bool need_update,
 {
 	struct decon_device *decon = container_of(sd, struct decon_device, sd);
 	struct dpu_log *log;
-	int idx = 0;
+	int idx = atomic_inc_return(&decon->d.event_log_idx) % DPU_EVENT_LOG_MAX;
 
 	if (!decon || IS_ERR_OR_NULL(decon->d.debug_event) ||
 			IS_ERR_OR_NULL(decon->d.event_log))
 		return;
 
-	idx = atomic_inc_return(&decon->d.event_log_idx) % DPU_EVENT_LOG_MAX;
 	log = &decon->d.event_log[idx];
 
 	log->time = ktime_get();
@@ -460,14 +466,13 @@ void DPU_EVENT_LOG_APPLY_REGION(struct v4l2_subdev *sd,
 		struct decon_rect *apl_rect)
 {
 	struct decon_device *decon = container_of(sd, struct decon_device, sd);
-	int idx = 0;
+	int idx = atomic_inc_return(&decon->d.event_log_idx) % DPU_EVENT_LOG_MAX;
 	struct dpu_log *log;
 
 	if (!decon || IS_ERR_OR_NULL(decon->d.debug_event) ||
 			IS_ERR_OR_NULL(decon->d.event_log))
 		return;
 
-	idx = atomic_inc_return(&decon->d.event_log_idx) % DPU_EVENT_LOG_MAX;
 	log = &decon->d.event_log[idx];
 
 	log->time = ktime_get();
@@ -480,7 +485,7 @@ void DPU_EVENT_LOG_APPLY_REGION(struct v4l2_subdev *sd,
 }
 
 void DPU_EVENT_LOG_MEMMAP(dpu_event_t type, struct v4l2_subdev *sd,
-		dma_addr_t dma_addr, int dpp_ch)
+		dma_addr_t dma_addr, int dpp_ch, struct sg_table *sg_table)
 {
 	struct decon_device *decon = container_of(sd, struct decon_device, sd);
 	int idx = 0;
@@ -500,6 +505,7 @@ void DPU_EVENT_LOG_MEMMAP(dpu_event_t type, struct v4l2_subdev *sd,
 
 	log->data.memmap.dma_addr = dma_addr;
 	log->data.memmap.dpp_ch = dpp_ch;
+	log->data.memmap.sg_table = sg_table;
 
 	dpp_sd = decon->dpp_sd[dpp_ch];
 	v4l2_subdev_call(dpp_sd, core, ioctl, DPP_GET_SHD_ADDR, &shd_addr);
@@ -536,6 +542,55 @@ static void dpu_print_log_update_handler(struct seq_file *s,
 				config->dst.h, config->dst.f_w, config->dst.f_h,
 				config->channel, fmt->name);
 	}
+}
+
+#define RSC_BUF_CNT	16
+static void dpu_print_log_resource_info(struct decon_device *decon,
+				struct seq_file *s, struct disp_log_rsc *rsc)
+{
+	char buf_prev_dpp[RSC_BUF_CNT] = {0, };
+	char buf_cur_dpp[RSC_BUF_CNT] = {0, };
+	char buf_prev_win[RSC_BUF_CNT] = {0, };
+	char buf_cur_win[RSC_BUF_CNT] = {0, };
+	int i;
+	int len = 0;
+
+	len = 0;
+	for (i = 0; i < decon->dt.dpp_cnt; ++i) {
+		if (!test_bit(i, &rsc->prev_used_dpp))
+			continue;
+
+		len += snprintf(buf_prev_dpp + len, RSC_BUF_CNT - len, " %d", i);
+	}
+
+	len = 0;
+	for (i = 0; i < decon->dt.dpp_cnt; ++i) {
+		if (!test_bit(i, &rsc->cur_using_dpp))
+			continue;
+
+		len += snprintf(buf_cur_dpp + len, RSC_BUF_CNT - len, " %d", i);
+	}
+
+	len = 0;
+	for (i = 0; i < decon->dt.max_win; ++i) {
+		if (!test_bit(i, &rsc->prev_req_win))
+			continue;
+
+		len += snprintf(buf_prev_win + len, RSC_BUF_CNT - len, " %d", i);
+	}
+
+	len = 0;
+	for (i = 0; i < decon->dt.max_win; ++i) {
+		if (!test_bit(i, &rsc->cur_req_win))
+			continue;
+
+		len += snprintf(buf_cur_win + len, RSC_BUF_CNT - len, " %d", i);
+	}
+
+	seq_printf(s, "\t\t\tCH: PREV[%s] CUR[%s], WIN: PREV[%s] CUR[%s]\n",
+			buf_prev_dpp, buf_cur_dpp, buf_prev_win, buf_cur_win);
+	seq_printf(s, "\t\t\tRSC_CH[0x%x], RSC_WIN[0x%x]\n",
+			rsc->hw_ch_info, rsc->hw_win_info);
 }
 
 /* display logged events related with DECON */
@@ -695,6 +750,12 @@ void DPU_EVENT_SHOW(struct seq_file *s, struct decon_device *decon)
 		case DPU_EVT_DECON_RESUME:
 			seq_printf(s, "%20s  %20s", "DECON_RESUME", "-\n");
 			break;
+		case DPU_EVT_DOZE:
+			seq_printf(s, "%20s  %20s", "DPU_EVT_DOZE", "-\n");
+			break;
+		case DPU_EVT_DOZE_SUSPEND:
+			seq_printf(s, "%20s  %20s", "DPU_EVT_DOZE_SUSPEND", "-\n");
+			break;
 		case DPU_EVT_ENTER_HIBER:
 			seq_printf(s, "%20s  ", "ENTER_HIBER");
 			tv = ktime_to_timeval(log->data.pm.elapsed);
@@ -735,6 +796,25 @@ void DPU_EVENT_SHOW(struct seq_file *s, struct decon_device *decon)
 			break;
 		case DPU_EVT_DMA_RECOVERY:
 			seq_printf(s, "%20s  %20s", "DMA_FRAMEDONE", "-\n");
+			break;
+		case DPU_EVT_ACQUIRE_RSC:
+			seq_printf(s, "%20s  ", "ACQUIRE_RSC\n");
+			dpu_print_log_resource_info(decon, s, &log->data.rsc);
+			break;
+		case DPU_EVT_RELEASE_RSC:
+			seq_printf(s, "%20s  ", "RELEASE_RSC\n");
+			dpu_print_log_resource_info(decon, s, &log->data.rsc);
+			break;
+		case DPU_EVT_STORE_RSC:
+			seq_printf(s, "%20s  ", "STORE_RSC\n");
+			dpu_print_log_resource_info(decon, s, &log->data.rsc);
+			break;
+		case DPU_EVT_CURSOR_POS:
+			tv = ktime_to_timeval(log->data.cursor.elapsed);
+			seq_printf(s, "%20s  x=%6d y=%6d elapsed=[%ld.%03lds]\n",
+					"CURSOR_POS",
+					log->data.cursor.xpos, log->data.cursor.ypos,
+					tv.tv_sec, tv.tv_usec/1000);
 			break;
 		default:
 			seq_printf(s, "%20s  (%2d)\n", "NO_DEFINED", log->type);
@@ -900,7 +980,7 @@ static ssize_t decon_debug_mres_write(struct file *file, const char __user *buf,
 	char *buf_data;
 	int ret;
 
-	if(!count)
+	if (!count)
 		return count;
 
 	buf_data = kmalloc(count, GFP_KERNEL);
@@ -1082,11 +1162,11 @@ static int decon_debug_cmd_lp_ref_show(struct seq_file *s, void *unused)
 	struct dsim_device *dsim = get_dsim_drvdata(0);
 	int i;
 
-	/* DSU_MODE_1 is used in stead of 1 in MCD */
-	seq_printf(s, "%u\n", dsim->panel->lcd_info.mres_mode);
+	seq_printf(s, "%u\n", dsim->panel->lcd_info.cur_mode_idx);
 
-	for (i = 0; i < dsim->panel->lcd_info.mres.number; i++)
-		seq_printf(s, "%u\n", dsim->panel->lcd_info.cmd_underrun_cnt[i]);
+	for (i = 0; i < dsim->panel->lcd_info.display_mode_count; i++)
+		seq_printf(s, "%u\n",
+				dsim->panel->lcd_info.display_mode[i].cmd_lp_ref);
 
 	return 0;
 }
@@ -1103,7 +1183,7 @@ static ssize_t decon_debug_cmd_lp_ref_write(struct file *file, const char __user
 	int ret;
 	unsigned int cmd_lp_ref;
 	struct dsim_device *dsim;
-	int idx;
+	u32 idx;
 
 	if (!count)
 		return count;
@@ -1122,8 +1202,8 @@ static ssize_t decon_debug_cmd_lp_ref_write(struct file *file, const char __user
 
 	dsim = get_dsim_drvdata(0);
 
-	idx = dsim->panel->lcd_info.mres_mode;
-	dsim->panel->lcd_info.cmd_underrun_cnt[idx] = cmd_lp_ref;
+	idx = dsim->panel->lcd_info.cur_mode_idx;
+	dsim->panel->lcd_info.display_mode[idx].cmd_lp_ref = cmd_lp_ref;
 
 out:
 	kfree(buf_data);
@@ -1591,52 +1671,6 @@ static const struct file_operations decon_freq_hop_fops = {
 	.release = seq_release,
 };
 
-static int decon_trivial_show(struct seq_file *s, void *unused)
-{
-	seq_printf(s, "%u\n", decon_trivial);
-	return 0;
-}
-
-static int decon_trivial_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, decon_trivial_show, inode->i_private);
-}
-
-static ssize_t decon_trivial_write(struct file *file, const char __user *buf,
-		size_t count, loff_t *f_ops)
-{
-	char *buf_data;
-	int ret;
-
-	if (!count)
-		return count;
-
-	buf_data = kmalloc(count, GFP_KERNEL);
-	if (buf_data == NULL)
-		return count;
-
-	ret = copy_from_user(buf_data, buf, count);
-	if (ret < 0)
-		goto out;
-
-	ret = sscanf(buf_data, "%u", &decon_trivial);
-	if (ret < 0)
-		goto out;
-
-out:
-	kfree(buf_data);
-	return count;
-}
-
-static const struct file_operations decon_trivial_fops = {
-       .open = decon_trivial_open,
-       .write = decon_trivial_write,
-       .read = seq_read,
-       .llseek = seq_lseek,
-       .release = seq_release,
-};
-
-#ifdef CONFIG_DEBUG_FS
 int decon_create_debugfs(struct decon_device *decon)
 {
 	char name[MAX_NAME_SIZE];
@@ -1814,14 +1848,6 @@ int decon_create_debugfs(struct decon_device *decon)
 			ret = -ENOENT;
 			goto err_debugfs;
 		}
-
-		decon->d.debug_trivial = debugfs_create_file("debug_trivial", 0444,
-				decon->d.debug_root, NULL, &decon_trivial_fops);
-		if (!decon->d.debug_trivial) {
-			decon_err("failed to create trivial val file\n");
-			ret = -ENOENT;
-			goto err_debugfs;
-		}
 	}
 
 	return 0;
@@ -1843,12 +1869,3 @@ void decon_destroy_debugfs(struct decon_device *decon)
 	if (decon->d.debug_event)
 		debugfs_remove(decon->d.debug_event);
 }
-#else
-int decon_create_debugfs(struct decon_device *decon)
-{
-	return 0;
-}
-void decon_destroy_debugfs(struct decon_device *decon)
-{
-}
-#endif

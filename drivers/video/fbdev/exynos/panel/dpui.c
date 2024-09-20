@@ -11,6 +11,12 @@
 #include <linux/notifier.h>
 #include <linux/export.h>
 #include "dpui.h"
+#include "panel_debug.h"
+
+#ifdef PANEL_PR_TAG
+#undef PANEL_PR_TAG
+#define PANEL_PR_TAG	"dpui"
+#endif
 
 /*
  * DPUI : display use info (panel common info)
@@ -35,7 +41,6 @@ static const char * const dpui_key_name[] = {
 	[DPUI_KEY_LCDID2] = "LCDM_ID2",
 	[DPUI_KEY_LCDID3] = "LCDM_ID3",
 	[DPUI_KEY_MAID_DATE] = "MAID_DATE",
-	[DPUI_KEY_CHIPID] = "CHIPID",
 	[DPUI_KEY_CELLID] = "CELLID",
 	[DPUI_KEY_OCTAID] = "OCTAID",
 	[DPUI_KEY_PNDSIE] = "PNDSIE",
@@ -58,6 +63,7 @@ static const char * const dpui_key_name[] = {
 #ifdef CONFIG_SUPPORT_DIM_FLASH
 	[DPUI_KEY_PNGFLS] = "PNGFLS",
 #endif
+	[DPUI_KEY_UB_CON] = "UB_CON",
 
 	/* dependent on processor */
 	[DPUI_KEY_EXY_SWRCV] = "EXY_SWRCV",
@@ -87,7 +93,6 @@ static struct dpui_info dpui = {
 		DPUI_FIELD_INIT(DPUI_LOG_LEVEL_INFO, DPUI_TYPE_PANEL, DPUI_VAR_S32, DPUI_AUTO_CLEAR_OFF, "-1", DPUI_KEY_LCDID2),
 		DPUI_FIELD_INIT(DPUI_LOG_LEVEL_INFO, DPUI_TYPE_PANEL, DPUI_VAR_S32, DPUI_AUTO_CLEAR_OFF, "-1", DPUI_KEY_LCDID3),
 		DPUI_FIELD_INIT(DPUI_LOG_LEVEL_INFO, DPUI_TYPE_PANEL, DPUI_VAR_STR, DPUI_AUTO_CLEAR_OFF, "19000000 000000", DPUI_KEY_MAID_DATE),
-		DPUI_FIELD_INIT(DPUI_LOG_LEVEL_INFO, DPUI_TYPE_PANEL, DPUI_VAR_STR, DPUI_AUTO_CLEAR_OFF, "0000000000", DPUI_KEY_CHIPID),
 		DPUI_FIELD_INIT(DPUI_LOG_LEVEL_INFO, DPUI_TYPE_PANEL, DPUI_VAR_STR, DPUI_AUTO_CLEAR_OFF, "0000000000000000000000", DPUI_KEY_CELLID),
 		DPUI_FIELD_INIT(DPUI_LOG_LEVEL_INFO, DPUI_TYPE_PANEL, DPUI_VAR_STR, DPUI_AUTO_CLEAR_OFF, "00000000000000000000000", DPUI_KEY_OCTAID),
 		DPUI_FIELD_INIT(DPUI_LOG_LEVEL_INFO, DPUI_TYPE_PANEL, DPUI_VAR_U32, DPUI_AUTO_CLEAR_ON, "0", DPUI_KEY_PNDSIE),
@@ -110,6 +115,7 @@ static struct dpui_info dpui = {
 #ifdef CONFIG_SUPPORT_DIM_FLASH
 		DPUI_FIELD_INIT(DPUI_LOG_LEVEL_INFO, DPUI_TYPE_PANEL, DPUI_VAR_S32, DPUI_AUTO_CLEAR_OFF, "0", DPUI_KEY_PNGFLS),
 #endif
+		DPUI_FIELD_INIT(DPUI_LOG_LEVEL_INFO, DPUI_TYPE_PANEL, DPUI_VAR_U32, DPUI_AUTO_CLEAR_ON, "0", DPUI_KEY_UB_CON),
 
 		/* dependent on processor */
 		DPUI_FIELD_INIT(DPUI_LOG_LEVEL_INFO, DPUI_TYPE_CTRL, DPUI_VAR_U32, DPUI_AUTO_CLEAR_ON, "0", DPUI_KEY_EXY_SWRCV),
@@ -140,7 +146,7 @@ int dpui_logging_register(struct notifier_block *n, enum dpui_type type)
 	int ret;
 
 	if (type <= DPUI_TYPE_NONE || type >= MAX_DPUI_TYPE) {
-		pr_err("%s out of dpui_type range (%d)\n", __func__, type);
+		panel_err("out of dpui_type range (%d)\n", type);
 		return -EINVAL;
 	}
 
@@ -149,12 +155,11 @@ int dpui_logging_register(struct notifier_block *n, enum dpui_type type)
 	else
 		ret = blocking_notifier_chain_register(&dpui_notifier_list, n);
 	if (ret < 0) {
-		pr_err("%s: blocking_notifier_chain_register error(%d)\n",
-				__func__, ret);
+		panel_err("blocking_notifier_chain_register error(%d)\n", ret);
 		return ret;
 	}
 
-	pr_info("%s register type %s\n", __func__, dpui_type_name[type]);
+	panel_info("register type %s\n", dpui_type_name[type]);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(dpui_logging_register);
@@ -177,13 +182,12 @@ static bool is_dpui_var_u32(enum dpui_key key)
 void update_dpui_log(enum dpui_log_level level, enum dpui_type type)
 {
 	if (level < 0 || level >= MAX_DPUI_LOG_LEVEL) {
-		pr_err("%s invalid log level %d\n", __func__, level);
+		panel_err("invalid log level %d\n", level);
 		return;
 	}
 
 	dpui_logging_notify(level, type, &dpui);
-	pr_info("%s update dpui log(%d) done\n",
-			__func__, level);
+	panel_info("update dpui log(%d) done\n", level);
 }
 
 void clear_dpui_log(enum dpui_log_level level, enum dpui_type type)
@@ -191,7 +195,7 @@ void clear_dpui_log(enum dpui_log_level level, enum dpui_type type)
 	size_t i;
 
 	if (level < 0 || level >= MAX_DPUI_LOG_LEVEL) {
-		pr_err("%s invalid log level %d\n", __func__, level);
+		panel_err("invalid log level %d\n", level);
 		return;
 	}
 
@@ -204,25 +208,23 @@ void clear_dpui_log(enum dpui_log_level level, enum dpui_type type)
 	}
 	mutex_unlock(&dpui_lock);
 
-	pr_info("%s clear dpui log(%d) done\n",
-			__func__, level);
+	panel_info("clear dpui log(%d) done\n", level);
 }
 
 static int __get_dpui_field(enum dpui_key key, char *buf)
 {
 	if (!buf) {
-		pr_err("%s buf is null\n", __func__);
+		panel_err("buf is null\n");
 		return 0;
 	}
 
 	if (!DPUI_VALID_KEY(key)) {
-		pr_err("%s out of dpui_key range (%d)\n", __func__, key);
+		panel_err("out of dpui_key range (%d)\n", key);
 		return 0;
 	}
 
 	if (!dpui.field[key].initialized) {
-		pr_debug("%s DPUI:%s not initialized, so use default value\n",
-				__func__, dpui_key_name[key]);
+		panel_dbg("%s not initialized, so use default value\n", dpui_key_name[key]);
 		return snprintf(buf, MAX_DPUI_KEY_LEN + MAX_DPUI_VAL_LEN,
 			"\"%s\":\"%s\"", dpui_key_name[key], dpui.field[key].default_value);
 	}
@@ -236,28 +238,28 @@ void print_dpui_field(enum dpui_key key)
 	char tbuf[MAX_DPUI_KEY_LEN + MAX_DPUI_VAL_LEN];
 
 	if (!DPUI_VALID_KEY(key)) {
-		pr_err("%s out of dpui_key range (%d)\n", __func__, key);
+		panel_err("out of dpui_key range (%d)\n", key);
 		return;
 	}
 
 	__get_dpui_field(key, tbuf);
-	pr_info("DPUI: %s\n", tbuf);
+	panel_info("%s\n", tbuf);
 }
 
 static int __set_dpui_field(enum dpui_key key, char *buf, int size)
 {
 	if (!buf) {
-		pr_err("%s buf is null\n", __func__);
+		panel_err("buf is null\n");
 		return -EINVAL;
 	}
 
 	if (!DPUI_VALID_KEY(key)) {
-		pr_err("%s out of dpui_key range (%d)\n", __func__, key);
+		panel_err("out of dpui_key range (%d)\n", key);
 		return -EINVAL;
 	}
 
 	if (size > MAX_DPUI_VAL_LEN - 1) {
-		pr_err("%s exceed dpui value size (%d)\n", __func__, size);
+		panel_err("exceed dpui value size (%d)\n", size);
 		return -EINVAL;
 	}
 	memcpy(dpui.field[key].buf, buf, size);
@@ -272,18 +274,18 @@ static int __get_dpui_u32_field(enum dpui_key key, u32 *value)
 	int rc, cur_val;
 
 	if (value == NULL) {
-		pr_err("%s invalid value pointer\n", __func__);
+		panel_err("invalid value pointer\n");
 		return -EINVAL;
 	}
 
 	if (!DPUI_VALID_KEY(key)) {
-		pr_err("%s out of dpui_key range (%d)\n", __func__, key);
+		panel_err("out of dpui_key range (%d)\n", key);
 		return -EINVAL;
 	}
 
 	rc = kstrtouint(dpui.field[key].buf, 0, &cur_val);
 	if (rc < 0) {
-		pr_err("%s failed to get value\n", __func__);
+		panel_err("failed to get value\n");
 		return rc;
 	}
 
@@ -298,18 +300,18 @@ static int __set_dpui_u32_field(enum dpui_key key, u32 value)
 	int size;
 
 	if (!DPUI_VALID_KEY(key)) {
-		pr_err("%s out of dpui_key range (%d)\n", __func__, key);
+		panel_err("out of dpui_key range (%d)\n", key);
 		return -EINVAL;
 	}
 
 	if (!is_dpui_var_u32(key)) {
-		pr_err("%s invalid type %d\n", __func__, dpui.field[key].var_type);
+		panel_err("invalid type %d\n", dpui.field[key].var_type);
 		return -EINVAL;
 	}
 
 	size = snprintf(tbuf, MAX_DPUI_VAL_LEN, "%u", value);
 	if (size > MAX_DPUI_VAL_LEN) {
-		pr_err("%s exceed dpui value size (%d)\n", __func__, size);
+		panel_err("exceed dpui value size (%d)\n", size);
 		return -EINVAL;
 	}
 	__set_dpui_field(key, tbuf, size);
@@ -323,19 +325,19 @@ static int __inc_dpui_u32_field(enum dpui_key key, u32 value)
 	u32 cur_val = 0;
 
 	if (!DPUI_VALID_KEY(key)) {
-		pr_err("%s out of dpui_key range (%d)\n", __func__, key);
+		panel_err("out of dpui_key range (%d)\n", key);
 		return -EINVAL;
 	}
 
 	if (!is_dpui_var_u32(key)) {
-		pr_err("%s invalid type %d\n", __func__, dpui.field[key].var_type);
+		panel_err("invalid type %d\n", dpui.field[key].var_type);
 		return -EINVAL;
 	}
 
 	if (dpui.field[key].initialized) {
 		ret = __get_dpui_u32_field(key, &cur_val);
 		if (ret < 0) {
-			pr_err("%s failed to get u32 field (%d)\n", __func__, ret);
+			panel_err("failed to get u32 field (%d)\n", ret);
 			return -EINVAL;
 		}
 	}
@@ -406,20 +408,20 @@ int __get_dpui_log(char *buf, enum dpui_log_level level, enum dpui_type type)
 	char tbuf[MAX_DPUI_KEY_LEN + MAX_DPUI_VAL_LEN];
 
 	if (!buf) {
-		pr_err("%s buf is null\n", __func__);
+		panel_err("buf is null\n");
 		return -EINVAL;
 	}
 
 	if (level < 0 || level >= MAX_DPUI_LOG_LEVEL) {
-		pr_err("%s invalid log level %d\n", __func__, level);
+		panel_err("invalid log level %d\n", level);
 		return -EINVAL;
 	}
 
 	mutex_lock(&dpui_lock);
 	for (i = DPUI_KEY_NONE + 1; i < MAX_DPUI_KEY; i++) {
 		if (level != DPUI_LOG_LEVEL_ALL && dpui.field[i].level != level) {
-			pr_warn("%s DPUI:%s different log level %d %d\n",
-					__func__, dpui_key_name[dpui.field[i].key],
+			panel_warn("%s different log level %d %d\n",
+					dpui_key_name[dpui.field[i].key],
 					dpui.field[i].level, level);
 			continue;
 		}

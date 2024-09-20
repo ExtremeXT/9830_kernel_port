@@ -40,10 +40,17 @@
 #include "is-interface-library.h"
 #include "is-device-eeprom.h"
 #include "is-hw-api-ois-mcu.h"
+#include "is-device-af.h"
 
 extern int is_create_sysfs(struct is_core *core);
 extern bool is_dumped_fw_loading_needed;
 extern bool force_caldata_dump;
+extern bool check_ois_power;
+extern bool check_shaking_noise;
+
+#ifdef CONFIG_OIS_USE
+extern void ois_factory_resource_clean(void);
+#endif
 
 static u32  rear_sensor_id;
 static u32  rear2_sensor_id;
@@ -67,6 +74,8 @@ static u32  secure_sensor_id;
 static u32  ois_sensor_index;
 static u32  mcu_sensor_index;
 static u32  aperture_sensor_index;
+static struct mutex g_efs_mutex;
+static struct mutex g_shaking_mutex;
 
 #ifdef CAMERA_PARALLEL_RETENTION_SEQUENCE
 struct workqueue_struct *sensor_pwr_ctrl_wq = 0;
@@ -77,7 +86,9 @@ struct workqueue_struct *sensor_pwr_ctrl_wq = 0;
 static struct cam_hw_param_collector cam_hwparam_collector;
 static bool mipi_err_check;
 static bool need_update_to_file;
+#ifdef CONFIG_CAMERA_USE_MCU
 static int factory_aperture_value;
+#endif
 
 void is_sec_init_err_cnt(struct cam_hw_param *hw_param)
 {
@@ -229,6 +240,7 @@ err:
 
 #ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
 static struct cam_cp_noti_info g_cp_noti_info;
+static struct cam_cp_noti_info g_cp_noti_legacy_info;
 static struct mutex g_mipi_mutex;
 static bool g_init_notifier;
 
@@ -267,6 +279,8 @@ static int is_vendor_ril_notifier(struct notifier_block *nb,
 
 		mutex_lock(&g_mipi_mutex);
 		memcpy(&g_cp_noti_info, msg->data, sizeof(struct cam_cp_noti_info));
+		if(g_cp_noti_info.rat != CAM_RAT_7_NR5G)
+			memcpy(&g_cp_noti_legacy_info, &g_cp_noti_info, sizeof(struct cam_cp_noti_info));
 		mutex_unlock(&g_mipi_mutex);
 
 		info("%s: update mipi channel [%d,%d,%d]\n",
@@ -289,6 +303,7 @@ static void is_vendor_register_ril_notifier(void)
 
 		mutex_init(&g_mipi_mutex);
 		memset(&g_cp_noti_info, 0, sizeof(struct cam_cp_noti_info));
+		memset(&g_cp_noti_legacy_info, 0, sizeof(struct cam_cp_noti_info));
 
 		register_dev_ril_bridge_event_notifier(&g_ril_notifier_block);
 		g_init_notifier = true;
@@ -305,6 +320,19 @@ static void is_vendor_get_rf_channel(struct cam_cp_noti_info *ch)
 
 	mutex_lock(&g_mipi_mutex);
 	memcpy(ch, &g_cp_noti_info, sizeof(struct cam_cp_noti_info));
+	mutex_unlock(&g_mipi_mutex);
+}
+
+static void is_vendor_get_legacy_rf_channel(struct cam_cp_noti_info *ch)
+{
+	if (!g_init_notifier) {
+		warn("%s: not init ril notifier\n", __func__);
+		memset(ch, 0, sizeof(struct cam_cp_noti_info));
+		return;
+	}
+
+	mutex_lock(&g_mipi_mutex);
+	memcpy(ch, &g_cp_noti_legacy_info, sizeof(struct cam_cp_noti_info));
 	mutex_unlock(&g_mipi_mutex);
 }
 
@@ -348,8 +376,30 @@ int is_vendor_select_mipi_by_rf_channel(const struct cam_mipi_channel *channel_l
 			compare_rf_channel);
 
 	if (result == NULL) {
-		info("%s: searching result : not found, use default mipi clock\n", __func__);
-		return 0; /* return default mipi clock index = 0 */
+		if(input_ch.rat == CAM_RAT_7_NR5G) {		/* EN-DC case */
+			info("%s: not found for NR, retry for legacy RAT\n", __func__);
+			is_vendor_get_legacy_rf_channel(&input_ch);
+
+			key.rat_band = CAM_RAT_BAND(input_ch.rat, input_ch.band);
+			key.channel_min = input_ch.channel;
+			key.channel_max = input_ch.channel;
+
+			info("%s: searching legacy rf channel s [%d,%d,%d]\n",
+				__func__, input_ch.rat, input_ch.band, input_ch.channel);
+
+			result = bsearch(&key,
+					channel_list,
+					size,
+					sizeof(struct cam_mipi_channel),
+					compare_rf_channel);
+			if (result == NULL) {
+				info("%s: searching result : not found, use default mipi clock\n", __func__);
+				return 0; /* return default mipi clock index = 0 */
+			}
+		} else {
+			info("%s: searching result : not found, use default mipi clock\n", __func__);
+			return 0; /* return default mipi clock index = 0 */
+		}
 	}
 
 	info("%s: searching result : [0x%x,(%d-%d)]->(%d)\n", __func__,
@@ -427,23 +477,18 @@ int is_vendor_verify_mipi_channel(const struct cam_mipi_channel *channel_list, c
 
 void is_vendor_csi_stream_on(struct is_device_csi *csi)
 {
-#if defined(CONFIG_CAMERA_USE_INTERNAL_MCU)
-	struct is_core *core = NULL;
-	struct ois_mcu_dev *mcu;
-#endif
-
-#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+#if defined(USE_CAMERA_MIPI_CLOCK_VARIATION)
+	struct is_cis *cis = NULL;
 	struct is_device_sensor *device = NULL;
 	struct is_module_enum *module = NULL;
 	struct is_device_sensor_peri *sensor_peri = NULL;
-	struct is_cis *cis = NULL;
 	int ret;
 
 	device = container_of(csi->subdev, struct is_device_sensor, subdev_csi);
 	if (device == NULL) {
 		warn("device is null");
 		return;
-	};
+	}
 
 	ret = is_sensor_g_module(device, &module);
 	if (ret) {
@@ -455,7 +500,7 @@ void is_vendor_csi_stream_on(struct is_device_csi *csi)
 	if (sensor_peri == NULL) {
 		warn("sensor_peri is null");
 		return;
-	};
+	}
 
 	if (sensor_peri->subdev_cis) {
 		cis = (struct is_cis *)v4l2_get_subdevdata(sensor_peri->subdev_cis);
@@ -466,28 +511,10 @@ void is_vendor_csi_stream_on(struct is_device_csi *csi)
 #ifdef USE_CAMERA_HW_BIG_DATA
 	mipi_err_check = false;
 #endif
-
-#if defined(CONFIG_CAMERA_USE_INTERNAL_MCU)
-	core = (struct is_core *)dev_get_drvdata(is_dev);
-
-	mcu = core->mcu;
-	if (mcu)
-		ois_mcu_core_ctrl(mcu, 0x1);
-#endif
 }
 
 void is_vendor_csi_stream_off(struct is_device_csi *csi)
 {
-#if defined(CONFIG_CAMERA_USE_INTERNAL_MCU)
-	struct is_core *core;
-	struct ois_mcu_dev *mcu;
-
-	core = (struct is_core *)dev_get_drvdata(is_dev);
-	mcu = core->mcu;
-
-	if (mcu)
-		ois_mcu_core_ctrl(mcu, 0x0);
-#endif
 }
 
 void is_vender_csi_err_handler(struct is_device_csi *csi)
@@ -562,6 +589,13 @@ int is_vender_probe(struct is_vender *vender)
 	/* init mutex for rom read */
 	mutex_init(&specific->rom_lock);
 
+#ifdef USE_TOF_AF
+	/* TOF AF data mutex */
+	mutex_init(&specific->tof_af_lock);
+#endif
+	mutex_init(&g_efs_mutex);
+	mutex_init(&g_shaking_mutex);
+
 	if (is_create_sysfs(core)) {
 		probe_err("is_create_sysfs is failed");
 		ret = -EINVAL;
@@ -592,6 +626,8 @@ int is_vender_probe(struct is_vender *vender)
 	specific->mcu_sensor_index = mcu_sensor_index;
 	specific->aperture_sensor_index = aperture_sensor_index;
 	specific->zoom_running = false;
+        specific->tof_info.TOFExposure = 0;
+        specific->tof_info.TOFFps = 0;
 
 	for (i = 0; i < ROM_ID_MAX; i++) {
 		specific->eeprom_client[i] = NULL;
@@ -639,6 +675,7 @@ int is_vender_dt(struct device_node *np)
 	struct device_node *camInfo_np;
 	struct is_cam_info *camera_infos;
 	struct is_common_cam_info *common_camera_infos = NULL;
+	struct is_common_mcu_info *common_mcu_infos = NULL;
 	char camInfo_string[15];
 	int camera_num;
 	int max_camera_num;
@@ -754,6 +791,14 @@ int is_vender_dt(struct device_node *np)
 		probe_err("supported_cameraId read is fail(%d)", ret);
 	}
 
+	is_get_common_mcu_info(&common_mcu_infos);
+
+	ret = of_property_read_u32_array(np, "ois_gyro_list",
+		common_mcu_infos->ois_gyro_direction, 5);
+	if (ret) {
+		probe_err("ois_gyro_list read is fail(%d)", ret);
+	}
+
 	return ret;
 }
 
@@ -771,14 +816,16 @@ int is_vendor_rom_parse_dt(struct device_node *dnode, int rom_id)
 	const u32 *tof_cal_valid_list_spec;
 	const char *node_string;
 	int ret = 0;
-#ifdef IS_DEVICE_ROM_DEBUG
 	int i;
-#endif
 	u32 temp;
 	char *pprop;
 	bool skip_cal_loading;
 	bool skip_crc_check;
 	bool skip_header_loading;
+	char rom_af_cal_d_addr[30];
+	const u32 *rom_pdxtc_cal_data_addr_list_spec;
+	const u32 *rom_gcc_cal_data_addr_list_spec;
+	const u32 *rom_xtc_cal_data_addr_list_spec;
 
 	struct is_rom_info *finfo;
 
@@ -989,11 +1036,14 @@ int is_vendor_rom_parse_dt(struct device_node *dnode, int rom_id)
 	DT_READ_U32_DEFAULT(dnode, "rom_sensor2_awb_master_addr", finfo->rom_sensor2_awb_master_addr, -1);
 	DT_READ_U32_DEFAULT(dnode, "rom_sensor2_awb_module_addr", finfo->rom_sensor2_awb_module_addr, -1);
 
-	DT_READ_U32_DEFAULT(dnode, "rom_af_cal_macro_addr", finfo->rom_af_cal_macro_addr, -1);
-	DT_READ_U32_DEFAULT(dnode, "rom_af_cal_d50_addr", finfo->rom_af_cal_d50_addr, -1);
+	for (i = 0; i < AF_CAL_D_MAX; i++) {
+		sprintf(rom_af_cal_d_addr, "rom_af_cal_d%d_addr", (i + 1) * 10);
+		DT_READ_U32_DEFAULT(dnode, rom_af_cal_d_addr, finfo->rom_af_cal_d_addr[i], -1);
+		sprintf(rom_af_cal_d_addr, "rom_sensor2_af_cal_d%d_addr", (i + 1) * 10);
+		DT_READ_U32_DEFAULT(dnode, rom_af_cal_d_addr, finfo->rom_sensor2_af_cal_d_addr[i], -1);
+	}
+
 	DT_READ_U32_DEFAULT(dnode, "rom_af_cal_pan_addr", finfo->rom_af_cal_pan_addr, -1);
-	DT_READ_U32_DEFAULT(dnode, "rom_sensor2_af_cal_macro_addr", finfo->rom_sensor2_af_cal_macro_addr, -1);
-	DT_READ_U32_DEFAULT(dnode, "rom_sensor2_af_cal_d50_addr", finfo->rom_sensor2_af_cal_d50_addr, -1);
 	DT_READ_U32_DEFAULT(dnode, "rom_sensor2_af_cal_pan_addr", finfo->rom_sensor2_af_cal_pan_addr, -1);
 
 	DT_READ_U32_DEFAULT(dnode, "rom_dualcal_slave0_start_addr", finfo->rom_dualcal_slave0_start_addr, -1);
@@ -1002,6 +1052,74 @@ int is_vendor_rom_parse_dt(struct device_node *dnode, int rom_id)
 	DT_READ_U32_DEFAULT(dnode, "rom_dualcal_slave1_size", finfo->rom_dualcal_slave1_size, -1);
 	DT_READ_U32_DEFAULT(dnode, "rom_dualcal_slave2_start_addr", finfo->rom_dualcal_slave2_start_addr, -1);
 	DT_READ_U32_DEFAULT(dnode, "rom_dualcal_slave2_size", finfo->rom_dualcal_slave2_size, -1);
+
+	DT_READ_U32_DEFAULT(dnode, "rom_pdxtc_cal_data_start_addr", finfo->rom_pdxtc_cal_data_start_addr, -1);
+	DT_READ_U32_DEFAULT(dnode, "rom_pdxtc_cal_data_0_size", finfo->rom_pdxtc_cal_data_0_size, -1);
+	DT_READ_U32_DEFAULT(dnode, "rom_pdxtc_cal_data_1_size", finfo->rom_pdxtc_cal_data_1_size, -1);
+	DT_READ_U32_DEFAULT(dnode, "rom_spdc_cal_data_start_addr", finfo->rom_spdc_cal_data_start_addr, -1);
+	DT_READ_U32_DEFAULT(dnode, "rom_spdc_cal_data_size", finfo->rom_spdc_cal_data_size, -1);
+	DT_READ_U32_DEFAULT(dnode, "rom_xtc_cal_data_start_addr", finfo->rom_xtc_cal_data_start_addr, -1);
+	DT_READ_U32_DEFAULT(dnode, "rom_xtc_cal_data_size", finfo->rom_xtc_cal_data_size, -1);
+
+	rom_pdxtc_cal_data_addr_list_spec = of_get_property(dnode, "rom_pdxtc_cal_data_addr_list", &finfo->rom_pdxtc_cal_data_addr_list_len);
+	if (rom_pdxtc_cal_data_addr_list_spec) {
+		finfo->rom_pdxtc_cal_data_addr_list_len /= (unsigned int)sizeof(*rom_pdxtc_cal_data_addr_list_spec);
+
+		BUG_ON(finfo->rom_pdxtc_cal_data_addr_list_len > CROSSTALK_CAL_MAX);
+
+		ret = of_property_read_u32_array(dnode, "rom_pdxtc_cal_data_addr_list", finfo->rom_pdxtc_cal_data_addr_list, finfo->rom_pdxtc_cal_data_addr_list_len);
+		if (ret)
+			err("rom_pdxtc_cal_data_addr_list read is fail(%d)", ret);
+#ifdef IS_DEVICE_ROM_DEBUG
+		else {
+			info("rom_pdxtc_cal_data_addr_list :");
+			for (i = 0; i < finfo->rom_pdxtc_cal_data_addr_list_len; i++)
+				info(" %d ", finfo->rom_pdxtc_cal_data_addr_list[i]);
+			info("\n");
+		}
+#endif
+	}
+	finfo->rom_pdxtc_cal_endian_check = of_property_read_bool(dnode, "rom_pdxtc_cal_endian_check");
+
+	rom_gcc_cal_data_addr_list_spec = of_get_property(dnode, "rom_gcc_cal_data_addr_list", &finfo->rom_gcc_cal_data_addr_list_len);
+	if (rom_gcc_cal_data_addr_list_spec) {
+		finfo->rom_gcc_cal_data_addr_list_len /= (unsigned int)sizeof(*rom_gcc_cal_data_addr_list_spec);
+
+		BUG_ON(finfo->rom_gcc_cal_data_addr_list_len > CROSSTALK_CAL_MAX);
+
+		ret = of_property_read_u32_array(dnode, "rom_gcc_cal_data_addr_list", finfo->rom_gcc_cal_data_addr_list, finfo->rom_gcc_cal_data_addr_list_len);
+		if (ret)
+			err("rom_gcc_cal_data_addr_list read is fail(%d)", ret);
+#ifdef IS_DEVICE_ROM_DEBUG
+		else {
+			info("rom_gcc_cal_data_addr_list :");
+			for (i = 0; i < finfo->rom_gcc_cal_data_addr_list_len; i++)
+				info(" %d ", finfo->rom_gcc_cal_data_addr_list[i]);
+			info("\n");
+		}
+#endif
+	}
+	finfo->rom_gcc_cal_endian_check = of_property_read_bool(dnode, "rom_gcc_cal_endian_check");
+
+	rom_xtc_cal_data_addr_list_spec = of_get_property(dnode, "rom_xtc_cal_data_addr_list", &finfo->rom_xtc_cal_data_addr_list_len);
+	if (rom_xtc_cal_data_addr_list_spec) {
+		finfo->rom_xtc_cal_data_addr_list_len /= (unsigned int)sizeof(*rom_xtc_cal_data_addr_list_spec);
+
+		BUG_ON(finfo->rom_xtc_cal_data_addr_list_len > CROSSTALK_CAL_MAX);
+
+		ret = of_property_read_u32_array(dnode, "rom_xtc_cal_data_addr_list", finfo->rom_xtc_cal_data_addr_list, finfo->rom_xtc_cal_data_addr_list_len);
+		if (ret)
+			err("rom_xtc_cal_data_addr_list read is fail(%d)", ret);
+#ifdef IS_DEVICE_ROM_DEBUG
+		else {
+			info("rom_xtc_cal_data_addr_list :");
+			for (i = 0; i < finfo->rom_xtc_cal_data_addr_list_len; i++)
+				info(" %d ", finfo->rom_xtc_cal_data_addr_list[i]);
+			info("\n");
+		}
+#endif
+	}
+	finfo->rom_xtc_cal_endian_check = of_property_read_bool(dnode, "rom_xtc_cal_endian_check");
 
 	tof_cal_size_list_spec = of_get_property(dnode, "rom_tof_cal_size_addr", &finfo->rom_tof_cal_size_addr_len);
 	if (tof_cal_size_list_spec) {
@@ -1042,6 +1160,14 @@ int is_vendor_rom_parse_dt(struct device_node *dnode, int rom_id)
 
 	DT_READ_U32_DEFAULT(dnode, "rom_tof_cal_start_addr", finfo->rom_tof_cal_start_addr, -1);
 	DT_READ_U32_DEFAULT(dnode, "rom_tof_cal_result_addr", finfo->rom_tof_cal_result_addr, -1);
+
+	DT_READ_U32_DEFAULT(dnode, "rom_dualcal_slave1_cropshift_x_addr", finfo->rom_dualcal_slave1_cropshift_x_addr, -1);
+	DT_READ_U32_DEFAULT(dnode, "rom_dualcal_slave1_cropshift_y_addr", finfo->rom_dualcal_slave1_cropshift_y_addr, -1);
+
+	DT_READ_U32_DEFAULT(dnode, "rom_dualcal_slave1_oisshift_x_addr", finfo->rom_dualcal_slave1_oisshift_x_addr, -1);
+	DT_READ_U32_DEFAULT(dnode, "rom_dualcal_slave1_oisshift_y_addr", finfo->rom_dualcal_slave1_oisshift_y_addr, -1);
+
+	DT_READ_U32_DEFAULT(dnode, "rom_dualcal_slave1_dummy_flag_addr", finfo->rom_dualcal_slave1_dummy_flag_addr, -1);
 
 	return 0;
 }
@@ -1097,7 +1223,7 @@ void is_vender_check_hw_init_running(void)
 	return;
 }
 
-#if defined(CONFIG_SENSOR_RETENTION_USE) && defined(USE_CAMERA_PREPARE_RETENTION_ON_BOOT)
+#if defined(CONFIG_SENSOR_RETENTION_USE)
 void is_vendor_prepare_retention(struct is_core *core, int sensor_id, int position)
 {
 	struct is_device_sensor *device;
@@ -1131,11 +1257,15 @@ void is_vendor_prepare_retention(struct is_core *core, int sensor_id, int positi
 		goto p_err;
 	}
 
+#ifdef CAMERA_USE_COMMON_VDDIO
+	msleep(20);
+#endif
+
 	/* Sensor power on */
 	ret = module->pdata->gpio_cfg(module, scenario, GPIO_SCENARIO_ON);
 	if (ret) {
 		warn("gpio on is fail(%d)", ret);
-		goto p_power_off;
+		goto p_err;
 	}
 
 	sensor_peri = (struct is_device_sensor_peri *)module->private_data;
@@ -1147,50 +1277,41 @@ void is_vendor_prepare_retention(struct is_core *core, int sensor_id, int positi
 					__func__, __LINE__, core->current_position);
 		} else {
 			warn("%s: wrong cis i2c_channel(%d)", __func__, i2c_channel);
-			goto p_power_off;
+			goto p_err;
 		}
 
 		cis = (struct is_cis *)v4l2_get_subdevdata(sensor_peri->subdev_cis);
 		ret = CALL_CISOPS(cis, cis_check_rev_on_init, sensor_peri->subdev_cis);
 		if (ret) {
 			warn("v4l2_subdev_call(cis_check_rev_on_init) is fail(%d)", ret);
-			goto p_power_off;
+			goto p_err;
 		}
 
 		ret = CALL_CISOPS(cis, cis_init, sensor_peri->subdev_cis);
 		if (ret) {
 			warn("v4l2_subdev_call(init) is fail(%d)", ret);
-			goto p_power_off;
+			goto p_err;
 		}
 
 		ret = CALL_CISOPS(cis, cis_set_global_setting, sensor_peri->subdev_cis);
 		if (ret) {
 			warn("v4l2_subdev_call(cis_set_global_setting) is fail(%d)", ret);
-			goto p_power_off;
+			goto p_err;
 		}
-
-		ret = CALL_CISOPS(cis, cis_stream_on, sensor_peri->subdev_cis);
-		if (ret) {
-			warn("v4l2_subdev_call(cis_stream_on) is fail(%d)", ret);
-			goto p_power_off;
-		}
-		CALL_CISOPS(cis, cis_wait_streamon, sensor_peri->subdev_cis);
-
-		ret = CALL_CISOPS(cis, cis_stream_off, sensor_peri->subdev_cis);
-		if (ret) {
-			warn("v4l2_subdev_call(cis_stream_off) is fail(%d)", ret);
-			goto p_power_off;
-		}
-		CALL_CISOPS(cis, cis_wait_streamoff, sensor_peri->subdev_cis);
 	}
 
-p_power_off:
 	ret = module->pdata->gpio_cfg(module, scenario, GPIO_SCENARIO_SENSOR_RETENTION_ON);
 	if (ret)
-		warn("gpio off is fail(%d)", ret);
+		warn("gpio off (retention) is fail(%d)", ret);
 
+	info("%s: end %d (retention)\n", __func__, ret);
+	return;
 p_err:
-	info("%s: end %d\n", __func__, ret);
+	ret = module->pdata->gpio_cfg(module, scenario, GPIO_SCENARIO_OFF);
+	if (ret)
+		err("gpio off is fail(%d)", ret);
+
+	warn("%s: end %d\n", __func__, ret);
 }
 #endif
 
@@ -1246,6 +1367,10 @@ int is_vender_hw_init(struct is_vender *vender)
 	struct device *dev  = NULL;
 	struct is_core *core;
 	struct is_vender_specific *specific = NULL;
+#if defined(CONFIG_SENSOR_RETENTION_USE) && defined(CONFIG_SEC_FACTORY)
+	struct is_rom_info *finfo;
+	int rom_id = 0;
+#endif
 
 	core = container_of(vender, struct is_core, vender);
 	specific = core->vender.private_data;
@@ -1303,8 +1428,13 @@ int is_vender_hw_init(struct is_vender *vender)
 #endif
 #endif
 
-#if defined(CONFIG_SENSOR_RETENTION_USE) && defined(USE_CAMERA_PREPARE_RETENTION_ON_BOOT)
-	is_vendor_prepare_retention(core, 0, SENSOR_POSITION_REAR);
+#ifdef CONFIG_SENSOR_RETENTION_USE
+#ifdef CONFIG_SEC_FACTORY
+	rom_id = is_vendor_get_rom_id_from_position(SENSOR_POSITION_REAR);
+	is_sec_get_sysfs_finfo(&finfo, rom_id);
+	if (test_bit(IS_ROM_STATE_CAL_READ_DONE, &finfo->rom_state))
+#endif
+		is_vendor_prepare_retention(core, 0, SENSOR_POSITION_REAR);
 #endif
 
 	ret = is_load_bin_on_boot();
@@ -1316,7 +1446,9 @@ int is_vender_hw_init(struct is_vender *vender)
 	is_vendor_register_ril_notifier();
 #endif
 	is_hw_init_running = false;
+#ifdef CONFIG_CAMERA_USE_MCU
 	factory_aperture_value = 0;
+#endif
 	info("hw init done\n");
 	return 0;
 }
@@ -1342,6 +1474,12 @@ int is_vender_fw_prepare(struct is_vender *vender)
 		}
 	}
 
+	ret = is_sec_run_fw_sel(rom_id);
+	if (ret < 0) {
+		err("fimc_is_sec_run_fw_sel is fail1(%d)", ret);
+		goto p_err;
+	}
+
 	ret = is_sec_fw_find(core);
 	if (ret) {
 		err("is_sec_fw_find is fail(%d)", ret);
@@ -1354,6 +1492,7 @@ int is_vender_fw_prepare(struct is_vender *vender)
 	}
 #endif
 
+p_err:
 	return ret;
 }
 
@@ -1773,10 +1912,24 @@ void sensor_pwr_ctrl(struct work_struct *work)
 static DECLARE_DELAYED_WORK(sensor_pwr_ctrl_work, sensor_pwr_ctrl);
 #endif
 
-int is_vender_sensor_gpio_on_sel(struct is_vender *vender, u32 scenario, u32 *gpio_scenario)
+int is_vender_sensor_gpio_on_sel(struct is_vender *vender, u32 scenario, u32 *gpio_scenario
+		, void *module_data)
 {
 	int ret = 0;
+#ifdef USE_FAKE_RETENTION
+	struct is_module_enum *module = module_data;
+	struct sensor_open_extended *ext_info;
+	struct is_core *core;
 
+	core = container_of(vender, struct is_core, vender);
+	ext_info = &(((struct is_module_enum *)module)->ext);
+
+	if (ext_info->use_retention_mode == SENSOR_RETENTION_REOPEN) {
+		*gpio_scenario = GPIO_SCENARIO_STANDBY_OFF;
+		ext_info->use_retention_mode = SENSOR_RETENTION_UNSUPPORTED;
+		info("%s: set rollback retention mode \n", __func__);
+	}
+#endif
 	return ret;
 }
 
@@ -1795,6 +1948,13 @@ int is_vender_sensor_gpio_off_sel(struct is_vender *vender, u32 scenario, u32 *g
 	struct is_module_enum *module = module_data;
 	struct sensor_open_extended *ext_info;
 	struct is_core *core;
+	struct is_cis *cis;
+	struct is_device_sensor_peri *sensor_peri;
+
+	sensor_peri = (struct is_device_sensor_peri *)module->private_data;
+	FIMC_BUG(!sensor_peri);
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(sensor_peri->subdev_cis);
 
 	core = container_of(vender, struct is_core, vender);
 	ext_info = &(((struct is_module_enum *)module)->ext);
@@ -1810,15 +1970,74 @@ int is_vender_sensor_gpio_off_sel(struct is_vender *vender, u32 scenario, u32 *g
 		info("%s: use_retention_mode\n", __func__);
 	}
 #endif
+#ifdef USE_FAKE_RETENTION
+	if (ext_info->use_retention_mode == SENSOR_RETENTION_UNSUPPORTED) {
+		if (vender->closing_hint == IS_CLOSING_HINT_REOPEN
+			&& cis->cis_ops->cis_set_fake_retention
+			&& (scenario == SENSOR_SCENARIO_NORMAL)) {
+			*gpio_scenario = GPIO_SCENARIO_STANDBY_ON;
+			ext_info->use_retention_mode = SENSOR_RETENTION_REOPEN;
+			info("%s: use fake retention mode\n", __func__);
+		}
+	}
 
+	if (ext_info->use_retention_mode != SENSOR_RETENTION_REOPEN) {
+		ret = CALL_CISOPS(cis, cis_set_fake_retention, sensor_peri->subdev_cis, false);
+			if (ret)
+				warn("cis_set_fake_retention (false) is fail(%d)", ret);
+	}
+#endif
 	return ret;
 }
 
-int is_vender_sensor_gpio_off(struct is_vender *vender, u32 scenario, u32 gpio_scenario)
+int is_vender_sensor_gpio_off(struct is_vender *vender, u32 scenario, u32 gpio_scenario
+		, void *module_data)
 {
 	int ret = 0;
+	struct is_module_enum *module = module_data;
+	struct sensor_open_extended *ext_info;
+	struct is_cis *cis;
+	struct is_device_sensor_peri *sensor_peri;
 
+	sensor_peri = (struct is_device_sensor_peri *)module->private_data;
+	FIMC_BUG(!sensor_peri);
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(sensor_peri->subdev_cis);
+
+	ext_info = &(((struct is_module_enum *)module)->ext);
+
+	info("%s sensor = %d", __func__, module->device);
+
+#ifdef USE_FAKE_RETENTION
+	if (ext_info->use_retention_mode == SENSOR_RETENTION_REOPEN) {
+		ret = CALL_CISOPS(cis, cis_set_fake_retention, sensor_peri->subdev_cis, true);
+		if (ret)
+			warn("cis_set_fake_retention (true) is fail(%d)", ret);
+	}
+#endif
 	return ret;
+}
+
+void is_vendor_sensor_suspend(void)
+{
+	info("%s", __func__);
+
+#ifdef CONFIG_OIS_USE
+	//ois_factory_resource_clean();
+#endif
+
+	return;
+}
+
+void is_vendor_resource_clean(void)
+{
+	info("%s", __func__);
+
+#ifdef CONFIG_OIS_USE
+	//ois_factory_resource_clean();
+#endif
+
+	return;
 }
 
 #ifdef CONFIG_SENSOR_RETENTION_USE
@@ -1877,6 +2096,9 @@ extern int sky81296_torch_ctrl(int state);
 #if defined(CONFIG_TORCH_CURRENT_CHANGE_SUPPORT) && defined(CONFIG_LEDS_S2MPB02)
 extern int s2mpb02_set_torch_current(bool torch_mode, bool change_current, int intensity);
 #endif
+#if defined(CONFIG_TORCH_CURRENT_CHANGE_SUPPORT) && defined(CONFIG_LEDS_RT8547)
+extern int rt8547_set_movie_mode(bool on);
+#endif
 
 int is_vender_set_torch(struct camera2_shot *shot)
 {
@@ -1898,6 +2120,9 @@ int is_vender_set_torch(struct camera2_shot *shot)
 		else
 #endif
 			s2mpb02_set_torch_current(true, false, 0);
+#endif
+#if defined(CONFIG_TORCH_CURRENT_CHANGE_SUPPORT) && defined(CONFIG_LEDS_RT8547)
+		rt8547_set_movie_mode(true);
 #endif
 		break;
 	case AA_FLASHMODE_START: /*Pre flash mode*/
@@ -1924,6 +2149,15 @@ int is_vender_set_torch(struct camera2_shot *shot)
 	return 0;
 }
 
+void is_vender_update_meta(struct is_vender *vender, struct camera2_shot *shot)
+{
+    struct is_vender_specific *specific;
+    specific = vender->private_data;
+
+    shot->ctl.aa.vendor_TOFInfo.exposureTime = specific->tof_info.TOFExposure;
+    shot->ctl.aa.vendor_TOFInfo.fps = specific->tof_info.TOFFps;
+}
+
 int is_vender_video_s_ctrl(struct v4l2_control *ctrl,
 	void *device_data)
 {
@@ -1939,8 +2173,11 @@ int is_vender_video_s_ctrl(struct v4l2_control *ctrl,
 	WARN_ON(!device);
 	WARN_ON(!ctrl);
 
+	WARN_ON(!device->pdev);
+
 	core = (struct is_core *)platform_get_drvdata(device->pdev);
 	specific = core->vender.private_data;
+	head = GET_HEAD_GROUP_IN_DEVICE(IS_DEVICE_ISCHAIN, &device->group_3aa);
 
 	switch (ctrl->id) {
 	case V4L2_CID_IS_INTENT:
@@ -1955,11 +2192,14 @@ int is_vender_video_s_ctrl(struct v4l2_control *ctrl,
 		case AA_CAPTURE_INTENT_STILL_CAPTURE_LLHDR_DYNAMIC_SHOT:
 		case AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_HANDHELD:
 		case AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD:
-#if 0 // TEMP_2020
 		case AA_CAPTURE_INTENT_STILL_CAPTURE_LLHDR_VEHDR_DYNAMIC_SHOT:
 		case AA_CAPTURE_INTENT_STILL_CAPTURE_VENR_DYNAMIC_SHOT:
 		case AA_CAPTURE_INTENT_STILL_CAPTURE_LLS_FLASH:
-#endif
+		case AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_HANDHELD_FAST:
+		case AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD_FAST:
+		case AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD_LE_FAST:
+		case AA_CAPTURE_INTENT_STILL_CAPTURE_CROPPED_REMOSAIC_DYNAMIC_SHOT:
+		case AA_CAPTURE_INTENT_STILL_CAPTURE_SHORT_REF_LLHDR_DYNAMIC_SHOT:
 			captureCount = value & 0x0000FFFF;
 			break;
 		default:
@@ -1982,8 +2222,6 @@ int is_vender_video_s_ctrl(struct v4l2_control *ctrl,
 			device, captureIntent, captureCount, head->remainIntentCount);
 		break;
 	case V4L2_CID_IS_CAPTURE_EXPOSURETIME:
-		head = GET_HEAD_GROUP_IN_DEVICE(IS_DEVICE_ISCHAIN, &device->group_3aa);
-
 		ctrl->id = VENDER_S_CTRL;
 		head->intent_ctl.vendor_captureExposureTime = ctrl->value;
 		minfo("[VENDER] s_ctrl vendor_captureExposureTime(%d)\n", device, ctrl->value);
@@ -2021,9 +2259,8 @@ int is_vender_video_s_ctrl(struct v4l2_control *ctrl,
 			}
 		}
 		break;
+#ifdef CONFIG_CAMERA_USE_MCU
 	case V4L2_CID_IS_FACTORY_APERTURE_CONTROL:
-		head = GET_HEAD_GROUP_IN_DEVICE(IS_DEVICE_ISCHAIN, &device->group_3aa);
-
 		ctrl->id = VENDER_S_CTRL;
 		head->lens_ctl.aperture = ctrl->value;
 		if (factory_aperture_value != ctrl->value) {
@@ -2031,6 +2268,7 @@ int is_vender_video_s_ctrl(struct v4l2_control *ctrl,
 			factory_aperture_value = ctrl->value;
 		}
 		break;
+#endif
 	case V4L2_CID_IS_CAMERA_TYPE:
 		ctrl->id = VENDER_S_CTRL;
 		switch (ctrl->value) {
@@ -2127,51 +2365,301 @@ int is_vender_ssx_video_g_ctrl(struct v4l2_control *ctrl,
 	return 0;
 }
 
-void is_vender_resource_get(struct is_vender *vender)
+bool is_vender_check_resource_type(u32 rsc_type)
 {
-#if defined(CONFIG_CAMERA_USE_INTERNAL_MCU)
-	struct is_core *core = NULL;
-	struct ois_mcu_dev *mcu = NULL;
-
-	core = (struct is_core *)dev_get_drvdata(is_dev);
-	if (!core->mcu)
-		return;
-
-	mcu = core->mcu;
-	ois_mcu_power_ctrl(mcu, 0x1);
-
-	ois_mcu_load_binary(mcu);
-#endif
-	info("%s: done\n", __func__);
+	if (rsc_type == RESOURCE_TYPE_SENSOR0 || rsc_type == RESOURCE_TYPE_SENSOR2)
+		return true;
+	else
+		return false;
 }
 
-void is_vender_resource_put(struct is_vender *vender)
+int acquire_shared_rsc(struct ois_mcu_dev *mcu)
+{
+	return atomic_inc_return(&mcu->shared_rsc_count);
+}
+
+int release_shared_rsc(struct ois_mcu_dev *mcu)
+{
+	return atomic_dec_return(&mcu->shared_rsc_count);
+}
+
+void is_vender_mcu_power_on(bool use_shared_rsc)
 {
 #if defined(CONFIG_CAMERA_USE_INTERNAL_MCU)
 	struct is_core *core = NULL;
 	struct ois_mcu_dev *mcu = NULL;
+	int active_count = 0;
 
 	core = (struct is_core *)dev_get_drvdata(is_dev);
 	if (!core->mcu)
 		return;
 
 	mcu = core->mcu;
+
+	if (use_shared_rsc) {
+		active_count = acquire_shared_rsc(mcu);
+		mcu->current_rsc_count = active_count;
+		if (active_count != MCU_SHARED_SRC_ON_COUNT) {
+			info_mcu("%s: mcu is already on. active count = %d\n", __func__, active_count);
+			return;
+		}
+	}
+
+	ois_mcu_power_ctrl(mcu, 0x1);
+	ois_mcu_load_binary(mcu);
+	ois_mcu_core_ctrl(mcu, 0x1);
+	if (!use_shared_rsc)
+		ois_mcu_device_ctrl(mcu);
+
+	info_mcu("%s: mcu on.\n", __func__);
+#endif
+}
+
+void is_vender_mcu_power_off(bool use_shared_rsc)
+{
+#if defined(CONFIG_CAMERA_USE_INTERNAL_MCU)
+	struct is_core *core = NULL;
+	struct ois_mcu_dev *mcu = NULL;
+	int active_count = 0;
+
+	core = (struct is_core *)dev_get_drvdata(is_dev);
+	if (!core->mcu)
+		return;
+
+	mcu = core->mcu;
+
+	if (use_shared_rsc) {
+		active_count = release_shared_rsc(mcu);
+		mcu->current_rsc_count = active_count;
+		if (active_count != MCU_SHARED_SRC_OFF_COUNT) {
+			info_mcu("%s: mcu is still on use. active count = %d\n", __func__, active_count);
+			return;
+		}
+	}
+
 #if 0 //For debug
 	ois_mcu_dump(mcu, 0);
 	ois_mcu_dump(mcu, 1);
 #endif
+	//ois_mcu_core_ctrl(mcu, 0x0); //TEMP_2020 S.LSI guide.
 	ois_mcu_power_ctrl(mcu, 0x0);
+	info_mcu("%s: mcu off.\n", __func__);
 #endif
-	info("%s: done\n", __func__);
+}
+
+int is_vendor_shaking_gpio_on(struct is_vender *vender)
+{
+	int ret = 0;
+	struct exynos_platform_is_module *module_pdata;
+	struct is_module_enum *module_rear = NULL;
+	struct is_core *core = NULL;
+	struct is_device_sensor *device = NULL;
+	struct is_device_sensor *device2 = NULL;
+	int i = 0;
+
+	info("%s E\n", __func__);
+
+	mutex_lock(&g_shaking_mutex);
+
+	if (check_shaking_noise) {
+		mutex_unlock(&g_shaking_mutex);
+		return ret;
+	}
+
+	core = container_of(vender, struct is_core, vender);
+	device = &core->sensor[SENSOR_POSITION_REAR];
+	device2 = &core->sensor[SENSOR_POSITION_REAR2];
+
+	for (i = 0; i < IS_SENSOR_COUNT; i++) {
+		is_search_sensor_module_with_position(&core->sensor[i], SENSOR_POSITION_REAR, &module_rear);
+		if (module_rear)
+			break;
+	}
+
+	if (!module_rear) {
+		err("%s: Could not find sensor id.", __func__);
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	module_pdata = module_rear->pdata;
+
+	if (!module_pdata->gpio_cfg) {
+		err("%s gpio_cfg is NULL", SENSOR_SCENARIO_NORMAL);
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	ret = module_pdata->gpio_cfg(module_rear, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_ON);
+	if (ret) {
+		err("gpio_cfg is fail(%d)", ret);
+		goto p_err;
+	}
+
+	is_af_move_lens(core);
+
+#if defined(CONFIG_CAMERA_USE_INTERNAL_MCU) && defined(USE_TELE_OIS_AF_COMMON_INTERFACE)
+	if (device2->mcu->mcu_ctrl_actuator) {
+		is_vender_mcu_power_on(false);
+		is_ois_init_rear2(core);
+		ret = CALL_OISOPS(device2->mcu->ois, ois_set_af_active, device2->subdev_mcu, 1);
+		if (ret < 0)
+			err("ois set af active fail");
+	}
+#else
+	is_af_move_lens_rear2(core);
+#endif
+
+p_err:
+	check_shaking_noise = true;
+	mutex_unlock(&g_shaking_mutex);
+	info("%s X\n", __func__);
+
+	return ret;
+}
+
+int is_vendor_shaking_gpio_off(struct is_vender *vender)
+{
+	int ret = 0;
+	struct exynos_platform_is_module *module_pdata;
+	struct is_module_enum *module_rear = NULL;
+	struct is_device_sensor *device = NULL;
+	struct is_device_sensor *device2 = NULL;
+	struct is_core *core = NULL;
+	int i = 0;
+
+	info("%s E\n", __func__);
+
+	mutex_lock(&g_shaking_mutex);
+
+	if (!check_shaking_noise) {
+		mutex_unlock(&g_shaking_mutex);
+		return ret;
+	}
+
+	core = container_of(vender, struct is_core, vender);
+	device = &core->sensor[SENSOR_POSITION_REAR];
+	device2 = &core->sensor[SENSOR_POSITION_REAR2];
+
+	for (i = 0; i < IS_SENSOR_COUNT; i++) {
+		is_search_sensor_module_with_position(&core->sensor[i], SENSOR_POSITION_REAR, &module_rear);
+		if (module_rear)
+			break;
+	}
+
+	if (!module_rear) {
+		err("%s: Could not find sensor id.", __func__);
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	module_pdata = module_rear->pdata;
+
+	if (!module_pdata->gpio_cfg) {
+		err("gpio_cfg is NULL");
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+#if defined(CONFIG_CAMERA_USE_INTERNAL_MCU) && defined(USE_TELE_OIS_AF_COMMON_INTERFACE)
+	if (device2->mcu->mcu_ctrl_actuator) {
+		ret = CALL_OISOPS(device2->mcu->ois, ois_set_af_active, device2->subdev_mcu, 0);
+		if (ret < 0)
+			err("ois set af active fail");
+	}
+	is_vender_mcu_power_off(false);
+#endif
+
+	ret = module_pdata->gpio_cfg(module_rear, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_OFF);
+	if (ret) {
+		err("gpio_cfg is fail(%d)", ret);
+		goto p_err;
+	}
+
+p_err:
+	check_shaking_noise = false;
+	mutex_unlock(&g_shaking_mutex);
+	info("%s X\n", __func__);
+
+	return ret;
+}
+
+void is_vender_resource_get(struct is_vender *vender, u32 rsc_type)
+{
+	if (is_vender_check_resource_type(rsc_type))
+		is_vender_mcu_power_on(true);
+}
+
+void is_vender_resource_put(struct is_vender *vender, u32 rsc_type)
+{
+	if (is_vender_check_resource_type(rsc_type))
+		is_vender_mcu_power_off(true);
+}
+
+long  is_vender_read_efs(char *efs_path, u8 *buf, int buflen)
+{
+	struct file *fp = NULL;
+	mm_segment_t old_fs;
+	char filename[100];
+	long ret = 0, fsize = 0, nread = 0;
+
+	info("%s  start", __func__);
+
+	mutex_lock(&g_efs_mutex);
+
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+
+	snprintf(filename, sizeof(filename), "%s", efs_path);
+
+	fp = filp_open(filename, O_RDONLY, 0);
+	if (IS_ERR_OR_NULL(fp)) {
+		set_fs(old_fs);
+		mutex_unlock(&g_efs_mutex);
+		err("file open  fail(%ld)\n", fsize);
+		return 0;
+	}
+
+	fsize = fp->f_path.dentry->d_inode->i_size;
+	if (fsize <= 0 || fsize > buflen) {
+		err(" __get_file_size fail(%ld)\n", fsize);
+		ret = 0;
+		goto p_err;
+	}
+
+	nread = vfs_read(fp, (char __user *)buf, fsize, &fp->f_pos);
+	if (nread != fsize) {
+		err("kernel_read was failed(%ld != %ld)n",
+			nread, fsize);
+		ret = 0;
+		goto p_err;
+	}
+
+	ret = fsize;
+
+p_err:
+	filp_close(fp, current->files);
+
+	set_fs(old_fs);
+
+	mutex_unlock(&g_efs_mutex);
+
+	info("%s  end, size = %ld", __func__, ret);
+
+	return ret;
 }
 
 bool is_vender_wdr_mode_on(void *cis_data)
 {
-#if defined(CONFIG_CAMERA_PDP)
+	if (is_vender_aeb_mode_on(cis_data))
+		return false;
+
 	return (((cis_shared_data *)cis_data)->is_data.wdr_mode != CAMERA_WDR_OFF ? true : false);
-#else
-	return false;
-#endif
+}
+
+bool is_vender_aeb_mode_on(void *cis_data)
+{
+	return (((cis_shared_data *)cis_data)->is_data.sensor_hdr_mode == SENSOR_HDR_MODE_2AEB ? true : false);
 }
 
 bool is_vender_enable_wdr(void *cis_data)
@@ -2185,4 +2673,24 @@ int is_vender_remove_dump_fw_file(void)
 	remove_dump_fw_file();
 
 	return 0;
+}
+
+#ifdef USE_TOF_AF
+void is_vender_store_af(struct is_vender *vender, struct tof_data_t *data){
+	struct is_vender_specific *specific;
+	specific = vender->private_data;
+
+	mutex_lock(&specific->tof_af_lock);
+	copy_from_user(&specific->tof_af_data, data, sizeof(struct tof_data_t));
+	mutex_unlock(&specific->tof_af_lock);
+	return;
+}
+#endif
+
+void is_vendor_store_tof_info(struct is_vender *vender, struct tof_info_t *info){
+	struct is_vender_specific *specific;
+	specific = vender->private_data;
+
+	copy_from_user(&specific->tof_info, info, sizeof(struct tof_info_t));
+	return;
 }

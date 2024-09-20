@@ -427,6 +427,7 @@ int is_sensor_ctl_update_gains(struct is_device_sensor *device,
 	u32 sensitivity = 0;
 	camera2_sensor_ctl_t *sensor_ctrl = NULL;
 	camera2_sensor_uctl_t *sensor_uctrl = NULL;
+	u32 loop_cnt, i;
 
 	FIMC_BUG(!device);
 	FIMC_BUG(!module_ctl);
@@ -457,9 +458,10 @@ int is_sensor_ctl_update_gains(struct is_device_sensor *device,
 			err("[SSDRV] Invalid sensitivity\n");
 	}
 
+	loop_cnt = sensor_peri->cis.cis_data->num_of_frame * SENSOR_DM_UPDATE_MARGIN;
+
 	if (adj_again.val != 0 && adj_dgain.val != 0 && sensitivity != 0) {
 		sensor_peri->cis.cur_sensor_uctrl.sensitivity = sensitivity;
-		sensor_peri->cis.expecting_sensor_dm[dm_index[0]].sensitivity = sensitivity;
 
 		sensor_peri->cis.cur_sensor_uctrl.analogGain = adj_again.short_val;
 		sensor_peri->cis.cur_sensor_uctrl.digitalGain = adj_dgain.short_val;
@@ -470,42 +472,89 @@ int is_sensor_ctl_update_gains(struct is_device_sensor *device,
 		sensor_peri->cis.cur_sensor_uctrl.midAnalogGain = adj_again.middle_val;
 		sensor_peri->cis.cur_sensor_uctrl.midDigitalGain = adj_dgain.middle_val;
 
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].analogGain
-									= adj_again.short_val;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].digitalGain
-									= adj_dgain.short_val;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].longAnalogGain
-									= adj_again.long_val;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].longDigitalGain
-									= adj_dgain.long_val;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].shortAnalogGain
-									= adj_again.short_val;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].shortDigitalGain
-									= adj_dgain.short_val;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].midAnalogGain
-									= adj_again.middle_val;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].midDigitalGain
-									= adj_dgain.middle_val;
+		for (i = 0; i < loop_cnt; i++) {
+			sensor_peri->cis.expecting_sensor_dm[(dm_index[0] + i) % EXPECT_DM_NUM].sensitivity
+				= sensitivity;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].analogGain
+				= adj_again.short_val;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].digitalGain
+				= adj_dgain.short_val;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].longAnalogGain
+				= adj_again.long_val;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].longDigitalGain
+				= adj_dgain.long_val;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].shortAnalogGain
+				= adj_again.short_val;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].shortDigitalGain
+				= adj_dgain.short_val;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].midAnalogGain
+				= adj_again.middle_val;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].midDigitalGain
+				= adj_dgain.middle_val;
+		}
 	} else {
-		sensor_peri->cis.expecting_sensor_dm[dm_index[0]].sensitivity =
-			sensor_peri->cis.expecting_sensor_dm[dm_index[1]].sensitivity;
+		for (i = 0; i < loop_cnt; i++) {
+			sensor_peri->cis.expecting_sensor_dm[(dm_index[0] + i) % EXPECT_DM_NUM].sensitivity =
+				sensor_peri->cis.expecting_sensor_dm[dm_index[1]].sensitivity;
 
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].analogGain =
-			sensor_peri->cis.expecting_sensor_udm[dm_index[1]].analogGain;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].digitalGain =
-			sensor_peri->cis.expecting_sensor_udm[dm_index[1]].digitalGain;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].longAnalogGain =
-			sensor_peri->cis.expecting_sensor_udm[dm_index[1]].longAnalogGain;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].longDigitalGain =
-			sensor_peri->cis.expecting_sensor_udm[dm_index[1]].longDigitalGain;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].shortAnalogGain =
-			sensor_peri->cis.expecting_sensor_udm[dm_index[1]].shortAnalogGain;
-		sensor_peri->cis.expecting_sensor_udm[dm_index[0]].shortDigitalGain =
-			sensor_peri->cis.expecting_sensor_udm[dm_index[1]].shortDigitalGain;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].analogGain =
+				sensor_peri->cis.expecting_sensor_udm[dm_index[1]].analogGain;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].digitalGain =
+				sensor_peri->cis.expecting_sensor_udm[dm_index[1]].digitalGain;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].longAnalogGain =
+				sensor_peri->cis.expecting_sensor_udm[dm_index[1]].longAnalogGain;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].longDigitalGain =
+				sensor_peri->cis.expecting_sensor_udm[dm_index[1]].longDigitalGain;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].shortAnalogGain =
+				sensor_peri->cis.expecting_sensor_udm[dm_index[1]].shortAnalogGain;
+			sensor_peri->cis.expecting_sensor_udm[(dm_index[0] + i) % EXPECT_DM_NUM].shortDigitalGain =
+				sensor_peri->cis.expecting_sensor_udm[dm_index[1]].shortDigitalGain;
+		}
 	}
 p_err:
 	return ret;
 }
+
+#ifdef USE_OIS_HALL_DATA_FOR_VDIS
+int is_sensor_ctl_update_hall_data(struct is_device_sensor *device,
+				struct is_sensor_ctl *module_ctl,
+				u32 *dm_index, struct is_ois_hall_data *halldata)
+{
+	int ret = 0;
+	struct is_module_enum *module = NULL;
+	struct is_device_sensor_peri *sensor_peri = NULL;
+
+	FIMC_BUG(!device);
+	FIMC_BUG(!dm_index);
+
+	module = (struct is_module_enum *)v4l2_get_subdevdata(device->subdev_module);
+	if (unlikely(!module)) {
+		err("%s, module in is NULL", __func__);
+		module = NULL;
+		goto p_err;
+	}
+
+	sensor_peri = (struct is_device_sensor_peri *)module->private_data;
+
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.readTimeStamp = halldata->readTimeStamp;
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.counter = halldata->counter;
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.X_AngVel[0] = halldata->X_AngVel[0];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.Y_AngVel[0] = halldata->Y_AngVel[0];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.Z_AngVel[0] = halldata->Z_AngVel[0];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.X_AngVel[1]  = halldata->X_AngVel[1];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.Y_AngVel[1] = halldata->Y_AngVel[1];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.Z_AngVel[1] = halldata->Z_AngVel[1];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.X_AngVel[2]  = halldata->X_AngVel[2];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.Y_AngVel[2] = halldata->Y_AngVel[2];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.Z_AngVel[2] = halldata->Z_AngVel[2];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.X_AngVel[3]  = halldata->X_AngVel[3];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.Y_AngVel[3] = halldata->Y_AngVel[3];
+	sensor_peri->cis.expecting_aa_dm[dm_index[2]].vendor_oisHallData.Z_AngVel[3] = halldata->Z_AngVel[3];
+
+p_err:
+	return ret;
+}
+#endif
 
 static int is_sensor_ctl_adjust_exposure(struct is_device_sensor *device,
 				struct is_sensor_ctl *module_ctl,
@@ -585,7 +634,7 @@ int is_sensor_ctl_update_exposure(struct is_device_sensor *device,
 	FIMC_BUG(!module);
 	sensor_peri = (struct is_device_sensor_peri *)module->private_data;
 
-	loop_cnt = sensor_peri->cis.cis_data->num_of_frame;
+	loop_cnt = sensor_peri->cis.cis_data->num_of_frame * SENSOR_DM_UPDATE_MARGIN;
 
 	if (expo.long_val != 0 && expo.short_val != 0) {
 		sensor_peri->cis.cur_sensor_uctrl.exposureTime = is_sensor_convert_us_to_ns(expo.short_val);
@@ -620,44 +669,26 @@ p_err:
 	return ret;
 }
 
-static int is_sensor_ctl_set_totalgain(struct is_device_sensor *device,
-					struct ae_param expo,
-					struct ae_param adj_again,
-					struct ae_param adj_dgain)
-{
-	int ret = 0;
-
-	FIMC_BUG(!device);
-
-	if (expo.val == 0 || adj_again.val == 0 || adj_dgain.val == 0) {
-		dbg_sensor(1, "[%s] Skip set Total gain (%d)\n",
-				__func__, expo, adj_again.val, adj_dgain.val);
-		return ret;
-	}
-
-	/* Set Totalgain */
-	ret = is_sensor_peri_s_totalgain(device, expo, adj_again, adj_dgain);
-	if (ret < 0)
-		err("[%s] SET Totalgain fail\n", __func__);
-
-	return ret;
-}
-
 void is_sensor_ctl_frame_evt(struct is_device_sensor *device)
 {
 	int ret = 0;
 	u32 vsync_count = 0;
 	u32 applied_frame_number = 0;
 	u32 uctl_frame_index = 0;
-	u32 dm_index[2];
+	u32 dm_index[3];
 	ae_setting applied_ae_setting;
 	u32 frame_duration = 0;
 	struct ae_param expo, adj_again, adj_dgain;
 	struct is_module_enum *module = NULL;
 	struct is_device_sensor_peri *sensor_peri = NULL;
 	struct is_sensor_ctl *module_ctl = NULL;
-	struct is_cis_ops *cis_ops = NULL;
 	cis_shared_data *cis_data = NULL;
+#ifdef USE_OIS_HALL_DATA_FOR_VDIS
+	u32 hashkey;
+	uint64_t timestamp = 0;
+	struct is_ois_hall_data hall_data;
+	u32 cur_frame_duration = 0;
+#endif
 
 	camera2_sensor_ctl_t *sensor_ctrl = NULL;
 	camera2_sensor_uctl_t *sensor_uctrl = NULL;
@@ -686,9 +717,11 @@ void is_sensor_ctl_frame_evt(struct is_device_sensor *device)
 	uctl_frame_index = applied_frame_number % CAM2P0_UCTL_LIST_SIZE;
 	/* dm_index[0] : index for update dm
 	 * dm_index[1] : previous updated index for error case
+	 * dm_index[2] : index for using ois hall data
 	 */
 	dm_index[0] = (applied_frame_number + 2) % EXPECT_DM_NUM;
 	dm_index[1] = (applied_frame_number + 1) % EXPECT_DM_NUM;
+	dm_index[2] = (applied_frame_number + 0) % EXPECT_DM_NUM;
 
 	module_ctl = &sensor_peri->cis.sensor_ctls[uctl_frame_index];
 	cis_data = sensor_peri->cis.cis_data;
@@ -711,8 +744,6 @@ void is_sensor_ctl_frame_evt(struct is_device_sensor *device)
 			dbg_sensor(1, "Sen frame number is not match ctl/sensor(%d/%d)\n",
 					module_ctl->ctl_frame_number, module_ctl->sensor_frame_number);
 		}
-
-		is_sensor_peri_s_group_param_hold(device, true);
 
 		/* update cis_date */
 		is_sensor_ctl_update_cis_data(cis_data, sensor_uctrl);
@@ -752,53 +783,28 @@ void is_sensor_ctl_frame_evt(struct is_device_sensor *device)
 			err("[%s] frame number(%d) set frame duration fail\n", __func__, applied_frame_number);
 		}
 
-		cis_ops = (struct is_cis_ops *)sensor_peri->cis.cis_ops;
-		if(cis_ops->cis_set_exposure_time
-			&& cis_ops->cis_set_analog_gain
-			&& cis_ops->cis_set_digital_gain) {
+		/* 4. update exposureTime */
+		ret = is_sensor_ctl_set_exposure(device, expo);
+		if (ret < 0)
+			err("[%s] frame number(%d) set exposure fail\n", __func__, applied_frame_number);
+		ret = is_sensor_ctl_update_exposure(device, dm_index, expo);
+		if (ret < 0)
+			err("[%s] frame number(%d) update exposure fail\n", __func__, applied_frame_number);
 
-			/* 4. update exposureTime */
-			ret = is_sensor_ctl_set_exposure(device, expo);
-			if (ret < 0)
-				err("[%s] frame number(%d) set exposure fail\n", __func__, applied_frame_number);
-			ret = is_sensor_ctl_update_exposure(device, dm_index, expo);
-			if (ret < 0)
-				err("[%s] frame number(%d) update exposure fail\n", __func__, applied_frame_number);
-
-			/* 5. set analog & digital gains */
-			ret = is_sensor_ctl_adjust_gains(device, &applied_ae_setting, &adj_again, &adj_dgain);
-			if (ret < 0) {
-				err("[%s] frame number(%d) adjust gains fail\n", __func__, applied_frame_number);
-				goto p_err;
-			}
-
-			ret = is_sensor_ctl_set_gains(device, adj_again, adj_dgain);
-			if (ret < 0)
-				err("[%s] frame number(%d) set gains fail\n", __func__, applied_frame_number);
-
-			ret = is_sensor_ctl_update_gains(device, module_ctl, dm_index, adj_again, adj_dgain);
-			if (ret < 0)
-				err("[%s] frame number(%d) update gains fail\n", __func__, applied_frame_number);
-		}else {
-			/* 4. Set Total Gain : ExposureTime, Analog & Digital gain */
-			ret = is_sensor_ctl_adjust_gains(device, &applied_ae_setting, &adj_again, &adj_dgain);
-			if (ret < 0) {
-				err("[%s] frame number(%d) adjust gains fail\n", __func__, applied_frame_number);
-				goto p_err;
-			}
-			ret =  is_sensor_ctl_set_totalgain(device, expo, adj_again, adj_dgain);
-			if (ret < 0)
-				err("[%s] frame number(%d) set Total gain fail\n", __func__, applied_frame_number);
-
-			/* 5. Update Total Gain : ExposureTime, Analog & Digital gain */
-			ret = is_sensor_ctl_update_exposure(device, dm_index, expo);
-			if (ret < 0)
-				err("[%s] frame number(%d) update exposure fail\n", __func__, applied_frame_number);
-
-			ret = is_sensor_ctl_update_gains(device, module_ctl, dm_index, adj_again, adj_dgain);
-			if (ret < 0)
-				err("[%s] frame number(%d) update gains fail\n", __func__, applied_frame_number);
+		/* 5. set analog & digital gains */
+		ret = is_sensor_ctl_adjust_gains(device, &applied_ae_setting, &adj_again, &adj_dgain);
+		if (ret < 0) {
+			err("[%s] frame number(%d) adjust gains fail\n", __func__, applied_frame_number);
+			goto p_err;
 		}
+
+		ret = is_sensor_ctl_set_gains(device, adj_again, adj_dgain);
+		if (ret < 0)
+			err("[%s] frame number(%d) set gains fail\n", __func__, applied_frame_number);
+
+		ret = is_sensor_ctl_update_gains(device, module_ctl, dm_index, adj_again, adj_dgain);
+		if (ret < 0)
+			err("[%s] frame number(%d) update gains fail\n", __func__, applied_frame_number);
 
 		if (module_ctl->update_wb_gains) {
 			ret = is_sensor_peri_s_wb_gains(device, module_ctl->wb_gains);
@@ -808,10 +814,12 @@ void is_sensor_ctl_frame_evt(struct is_device_sensor *device)
 			module_ctl->update_wb_gains = false;
 		}
 
-		is_sensor_peri_s_group_param_hold(device, false);
+		ret = is_sensor_peri_s_test_pattern(device, sensor_ctrl);
+		if (ret < 0)
+			err("[%s] frame number(%d) set test pattern fail\n", __func__, applied_frame_number);
 
-		if (module_ctl->update_3hdr_stat || module_ctl->update_roi
-			|| module_ctl->update_tone || module_ctl->update_ev) {
+		if (module_ctl->update_3hdr_stat || module_ctl->update_roi ||
+			module_ctl->update_tone || module_ctl->update_ev) {
 			ret = is_sensor_peri_s_sensor_stats(device, true, module_ctl, NULL);
 			if (ret < 0)
 				err("[%s] frame number(%d) set exposure fail\n", __func__, applied_frame_number);
@@ -852,18 +860,38 @@ void is_sensor_ctl_frame_evt(struct is_device_sensor *device)
 
 	/* Warning! Aperture mode should be set before setting ois mode */
 	if (sensor_peri->mcu && sensor_peri->mcu->ois) {
-		ret = CALL_OISOPS(sensor_peri->mcu->ois, ois_set_mode, sensor_peri->subdev_mcu, sensor_peri->mcu->ois->ois_mode);
-		if (ret < 0) {
-			err("[SEN:%d] v4l2_subdev_call(ois_mode_change, mode:%d) is fail(%d)",
-				module->sensor_id, sensor_peri->mcu->ois->ois_mode, ret);
-			goto p_err;
-		}
+		if (CALL_OISOPS(sensor_peri->mcu->ois, ois_get_active)) {
+			ret = CALL_OISOPS(sensor_peri->mcu->ois, ois_set_mode, sensor_peri->subdev_mcu, sensor_peri->mcu->ois->ois_mode);
+			if (ret < 0) {
+				err("[SEN:%d] v4l2_subdev_call(ois_mode_change, mode:%d) is fail(%d)",
+					module->sensor_id, sensor_peri->mcu->ois->ois_mode, ret);
+				goto p_err;
+			}
 
-		ret = CALL_OISOPS(sensor_peri->mcu->ois, ois_set_coef, sensor_peri->subdev_mcu, sensor_peri->mcu->ois->coef);
-		if (ret < 0) {
-			err("[SEN:%d] v4l2_subdev_call(ois_set_coef, coef:%d) is fail(%d)",
-				module->sensor_id, sensor_peri->mcu->ois->coef, ret);
-			goto p_err;
+			ret = CALL_OISOPS(sensor_peri->mcu->ois, ois_set_coef, sensor_peri->subdev_mcu, sensor_peri->mcu->ois->coef);
+			if (ret < 0) {
+				err("[SEN:%d] v4l2_subdev_call(ois_set_coef, coef:%d) is fail(%d)",
+					module->sensor_id, sensor_peri->mcu->ois->coef, ret);
+				goto p_err;
+			}
+
+#ifdef USE_OIS_HALL_DATA_FOR_VDIS
+			cur_frame_duration = is_sensor_convert_ns_to_us(sensor_peri->cis.cur_sensor_uctrl.frameDuration);
+			/* in case of under 60fps, enable ois hall data */
+			if (cur_frame_duration >= 16666) {
+				memset(&hall_data, 0, sizeof(hall_data));
+				ret = CALL_OISOPS(sensor_peri->mcu->ois, ois_get_hall_data, sensor_peri->subdev_mcu, &hall_data);
+				if (ret < 0) {
+					err("[SEN:%d] v4l2_subdev_call(ois_get_hall_data) is fail(%d)", ret);
+					goto p_err;
+				}
+
+				hashkey = module_ctl->sensor_frame_number % IS_TIMESTAMP_HASH_KEY;
+				timestamp = device->timestampboot[hashkey];
+				hall_data.readTimeStamp = timestamp;
+				is_sensor_ctl_update_hall_data(device, module_ctl, dm_index, &hall_data);
+			}
+#endif
 		}
 	}
 

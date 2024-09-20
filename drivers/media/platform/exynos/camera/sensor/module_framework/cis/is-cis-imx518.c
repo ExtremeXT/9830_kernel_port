@@ -36,12 +36,12 @@
 #include "is-device-sensor-peri.h"
 #include "is-resourcemgr.h"
 #include "is-dt.h"
-#include "is-cis-imx516.h"
-#include "is-cis-imx516-setA.h"
+#include "is-cis-imx518.h"
+#include "is-cis-imx518-setA.h"
 #include "is-vender-specific.h"
 #include "is-helper-i2c.h"
 
-#define SENSOR_NAME "IMX516"
+#define SENSOR_NAME "IMX518"
 
 #define SENSOR_EXTAREA_INTG_0_A_0 0x2124
 #define SENSOR_EXTAREA_INTG_0_A_1 0x2125
@@ -63,6 +63,7 @@
 
 #define SENSOR_DEPTH_MAP_NUMBER 0x151C
 #define SENSOR_FPS_30		33333333
+#define SENSOR_FPS_24		41666666
 #define SENSOR_FPS_20		50000000
 #define SENSOR_FPS_15		66666666
 #define SENSOR_FPS_10		100000000
@@ -72,42 +73,37 @@
 
 static const struct v4l2_subdev_ops subdev_ops;
 
-static const u32 *sensor_imx516_global;
-static u32 sensor_imx516_global_size;
-static const u32 ***sensor_imx516_setfiles;
-static const u32 **sensor_imx516_uid;
-static const u32 *sensor_imx516_max_uid_num;
-static const u32 **sensor_imx516_setfile_sizes;
-static const u16 ***sensor_imx516_setfiles_fps;
+static const u32 *sensor_imx518_global;
+static u32 sensor_imx518_global_size;
+static const u32 ***sensor_imx518_setfiles;
+static const u32 **sensor_imx518_laser_setting;
+static const u32 *sensor_imx518_mode_id;
+static u32 sensor_imx518_max_mode_id_num;
+static const u32 **sensor_imx518_setfile_sizes;
+static const u32 *sensor_imx518_laser_setting_sizes;
+static const u16 ***sensor_imx518_setfiles_fps;
 
-int sensor_imx516_mode = -1;
-u16 sensor_imx516_HMAX;
-u32 sensor_imx516_frame_duration;
+int sensor_imx518_mode = -1;
+u16 sensor_imx518_HMAX;
+u32 sensor_imx518_frame_duration;
+int sensor_imx518_laser_mode = LASER_MODE_NORMAL;
 
-#define REAR_TX_DEFAULT_FREQ 101
+#ifndef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
+#define REAR_TX_DEFAULT_FREQ 100 /* MHz */
+#else
+/* because of solution pre-set, initial value need to be 0*/
+#define REAR_TX_DEFAULT_FREQ 0 /* MHz */
+static const struct cam_tof_sensor_mode *sensor_imx518_tx_freq_sensor_mode;
+u32 sensor_imx518_rear_tx_freq = REAR_TX_DEFAULT_FREQ;
+u32 sensor_imx518_rear_tx_freq_fixed_index = -1;
 
-#ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
-static const struct cam_tof_sensor_mode **sensor_imx516_tx_freq_sensor_mode;
-static const u32 *sensor_imx516_tx_freq_sensor_mode_size;
-static const int **sensor_imx516_verify_sensor_mode;
-static const int *sensor_imx516_verify_sensor_mode_size;
-u32 sensor_imx516_rear_tx_freq = REAR_TX_DEFAULT_FREQ;
+int sensor_imx518_cis_get_mode_id_index(struct is_cis *cis, u32 mode, u32 *mode_id_index);
 
-static int sensor_imx516_cis_set_tx_clock(struct v4l2_subdev *subdev)
+static int sensor_imx518_cis_set_tx_clock_init(struct v4l2_subdev *subdev)
 {
 	struct is_cis *cis = NULL;
-	struct is_device_sensor *device;
 	const struct cam_tof_sensor_mode *cur_tx_sensor_mode;
-	int found = -1, i = 0;
-	u32 sensor_uid = 0;
-	u32 uid_index = 0;
-	int ret = 0;
-
-	device = (struct is_device_sensor *)v4l2_get_subdev_hostdata(subdev);
-	if (device == NULL) {
-		err("device is NULL");
-		return -1;
-	}
+	int found = -1;
 
 	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
 	if (cis == NULL) {
@@ -115,12 +111,7 @@ static int sensor_imx516_cis_set_tx_clock(struct v4l2_subdev *subdev)
 		return -1;
 	}
 
-	ret = sensor_imx516_cis_get_uid_index(cis, sensor_imx516_mode, &uid_index);
-	if (ret < 0) {
-		return -1;
-	}
-
-	cur_tx_sensor_mode = &sensor_imx516_tx_freq_sensor_mode[sensor_imx516_mode][uid_index];
+	cur_tx_sensor_mode = &sensor_imx518_tx_freq_sensor_mode[0];
 
 	if (cur_tx_sensor_mode->mipi_channel_size == 0 ||
 		cur_tx_sensor_mode->mipi_channel == NULL) {
@@ -128,16 +119,57 @@ static int sensor_imx516_cis_set_tx_clock(struct v4l2_subdev *subdev)
 		return -1;
 	}
 
-	found = is_vendor_select_mipi_by_rf_channel(cur_tx_sensor_mode->mipi_channel,
-				cur_tx_sensor_mode->mipi_channel_size);
+	if(sensor_imx518_rear_tx_freq_fixed_index != -1) {
+		found = sensor_imx518_rear_tx_freq_fixed_index;
+	} else {
+		found = is_vendor_select_mipi_by_rf_channel(cur_tx_sensor_mode->mipi_channel,
+					cur_tx_sensor_mode->mipi_channel_size);
+	}
+
+	if (found != -1) {
+		if (found < cur_tx_sensor_mode->sensor_setting_size) {
+			sensor_imx518_rear_tx_freq = sensor_imx518_supported_tx_freq[found];
+			if(sensor_imx518_rear_tx_freq_fixed_index != -1)
+				info("%s - tx setting fixed to %d\n", __func__, sensor_imx518_rear_tx_freq);
+			else
+				info("%s - tx setting %d freq %d\n", __func__, found, sensor_imx518_rear_tx_freq);
+		} else {
+			err("sensor setting size is out of bound");
+		}
+	}
+
+	return 0;
+}
+
+static int sensor_imx518_cis_set_tx_clock_apply(struct v4l2_subdev *subdev)
+{
+	const struct cam_tof_sensor_mode *cur_tx_sensor_mode;
+	int i, found = -1, tx_freq_count = ARRAY_SIZE(sensor_imx518_supported_tx_freq);
+
+	cur_tx_sensor_mode = &sensor_imx518_tx_freq_sensor_mode[sensor_imx518_mode];
+
+	if (cur_tx_sensor_mode->mipi_channel_size == 0 ||
+		cur_tx_sensor_mode->mipi_channel == NULL) {
+		dbg_sensor(1, "skip select mipi channel\n");
+		return -1;
+	}
+
+	for(i = 0; i < tx_freq_count; i++){
+		if (sensor_imx518_rear_tx_freq == sensor_imx518_supported_tx_freq[i]){
+			found = i;
+			break;
+		}
+	}
 
 	if (found != -1) {
 		if (found < cur_tx_sensor_mode->sensor_setting_size) {
 			sensor_cis_set_registers(subdev,
 				cur_tx_sensor_mode->sensor_setting[found].setting,
 				cur_tx_sensor_mode->sensor_setting[found].setting_size);
-			sensor_imx516_rear_tx_freq = cur_tx_sensor_mode->sensor_setting[found].tx_freq;
-			info("%s - tx setting %d freq %d\n", __func__, found, sensor_imx516_rear_tx_freq);
+			if(sensor_imx518_rear_tx_freq_fixed_index != -1)
+				info("%s - tx setting fixed to %d\n", __func__, sensor_imx518_rear_tx_freq);
+			else
+				info("%s - tx setting %d freq %d\n", __func__, found, sensor_imx518_rear_tx_freq);
 		} else {
 			err("sensor setting size is out of bound");
 		}
@@ -147,17 +179,17 @@ static int sensor_imx516_cis_set_tx_clock(struct v4l2_subdev *subdev)
 }
 #endif
 
-int sensor_imx516_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 duration);
+int sensor_imx518_cis_set_frame_rate(struct v4l2_subdev *subdev, u32 duration);
 
-int sensor_imx516_cis_get_uid_index(struct is_cis *cis, u32 mode, u32 *uid_index)
+int sensor_imx518_cis_get_mode_id_index(struct is_cis *cis, u32 mode, u32 *mode_id_index)
 {
 	struct is_core *core;
 	struct is_vender_specific *specific = NULL;
 	struct is_device_sensor_peri *sensor_peri = NULL;
-	u32 sensor_uid = 0;
+	u32 sensor_mode_id = 0;
 	int i = 0;
 
-	if (mode >= SENSOR_IMX516_MODE_MAX || mode == -1) {
+	if (mode >= SENSOR_IMX518_MODE_MAX || mode == -1) {
 		err("sensor mode is out of bound (%d)", mode);
 		return -1;
 	}
@@ -172,27 +204,27 @@ int sensor_imx516_cis_get_uid_index(struct is_cis *cis, u32 mode, u32 *uid_index
 
 	specific = core->vender.private_data;
 	if (sensor_peri->module->position == SENSOR_POSITION_REAR_TOF) {
-		sensor_uid = specific->rear_tof_uid[mode];
+		sensor_mode_id = specific->rear_tof_mode_id;
 	} else {  // SENSOR_POSITION_FRONT_TOF
-		sensor_uid = specific->front_tof_uid[mode];
+		sensor_mode_id = specific->front_tof_mode_id;
 	}
 
-	for (i = 0; i < sensor_imx516_max_uid_num[mode]; i++) {
-		if (sensor_uid == sensor_imx516_uid[mode][i]) {
-			*uid_index = i;
+	for (i = 0; i < sensor_imx518_max_mode_id_num; i++) {
+		if (sensor_mode_id == sensor_imx518_mode_id[i]) {
+			*mode_id_index = i;
 			break;
 		}
 	}
 
-	if (i == sensor_imx516_max_uid_num[mode]) {
-		err("sensor_imx516_cis_mode_change can't find uid(uid : %0xd) mode (%d)", sensor_uid, mode);
+	if (i == sensor_imx518_max_mode_id_num) {
+		err("sensor_imx518_cis_mode_change can't find mode_id(mode_id : 0x%x) mode (%d)", sensor_mode_id, mode);
 		return -1;
 	}
 
 	return 0;
 }
 
-int sensor_imx516_cis_check_rev(struct is_cis *cis)
+int sensor_imx518_cis_check_rev(struct is_cis *cis)
 {
 	int ret = 0;
 	u8 rev = 0;
@@ -210,17 +242,10 @@ int sensor_imx516_cis_check_rev(struct is_cis *cis)
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 
-	info("sensor_imx516_cis_check_rev start ");
-	ret = is_sensor_read8(client, 0x0000, &rev);
-	info("sensor_imx516_cis_check_rev 0x0000 %x ", rev);
-	ret = is_sensor_read8(client, 0x0001, &rev);
-	info("sensor_imx516_cis_check_rev 0x0001 %x ", rev);
-	ret = is_sensor_read8(client, 0x0002, &rev);
-	info("sensor_imx516_cis_check_rev 0x0002 %x ", rev);
-	ret = is_sensor_read8(client, 0x0003, &rev);
-	info("sensor_imx516_cis_check_rev 0x0003 %x ", rev);
 	ret = is_sensor_read8(client, 0x0019,&rev);
-	info("sensor_imx516_cis_check_rev 0x0019 %x ", rev);
+	if (ret < 0)
+		ret = is_sensor_read8(client, 0x0019,&rev);
+	info("sensor_imx518_cis_check_rev 0x0019 %x ", rev);
 	if (ret < 0) {
 		err("is_sensor_read8 fail, (ret %d)", ret);
 		ret = -EAGAIN;
@@ -233,14 +258,25 @@ int sensor_imx516_cis_check_rev(struct is_cis *cis)
 }
 
 /* CIS OPS */
-int sensor_imx516_cis_init(struct v4l2_subdev *subdev)
+int sensor_imx518_cis_init(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
 	struct is_cis *cis;
+	struct is_device_sensor_peri *sensor_peri = NULL;
 	cis_setting_info setinfo;
 #ifdef USE_CAMERA_HW_BIG_DATA
 	struct cam_hw_param *hw_param = NULL;
-	struct is_device_sensor_peri *sensor_peri = NULL;
+#endif
+#ifdef TOF_MODULE_CHECK_ID
+	struct is_core *core;
+	struct is_vender_specific *specific;
+	u32 sensor_mode_id;
+
+	core = (struct is_core *)dev_get_drvdata(is_dev);
+	if (!core) {
+		probe_info("core device is not yet probed");
+		return -1;
+	}
 #endif
 
 	setinfo.param = NULL;
@@ -258,28 +294,50 @@ int sensor_imx516_cis_init(struct v4l2_subdev *subdev)
 	FIMC_BUG(!cis->cis_data);
 	memset(cis->cis_data, 0, sizeof(cis_shared_data));
 	cis->rev_flag = false;
+	
+	sensor_peri = container_of(cis, struct is_device_sensor_peri, cis);
+	FIMC_BUG(!sensor_peri);
 
-	ret = sensor_imx516_cis_check_rev(cis);
+#ifdef TOF_MODULE_CHECK_ID
+	specific = core->vender.private_data;
+	if (sensor_peri->module->position == SENSOR_POSITION_REAR_TOF) {
+		sensor_mode_id = specific->rear_tof_mode_id;
+	} else {  // SENSOR_POSITION_FRONT_TOF
+		sensor_mode_id = specific->front_tof_mode_id;
+	}
+
+	if (sensor_mode_id != TOF_MODULE_CHECK_ID) {
+		err("invalid module!(0x%X)", sensor_mode_id);
+		return -1;
+	}
+#endif
+
+	ret = sensor_imx518_cis_check_rev(cis);
 	if (ret < 0) {
 #ifdef USE_CAMERA_HW_BIG_DATA
-		sensor_peri = container_of(cis, struct is_device_sensor_peri, cis);
 		if (sensor_peri)
 			is_sec_get_hw_param(&hw_param, sensor_peri->module->position);
 		if (hw_param)
 			hw_param->i2c_sensor_err_cnt++;
 #endif
-		warn("sensor_imx516_check_rev is fail when cis init");
+		warn("sensor_imx518_check_rev is fail when cis init");
 		cis->rev_flag = true;
 	}
 
 	cis->cis_data->product_name = cis->id;
-	cis->cis_data->cur_width = SENSOR_IMX516_MAX_WIDTH;
-	cis->cis_data->cur_height = SENSOR_IMX516_MAX_HEIGHT;
+	cis->cis_data->cur_width = SENSOR_IMX518_MAX_WIDTH;
+	cis->cis_data->cur_height = SENSOR_IMX518_MAX_HEIGHT;
 	cis->cis_data->low_expo_start = 33000;
 	cis->need_mode_change = false;
-	sensor_imx516_frame_duration = 0;
-	sensor_imx516_mode = -1;
+	cis->cis_data->cur_pattern_mode = SENSOR_TEST_PATTERN_MODE_OFF;
+	sensor_imx518_frame_duration = 0;
+	sensor_imx518_laser_mode = LASER_MODE_NORMAL;
+	sensor_imx518_mode = -1;
 
+#ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
+	sensor_imx518_rear_tx_freq = REAR_TX_DEFAULT_FREQ;
+	sensor_imx518_cis_set_tx_clock_init(subdev);
+#endif
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
@@ -289,7 +347,16 @@ p_err:
 	return ret;
 }
 
-int sensor_imx516_cis_log_status(struct v4l2_subdev *subdev)
+int sensor_imx518_cis_deinit(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+#ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
+	sensor_imx518_rear_tx_freq = REAR_TX_DEFAULT_FREQ;
+#endif
+	return ret;
+}
+
+int sensor_imx518_cis_log_status(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
 	struct is_cis *cis;
@@ -314,7 +381,7 @@ int sensor_imx516_cis_log_status(struct v4l2_subdev *subdev)
 	}
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
-	pr_err("[SEN:DUMP] IMX516 *************************\n");
+	pr_err("[SEN:DUMP] IMX518 *************************\n");
 	is_sensor_read16(client, 0x0001, &data16);
 	pr_err("[SEN:DUMP] manufacturer ID(%x)\n", data16);
 	is_sensor_read8(client, SENSOR_DEPTH_MAP_NUMBER, &data8);
@@ -324,9 +391,9 @@ int sensor_imx516_cis_log_status(struct v4l2_subdev *subdev)
 
 #if 0
 	pr_err("[SEN:DUMP] global \n");
-	sensor_cis_dump_registers(subdev, sensor_imx516_global, sensor_imx516_global_size);
+	sensor_cis_dump_registers(subdev, sensor_imx518_global, sensor_imx518_global_size);
 	pr_err("[SEN:DUMP] mode \n");
-	sensor_cis_dump_registers(subdev, sensor_imx516_setfiles[0], sensor_imx516_setfile_sizes[0]);
+	sensor_cis_dump_registers(subdev, sensor_imx518_setfiles[0], sensor_imx518_setfile_sizes[0]);
 #endif
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
@@ -336,7 +403,7 @@ p_err:
 	return ret;
 }
 
-int sensor_imx516_cis_set_global_setting(struct v4l2_subdev *subdev)
+int sensor_imx518_cis_set_global_setting(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
 	struct is_cis *cis = NULL;
@@ -348,10 +415,10 @@ int sensor_imx516_cis_set_global_setting(struct v4l2_subdev *subdev)
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 	/* setfile global setting is at camera entrance */
-	info("sensor_imx516_cis_set_global_setting");
-	ret = sensor_cis_set_registers(subdev, sensor_imx516_global, sensor_imx516_global_size);
+	info("sensor_imx518_cis_set_global_setting");
+	ret = sensor_cis_set_registers(subdev, sensor_imx518_global, sensor_imx518_global_size);
 	if (ret < 0) {
-		err("sensor_imx516_set_registers fail!!");
+		err("sensor_imx518_set_registers fail!!");
 		goto p_err;
 	}
 
@@ -362,34 +429,34 @@ p_err:
 	return ret;
 }
 
-int sensor_imx516_get_HMAX_value(const u32 *regs, const u32 size)
+int sensor_imx518_get_HMAX_value(const u32 *regs, const u32 size)
 {
 	int i = 0;
 
 	FIMC_BUG(!regs);
 
-	sensor_imx516_HMAX = 0;
+	sensor_imx518_HMAX = 0;
 	for (i = 0; i < size; i += I2C_NEXT) {
 		if (regs[i + I2C_ADDR] == SENSOR_HMAX_UPPER) {
-			sensor_imx516_HMAX |= (regs[i + I2C_DATA] << 8);
+			sensor_imx518_HMAX |= (regs[i + I2C_DATA] << 8);
 		} else if (regs[i + I2C_ADDR] == SENSOR_HMAX_LOWER) {
-			sensor_imx516_HMAX |= regs[i + I2C_DATA];
+			sensor_imx518_HMAX |= regs[i + I2C_DATA];
 			return 0;
 		}
 	}
 	return 0;
 }
 
-int sensor_imx516_cis_mode_change(struct v4l2_subdev *subdev, u32 mode)
+int sensor_imx518_cis_set_laser_control(struct v4l2_subdev *subdev, u32 onoff);
+int sensor_imx518_cis_mode_change(struct v4l2_subdev *subdev, u32 mode)
 {
 	int ret = 0;
 	struct is_core *core;
 	struct is_cis *cis = NULL;
 	struct is_vender_specific *specific = NULL;
-	//int index = 0;
 	struct is_device_sensor_peri *sensor_peri = NULL;
-	u32 sensor_uid = 0;
-	u32 uid_index = 0;
+	u32 sensor_mode_id = 0;
+	u32 mode_id_index = 0;
 
 	FIMC_BUG(!subdev);
 
@@ -397,7 +464,7 @@ int sensor_imx516_cis_mode_change(struct v4l2_subdev *subdev, u32 mode)
 	FIMC_BUG(!cis);
 	FIMC_BUG(!cis->cis_data);
 
-	if (mode >= SENSOR_IMX516_MODE_MAX) {
+	if (mode >= SENSOR_IMX518_MODE_MAX) {
 		err("invalid mode(%d)!!", mode);
 		ret = -EINVAL;
 		return ret;
@@ -408,7 +475,7 @@ int sensor_imx516_cis_mode_change(struct v4l2_subdev *subdev, u32 mode)
 		cis->rev_flag = false;
 		ret = sensor_cis_check_rev(cis);
 		if (ret < 0) {
-			err("sensor_imx516_check_rev is fail");
+			err("sensor_imx518_check_rev is fail");
 			return ret;
 		}
 	}
@@ -424,37 +491,61 @@ int sensor_imx516_cis_mode_change(struct v4l2_subdev *subdev, u32 mode)
 
 	specific = core->vender.private_data;
 	if (sensor_peri->module->position == SENSOR_POSITION_REAR_TOF) {
-#ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
-		sensor_imx516_rear_tx_freq = REAR_TX_DEFAULT_FREQ;
-#endif
-		sensor_uid = specific->rear_tof_uid[mode];
+		sensor_mode_id = specific->rear_tof_mode_id;
 	} else {  // SENSOR_POSITION_FRONT_TOF
-		sensor_uid = specific->front_tof_uid[mode];
+		sensor_mode_id = specific->front_tof_mode_id;
 	}
 
-	ret = sensor_imx516_cis_get_uid_index(cis, mode, &uid_index);
+	ret = sensor_imx518_cis_get_mode_id_index(cis, mode, &mode_id_index);
 	if (ret < 0) {
 		return ret;
 	}
 
-	info("sensor_imx516_cis_mode_change pos %d sensor_uid %x mode %d index %d 0x%x",
-		sensor_peri->module->position, sensor_uid, mode, uid_index, sensor_imx516_uid[mode][uid_index]);
+	info("sensor_imx518_cis_mode_change pos %d sensor_mode_id %x mode %d index %d 0x%x",
+		sensor_peri->module->position, sensor_mode_id, mode, mode_id_index, sensor_imx518_mode_id[mode_id_index]);
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
-	ret = sensor_cis_set_registers(subdev, sensor_imx516_setfiles[mode][uid_index], sensor_imx516_setfile_sizes[mode][uid_index]);
+	ret = sensor_cis_set_registers(subdev, sensor_imx518_setfiles[mode_id_index][mode], sensor_imx518_setfile_sizes[mode_id_index][mode]);
 	if (ret < 0) {
-		err("sensor_imx516_set_registers fail!!");
+		err("sensor_imx518_set_registers fail!!");
+		goto p_err;
+	}
+	/* laser setting */
+	ret = sensor_cis_set_registers(subdev, sensor_imx518_laser_setting[mode_id_index], sensor_imx518_laser_setting_sizes[mode_id_index]);
+
+	if (mode == SENSOR_IMX518_320x480_30FPS) {	/* PD read disble in AF mode */
+		ret |= is_sensor_write8(cis->client, 0x0403, 0x20);	/* Send1_ctrl_devsel */
+		ret |= is_sensor_write8(cis->client, 0x0405, 0x00);	/* Send1_divide */
+		ret |= is_sensor_write8(cis->client, 0x0407, 0x00);	/* Send1_tx_buf_no */
+		ret |= is_sensor_write8(cis->client, 0x0500, 0x02);
+		ret |= is_sensor_write8(cis->client, 0x0501, 0x00);	/* Address of RST_DIS, APC_XEN */
+		ret |= is_sensor_write8(cis->client, 0x0502, 0x1C);	/* To disable APC_check pulse */
+		ret |= is_sensor_write8(cis->client, 0x0401, 0x01);	/* Send1_enable */
+		ret |= is_sensor_write8(cis->client, 0x0400, 0x01);	/* Send1_Trigger */
+		ret |= is_sensor_write8(cis->client, 0x0401, 0x00);	/* Send1_disable */
+	}
+
+	if (ret < 0) {
+		err("sensor_imx518_set_registers fail!!");
 		goto p_err;
 	}
 
-	sensor_imx516_get_HMAX_value(sensor_imx516_setfiles[mode][uid_index], sensor_imx516_setfile_sizes[mode][uid_index]);
-	sensor_imx516_mode = mode;
+	sensor_imx518_get_HMAX_value(sensor_imx518_setfiles[mode_id_index][mode], sensor_imx518_setfile_sizes[mode_id_index][mode]);
+	sensor_imx518_mode = mode;
+
+#ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
+	sensor_imx518_cis_set_tx_clock_apply(subdev);
+#endif
 p_err:
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
+	if (sensor_imx518_laser_mode == LASER_MODE_LIVE_FOCUS) {
+		info("%s - Laser off at LiveFocus entrance",__func__);
+		sensor_imx518_cis_set_laser_control(subdev, false);
+	}
 	return ret;
 }
 
-int sensor_imx516_cis_wait_streamoff(struct v4l2_subdev *subdev)
+int sensor_imx518_cis_wait_streamoff(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
 	struct is_cis *cis;
@@ -491,8 +582,11 @@ int sensor_imx516_cis_wait_streamoff(struct v4l2_subdev *subdev)
 	ret = is_sensor_read8(client, SENSOR_DEPTH_MAP_NUMBER, &sensor_fcount);
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
-	if (ret < 0)
+	if (ret < 0) {
 		err("i2c transfer fail addr(%x), val(%x), ret = %d\n", SENSOR_DEPTH_MAP_NUMBER, sensor_fcount, ret);
+		ret = -EINVAL;
+		goto p_err;
+	}
 
 	/*
 	 * stream on (0x00 ~ 0xFE), stream off (0xFF)
@@ -502,8 +596,11 @@ int sensor_imx516_cis_wait_streamoff(struct v4l2_subdev *subdev)
 		ret = is_sensor_read8(client, SENSOR_DEPTH_MAP_NUMBER, &sensor_fcount);
 		I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
-		if (ret < 0)
+		if (ret < 0) {
 			err("i2c transfer fail addr(%x), val(%x), ret = %d\n", SENSOR_DEPTH_MAP_NUMBER, sensor_fcount, ret);
+			ret = -EINVAL;
+			goto p_err;
+		}
 
 		usleep_range(CIS_STREAM_OFF_WAIT_TIME, CIS_STREAM_OFF_WAIT_TIME);
 		wait_cnt++;
@@ -523,7 +620,7 @@ p_err:
 	return ret;
 }
 
-int sensor_imx516_cis_wait_streamon(struct v4l2_subdev *subdev)
+int sensor_imx518_cis_wait_streamon(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
 	struct is_cis *cis;
@@ -558,8 +655,11 @@ int sensor_imx516_cis_wait_streamon(struct v4l2_subdev *subdev)
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 	ret = is_sensor_read8(client, SENSOR_DEPTH_MAP_NUMBER, &sensor_fcount);
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
-	if (ret < 0)
-	    err("i2c transfer fail addr(%x), val(%x), ret = %d\n", SENSOR_DEPTH_MAP_NUMBER, sensor_fcount, ret);
+	if (ret < 0) {
+		err("i2c transfer fail addr(%x), val(%x), ret = %d\n", SENSOR_DEPTH_MAP_NUMBER, sensor_fcount, ret);
+		ret = -EINVAL;
+		goto p_err;
+	}
 
 	/*
 	 * Read sensor frame counter (sensor_fcount address = 0x0005)
@@ -573,8 +673,11 @@ int sensor_imx516_cis_wait_streamon(struct v4l2_subdev *subdev)
 		ret = is_sensor_read8(client, SENSOR_DEPTH_MAP_NUMBER, &sensor_fcount);
 		I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
-		if (ret < 0)
-		    err("i2c transfer fail addr(%x), val(%x), ret = %d\n", SENSOR_DEPTH_MAP_NUMBER, sensor_fcount, ret);
+		if (ret < 0) {
+			err("i2c transfer fail addr(%x), val(%x), ret = %d\n", SENSOR_DEPTH_MAP_NUMBER, sensor_fcount, ret);
+			ret = -EINVAL;
+			goto p_err;
+		}
 
 		if (wait_cnt >= time_out_cnt) {
 			err("[MOD:D:%d] %s, Don't sensor stream on and time out, wait_limit(%d) > time_out(%d), sensor_fcount(%d)",
@@ -591,7 +694,7 @@ p_err:
 	return ret;
 }
 
-int sensor_imx516_cis_stream_on(struct v4l2_subdev *subdev)
+int sensor_imx518_cis_stream_on(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
 	struct is_cis *cis;
@@ -628,18 +731,13 @@ int sensor_imx516_cis_stream_on(struct v4l2_subdev *subdev)
 
 	dbg_sensor(1, "[MOD:D:%d] %s\n", cis->id, __func__);
 	/* fps setting */
-	if (sensor_imx516_frame_duration != 0)
-		sensor_imx516_cis_set_frame_duration(subdev, sensor_imx516_frame_duration);
+	if (sensor_imx518_frame_duration != 0)
+		sensor_imx518_cis_set_frame_rate(subdev, sensor_imx518_frame_duration);
 
 	/* Sensor stream on */
-	info("sensor_imx516_cis_stream_on %d", module->position);
+	info("sensor_imx518_cis_stream_on %d", module->position);
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
-#ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
-	if (module->position == SENSOR_POSITION_REAR_TOF) {
-		sensor_imx516_cis_set_tx_clock(subdev);
-	}
-#endif
 	is_sensor_write8(client, 0x1001, 0x01);
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
@@ -661,14 +759,6 @@ int sensor_imx516_cis_stream_on(struct v4l2_subdev *subdev)
 		goto p_err;
 	}
 
-	usleep_range(200, 200);
-	ret = pdata->gpio_cfg(module, SENSOR_SCENARIO_ADDITIONAL_POWER, GPIO_SCENARIO_ON);
-	if (ret) {
-		clear_bit(IS_MODULE_GPIO_ON, &module->state);
-		err("gpio_cfg is fail(%d)", ret);
-		goto p_err;
-	}
-
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
@@ -678,11 +768,67 @@ p_err:
 	return ret;
 }
 
-int sensor_imx516_cis_stream_off(struct v4l2_subdev *subdev)
+int sensor_imx518_cis_set_test_pattern(struct v4l2_subdev *subdev, camera2_sensor_ctl_t *sensor_ctl)
 {
 	int ret = 0;
 	struct is_cis *cis;
 	struct i2c_client *client;
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+
+	WARN_ON(!cis);
+	WARN_ON(!cis->cis_data);
+
+	client = cis->client;
+	if (unlikely(!client)) {
+		err("client is NULL");
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	dbg_sensor(1, "[MOD:D:%d] %s, cur_pattern_mode(%d), testPatternMode(%d)\n", cis->id, __func__,
+			cis->cis_data->cur_pattern_mode, sensor_ctl->testPatternMode);
+
+	if (cis->cis_data->cur_pattern_mode != sensor_ctl->testPatternMode) {
+		info("%s REG : 0xB000 write to 0x00", __func__);
+		is_sensor_write8(client, 0xB000, 0x00);
+
+		cis->cis_data->cur_pattern_mode = sensor_ctl->testPatternMode;
+		if (sensor_ctl->testPatternMode == SENSOR_TEST_PATTERN_MODE_OFF) {
+			info("%s: set DEFAULT pattern! (testpatternmode : %d)\n", __func__, sensor_ctl->testPatternMode);
+
+			I2C_MUTEX_LOCK(cis->i2c_lock);
+			is_sensor_write16(client, 0x0600, 0x0000);
+			I2C_MUTEX_UNLOCK(cis->i2c_lock);
+		} else if (sensor_ctl->testPatternMode == SENSOR_TEST_PATTERN_MODE_BLACK) {
+			info("%s: set BLACK pattern! (testpatternmode :%d), Data : 0x(%x, %x, %x, %x)\n",
+				__func__, sensor_ctl->testPatternMode,
+				(unsigned short)sensor_ctl->testPatternData[0],
+				(unsigned short)sensor_ctl->testPatternData[1],
+				(unsigned short)sensor_ctl->testPatternData[2],
+				(unsigned short)sensor_ctl->testPatternData[3]);
+
+			I2C_MUTEX_LOCK(cis->i2c_lock);
+			is_sensor_write16(client, 0x0600, 0x0001);
+			is_sensor_write16(client, 0x0602, 0x0040);
+			is_sensor_write16(client, 0x0604, 0x0040);
+			is_sensor_write16(client, 0x0606, 0x0040);
+			is_sensor_write16(client, 0x0608, 0x0040);
+			I2C_MUTEX_UNLOCK(cis->i2c_lock);
+		}
+	}
+
+p_err:
+	return ret;
+}
+
+int sensor_imx518_cis_stream_off(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+	struct is_cis *cis;
+	struct i2c_client *client;
+	struct is_core *core;
+	struct is_vender_specific *specific;
 	cis_shared_data *cis_data;
 
 #ifdef DEBUG_SENSOR_TIME
@@ -697,6 +843,13 @@ int sensor_imx516_cis_stream_off(struct v4l2_subdev *subdev)
 	FIMC_BUG(!cis);
 	FIMC_BUG(!cis->cis_data);
 
+	core = (struct is_core *)dev_get_drvdata(is_dev);
+	if (!core) {
+		probe_info("core device is not yet probed");
+		return -1;
+	}
+	specific = core->vender.private_data;
+
 	client = cis->client;
 	if (unlikely(!client)) {
 		err("client is NULL");
@@ -710,11 +863,18 @@ int sensor_imx516_cis_stream_off(struct v4l2_subdev *subdev)
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 	/* Sensor stream off */
-	info("sensor_imx516_cis_stream_off");
+	info("sensor_imx518_cis_stream_off");
 	is_sensor_write8(client, 0x1001, 0x00);
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
 	cis_data->stream_on = false;
+
+	if (sensor_imx518_laser_mode == LASER_MODE_LIVE_FOCUS) {
+		sensor_imx518_cis_set_laser_control(subdev, true);
+		sensor_imx518_laser_mode = LASER_MODE_NORMAL;
+	}
+	specific->tof_info.TOFExposure = 0;
+	specific->tof_info.TOFFps = 0;
 
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
@@ -725,7 +885,7 @@ p_err:
 	return ret;
 }
 
-int sensor_imx516_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param *target_exposure)
+int sensor_imx518_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param *target_exposure)
 {
 	#define AE_MAX 0x1D4C0
 	int ret = 0;
@@ -748,20 +908,20 @@ int sensor_imx516_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_pa
 		goto p_err;
 	}
 
-	if (target_exposure->long_val) {
-		info("initial setting is skip");
+	if ((int)(target_exposure->short_val) <= 0) {
+		info("%s initial setting is skip, shor_val(%d)", __func__, target_exposure->short_val);
 		goto p_err;
 	}
 
 	value_32 = target_exposure->short_val * 120;
 	if (value_32 > AE_MAX) {
 		value_32 = AE_MAX;
-	} else if (value_32 < sensor_imx516_HMAX) {
-		value_32 = sensor_imx516_HMAX;
+	} else if (value_32 < sensor_imx518_HMAX) {
+		value_32 = sensor_imx518_HMAX;
 	}
 
-	info("sensor_imx516_cis_set_exposure_time org %d value %x sensor_imx516_HMAX %x",
-		target_exposure->short_val, value_32, sensor_imx516_HMAX);
+	info("sensor_imx518_cis_set_exposure_time org %d value %x sensor_imx518_HMAX %x",
+		target_exposure->short_val, value_32, sensor_imx518_HMAX);
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 	value = value_32 & 0xFF;
@@ -782,7 +942,7 @@ p_err:
 	return ret;
 }
 
-int sensor_imx516_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 duration)
+int sensor_imx518_cis_set_frame_rate(struct v4l2_subdev *subdev, u32 duration)
 {
 	int ret = 0;
 	struct is_cis *cis;
@@ -790,7 +950,7 @@ int sensor_imx516_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 duratio
 	u16 cur_fps = 0;
 	const u16 *fps_list = NULL;
 	u8 fps = 0;
-	u32 uid_index = 0;
+	u32 mode_id_index = 0;
 
 	FIMC_BUG(!subdev);
 
@@ -811,48 +971,58 @@ int sensor_imx516_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 duratio
 		return ret;
 	}
 
-	if (sensor_imx516_mode == -1) {
-		sensor_imx516_frame_duration = duration;
-		err("need sensor setting (%d)", duration);
-		ret = -EINVAL;
+	if (sensor_imx518_mode == -1) {
+		sensor_imx518_frame_duration = duration;
+		warn("need sensor setting (%d)", duration);
+		goto p_err;
+	} else if (sensor_imx518_mode == SENSOR_IMX518_320x480_30FPS) {
+		info("%s - not support fps ctrl in AF mode", __func__);
 		goto p_err;
 	}
 
-	sensor_imx516_frame_duration = duration;
+	sensor_imx518_frame_duration = duration;
+	duration = (1000 * 1000 * 1000) / duration;
 
-	ret = sensor_imx516_cis_get_uid_index(cis, sensor_imx516_mode, &uid_index);
+	ret = sensor_imx518_cis_get_mode_id_index(cis, sensor_imx518_mode, &mode_id_index);
 	if (ret < 0) {
 		return ret;
 	}
 
-	fps_list = sensor_imx516_setfiles_fps[sensor_imx516_mode][uid_index];
+	fps_list = sensor_imx518_setfiles_fps[mode_id_index][sensor_imx518_mode];
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 	is_sensor_write8(client, 0x0102, 0x01);
 
 	info("%s : set %d", __func__, duration);
 	switch (duration) {
 		case SENSOR_FPS_5:
-			cur_fps = fps_list[4];
+			cur_fps = fps_list[5];
 			fps = cur_fps & 0xFF;
 			is_sensor_write8(client, SENOSR_FPS_REGISTER_2, fps);
 			fps = cur_fps >> 8;
 			is_sensor_write8(client, SENOSR_FPS_REGISTER_1, fps);
 			break;
 		case SENSOR_FPS_10:
-			cur_fps = fps_list[3];
+			cur_fps = fps_list[4];
 			fps = cur_fps & 0xFF;
 			is_sensor_write8(client, SENOSR_FPS_REGISTER_2, fps);
 			fps = cur_fps >> 8;
 			is_sensor_write8(client, SENOSR_FPS_REGISTER_1, fps);
 			break;
 		case SENSOR_FPS_15:
-			cur_fps = fps_list[2];
+			cur_fps = fps_list[3];
 			fps = cur_fps & 0xFF;
 			is_sensor_write8(client, SENOSR_FPS_REGISTER_2, fps);
 			fps = cur_fps >> 8;
 			is_sensor_write8(client, SENOSR_FPS_REGISTER_1, fps);
 			break;
 		case SENSOR_FPS_20:
+			cur_fps = fps_list[2];
+			fps = cur_fps & 0xFF;
+			is_sensor_write8(client, SENOSR_FPS_REGISTER_2, fps);
+			fps = cur_fps >> 8;
+			is_sensor_write8(client, SENOSR_FPS_REGISTER_1, fps);
+			break;
+		case SENSOR_FPS_24:
 			cur_fps = fps_list[1];
 			fps = cur_fps & 0xFF;
 			is_sensor_write8(client, SENOSR_FPS_REGISTER_2, fps);
@@ -878,13 +1048,12 @@ p_err:
 	return ret;
 }
 
-int sensor_imx516_cis_set_laser_control(struct v4l2_subdev *subdev, u32 onoff)
+int sensor_imx518_cis_set_laser_control(struct v4l2_subdev *subdev, u32 onoff)
 {
 	int ret = 0;
 	struct is_cis *cis;
 	struct i2c_client *client;
 	FIMC_BUG(!subdev);
-
 	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
 
 	FIMC_BUG(!cis);
@@ -897,7 +1066,7 @@ int sensor_imx516_cis_set_laser_control(struct v4l2_subdev *subdev, u32 onoff)
 		goto p_err;
 	}
 
-	info("sensor_imx516_cis_set_laser_control %d", onoff);
+	info("sensor_imx518_cis_set_laser_control %d", onoff);
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 	if (onoff) {
@@ -913,7 +1082,13 @@ p_err:
 	return ret;
 }
 
-int sensor_imx516_cis_set_vcsel_current(struct v4l2_subdev *subdev, u32 value)
+int sensor_imx518_cis_set_laser_mode(struct v4l2_subdev *subdev, u32 mode)
+{
+	sensor_imx518_laser_mode = mode;
+	return 0;
+}
+
+int sensor_imx518_cis_set_vcsel_current(struct v4l2_subdev *subdev, u32 value)
 {
 	int ret = 0;
 	struct is_cis *cis;
@@ -922,6 +1097,7 @@ int sensor_imx516_cis_set_vcsel_current(struct v4l2_subdev *subdev, u32 value)
 	struct is_module_enum *module;
 	struct is_device_sensor_peri *sensor_peri = NULL;
 	u8 value8 = (u8)value;
+	u8 err_flag[2] = { 0 };
 
 	FIMC_BUG(!subdev);
 
@@ -943,21 +1119,37 @@ int sensor_imx516_cis_set_vcsel_current(struct v4l2_subdev *subdev, u32 value)
 
 	cis_data = cis->cis_data;
 	if (cis_data->stream_on == false) {
-		err("sensor_imx516_cis_set_vcsel_current fail!! sensor is off ");
+		err("sensor_imx518_cis_set_vcsel_current fail!! sensor is off ");
 		goto p_err;
 	}
 
-	info("sensor_imx516_cis_set_vcsel_current %d", value);
+	info("sensor_imx518_cis_set_vcsel_current %d", value);
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 
+	/* Current test cause OC_EM error, check error flag before set current */
+	is_sensor_read8(client, 0x0590, &err_flag[0]);	/* 0x0590 for CSA4026 error flag(0x27) */
+	is_sensor_read8(client, 0x0591, &err_flag[1]);	/* 0x0591 for CSA4026 error flag(0x28) */
+
 	/* for setting IPD_OFFSET */
+	/* DIF_ERR_SEL set */
 	is_sensor_write8(client, 0x0403, 0x20);
 	is_sensor_write8(client, 0x0405, 0x00);
-	is_sensor_write8(client, 0x0407, 0x26);
-	is_sensor_write8(client, 0x0526, 0x02);
-	is_sensor_write8(client, 0x0527, 0x0D);
-	is_sensor_write8(client, 0x0528, 0xC0);  /* IPD OFFSET */
+	is_sensor_write8(client, 0x0407, 0x00);
+	is_sensor_write8(client, 0x0500, 0x02);
+	is_sensor_write8(client, 0x0501, 0x0f);
+	is_sensor_write8(client, 0x0502, 0xC4);
+	is_sensor_write8(client, 0x0401, 0x01);
+	is_sensor_write8(client, 0x0400, 0x01);
+	is_sensor_write8(client, 0x0401, 0x00);
+
+	/* release DIFF2 Error Mask */
+	is_sensor_write8(client, 0x0403, 0x20);
+	is_sensor_write8(client, 0x0405, 0x00);
+	is_sensor_write8(client, 0x0407, 0x00);
+	is_sensor_write8(client, 0x0500, 0x02);
+	is_sensor_write8(client, 0x0501, 0x14);
+	is_sensor_write8(client, 0x0502, 0x00);
 	is_sensor_write8(client, 0x0401, 0x01);
 	is_sensor_write8(client, 0x0400, 0x01);
 	is_sensor_write8(client, 0x0401, 0x00);
@@ -965,22 +1157,125 @@ int sensor_imx516_cis_set_vcsel_current(struct v4l2_subdev *subdev, u32 value)
 	/* for setting VCSEL current */
 	is_sensor_write8(client, 0x0403, 0x20);
 	is_sensor_write8(client, 0x0405, 0x00);
-	is_sensor_write8(client, 0x0407, 0x26);
-	is_sensor_write8(client, 0x0526, 0x02);
-	is_sensor_write8(client, 0x0527, 0x08);
-	is_sensor_write8(client, 0x0528, value8);
+	is_sensor_write8(client, 0x0407, 0x00);
+	is_sensor_write8(client, 0x0500, 0x02);
+	is_sensor_write8(client, 0x0501, 0x08);
+	is_sensor_write8(client, 0x0502, value8);
 	is_sensor_write8(client, 0x0401, 0x01);
 	is_sensor_write8(client, 0x0400, 0x01);
 	is_sensor_write8(client, 0x0401, 0x00);
 
+	/* Wait 70ms(2 frame) */
+	usleep_range(70000, 70000);
+
+	/* for setting VCSEL current */
+	is_sensor_write8(client, 0x0403, 0x20);
+	is_sensor_write8(client, 0x0405, 0x00);
+	is_sensor_write8(client, 0x0407, 0x00);
+	is_sensor_write8(client, 0x0500, 0x02);
+	is_sensor_write8(client, 0x0501, 0x08);
+	is_sensor_write8(client, 0x0502, value8);
+	is_sensor_write8(client, 0x0401, 0x01);
+	is_sensor_write8(client, 0x0400, 0x01);
+	is_sensor_write8(client, 0x0401, 0x00);
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
-	usleep_range(300000, 300000);
+	usleep_range(5000, 5000);
+
+	info("%s- TX STATUS: 0x0590(0x27)(%x) 0x0591(0x27)(%x)", __func__, err_flag[0], err_flag[1]);
+p_err:
+	return ret;
+}
+
+int sensor_imx518_cis_set_laser_error(struct v4l2_subdev *subdev, u32 mode)
+{
+	int ret = 0;
+	struct is_cis *cis;
+	struct i2c_client *client;
+	int i=0;
+	struct sensor_imx518_laser_test test;
+
+	FIMC_BUG(!subdev);
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+
+	FIMC_BUG(!cis);
+	FIMC_BUG(!cis->i2c_lock);
+
+	client = cis->client;
+	if (unlikely(!client)) {
+		err("client is NULL");
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	for(i=0; i < sizeof(sensor_imx518_laser_testcases)/sizeof(sensor_imx518_laser_testcases[0]); i++){
+		test = sensor_imx518_laser_testcases[i];
+
+		if(test.error == mode){
+			I2C_MUTEX_LOCK(cis->i2c_lock);
+
+			is_sensor_write8(client, 0x0403, 0x20);
+			is_sensor_write8(client, 0x0405, 0x00);
+			is_sensor_write8(client, 0x0407, 0x00);		/*send buf CXA4026 config */
+			is_sensor_write8(client, 0x0500, 0x02);
+			is_sensor_write8(client, 0x0501, test.addr);		/* CXA4026 addr */
+			is_sensor_write8(client, 0x0502, test.data);		/* Data to send */
+			is_sensor_write8(client, 0x0401, 0x01);		/* Send start*/
+			is_sensor_write8(client, 0x0400, 0x01);
+			is_sensor_write8(client, 0x0401, 0x00);		/* Send end */
+
+			I2C_MUTEX_UNLOCK(cis->i2c_lock);
+
+			info("%s - Set err: %d (0x%x):0x%x", __func__, test.error, test.addr, test.data);
+		}
+	}
+p_err:
+	return ret;
+}
+
+int sensor_imx518_cis_get_laser_error_flag(struct v4l2_subdev *subdev, int *value)
+{
+	int ret = 0;
+	struct is_cis *cis;
+	struct i2c_client *client;
+	u8 err_flag[2] = { 0 };
+
+	FIMC_BUG(!subdev);
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+
+	FIMC_BUG(!cis);
+	FIMC_BUG(!cis->i2c_lock);
+
+	client = cis->client;
+	if (unlikely(!client)) {
+		err("client is NULL");
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	I2C_MUTEX_LOCK(cis->i2c_lock);
+
+	is_sensor_read8(client, 0x0590, &err_flag[0]);	/* 0x0590 for CSA4026 error flag(0x27) */
+	is_sensor_read8(client, 0x0591, &err_flag[1]);	/* 0x0591 for CSA4026 error flag(0x28) */
+
+	I2C_MUTEX_UNLOCK(cis->i2c_lock);
+
+	*value = (((int)err_flag[0] << 6) | err_flag[1]);
+	info("%s - err : %x (err[0] : %x, err[1] : %x)", __func__, *value, err_flag[0], err_flag[1]);
 
 p_err:
 	return ret;
 }
 
-int sensor_imx516_cis_get_vcsel_photo_diode(struct v4l2_subdev *subdev, u16 *value)
+int sensor_imx518_cis_laser_error_req(struct v4l2_subdev *subdev, u32 mode, int *value){
+	int ret = 0;
+	if(mode)
+		ret =sensor_imx518_cis_set_laser_error(subdev, mode);
+	else
+		ret = sensor_imx518_cis_get_laser_error_flag(subdev, value);
+	return ret;
+}
+
+int sensor_imx518_cis_get_vcsel_photo_diode(struct v4l2_subdev *subdev, u16 *value)
 {
 	int ret = 0;
 	struct is_cis *cis;
@@ -1003,20 +1298,42 @@ int sensor_imx516_cis_get_vcsel_photo_diode(struct v4l2_subdev *subdev, u16 *val
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 
-	is_sensor_read8(client, 0x0588, &value8_1); /*0x058B for APC2_CHECK_DATA[9:8]*/
-	is_sensor_read8(client, 0x058F, &value8_0); /* 0x0582 for APC2_CHECK_DATA[7:0] */
+	is_sensor_read8(client, 0x0588, &value8_1); 	/*0x058B for APC2_CHECK_DATA[9:8]*/
+	is_sensor_read8(client, 0x058F, &value8_0); 	/* 0x0582 for APC2_CHECK_DATA[7:0] */
 
 	I2C_MUTEX_UNLOCK(cis->i2c_lock);
 
 	*value = (((value8_1 & 0x30) << 4) | value8_0);
-	info("sensor_imx516_cis_get_vcsel_photo_diode value8_1 0x%x value8_0 0x%x => (0x%x)%d", value8_1, value8_0, *value, *value);
+	info("%s - value8_1 0x%x value8_0 0x%x => (0x%x)%d", __func__, value8_1, value8_0, *value, *value);
 
 p_err:
 	return ret;
 }
 
+#ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
+int sensor_imx518_cis_set_tx_freq(struct v4l2_subdev *subdev, u32 value)
+{
+	int i=0;
+	int freq_size = ARRAY_SIZE(sensor_imx518_supported_tx_freq);
+
+	sensor_imx518_rear_tx_freq_fixed_index = -1;
+	for(i=0;i < freq_size;i++){
+		if(value == sensor_imx518_supported_tx_freq[i]) {
+			sensor_imx518_rear_tx_freq_fixed_index = i;
+			break;
+		}
+	}
+	if(sensor_imx518_rear_tx_freq_fixed_index == -1){
+		info("%s - not support freq",__func__);
+		return -1;
+	}
+	info("%s - tx freq fixed : %d", __func__,
+			sensor_imx518_supported_tx_freq[sensor_imx518_rear_tx_freq_fixed_index]);
+	return sensor_imx518_supported_tx_freq[sensor_imx518_rear_tx_freq_fixed_index];
+}
+#endif
 #if defined(USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION) || defined(USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION_SYSFS_ENABLE)
-int sensor_imx516_cis_get_tx_freq(struct v4l2_subdev *subdev, u32 *value)
+int sensor_imx518_cis_get_tx_freq(struct v4l2_subdev *subdev, u32 *value)
 {
 	int ret = 0;
 	struct is_cis *cis;
@@ -1034,12 +1351,12 @@ int sensor_imx516_cis_get_tx_freq(struct v4l2_subdev *subdev, u32 *value)
 	module = sensor_peri->module;
 
 	if (module->position == SENSOR_POSITION_REAR_TOF) {
-#ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION_SYSFS_ENABLE
+#ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
+		info("%s rear tx freq %d", __func__, sensor_imx518_rear_tx_freq);
+		*value = sensor_imx518_rear_tx_freq;
+#else
 		info("%s freq variation disabled, rear tx freq %d", __func__, REAR_TX_DEFAULT_FREQ);
 		*value = REAR_TX_DEFAULT_FREQ;
-#else
-		info("%s rear tx freq %d", __func__, sensor_imx516_rear_tx_freq);
-		*value = sensor_imx516_rear_tx_freq;
 #endif
 	} else { //SENSOR_POSITION_FRONT_TOF
 		info("%s front tx freq none ", __func__);
@@ -1049,26 +1366,33 @@ int sensor_imx516_cis_get_tx_freq(struct v4l2_subdev *subdev, u32 *value)
 }
 #endif
 
-static struct is_cis_ops cis_ops_imx516 = {
-	.cis_init = sensor_imx516_cis_init,
-	.cis_log_status = sensor_imx516_cis_log_status,
-	.cis_set_global_setting = sensor_imx516_cis_set_global_setting,
-	.cis_mode_change = sensor_imx516_cis_mode_change,
-	.cis_stream_on = sensor_imx516_cis_stream_on,
-	.cis_stream_off = sensor_imx516_cis_stream_off,
-	.cis_set_exposure_time = sensor_imx516_cis_set_exposure_time,
-	.cis_wait_streamoff = sensor_imx516_cis_wait_streamoff,
-	.cis_wait_streamon = sensor_imx516_cis_wait_streamon,
-	.cis_set_laser_control = sensor_imx516_cis_set_laser_control,
-	.cis_set_laser_current = sensor_imx516_cis_set_vcsel_current,
-	.cis_get_laser_photo_diode = sensor_imx516_cis_get_vcsel_photo_diode,
-	.cis_set_frame_duration = sensor_imx516_cis_set_frame_duration,
+static struct is_cis_ops cis_ops_imx518 = {
+	.cis_init = sensor_imx518_cis_init,
+	.cis_deinit = sensor_imx518_cis_deinit,
+	.cis_log_status = sensor_imx518_cis_log_status,
+	.cis_set_global_setting = sensor_imx518_cis_set_global_setting,
+	.cis_mode_change = sensor_imx518_cis_mode_change,
+	.cis_stream_on = sensor_imx518_cis_stream_on,
+	.cis_stream_off = sensor_imx518_cis_stream_off,
+	.cis_set_exposure_time = sensor_imx518_cis_set_exposure_time,
+	.cis_wait_streamoff = sensor_imx518_cis_wait_streamoff,
+	.cis_wait_streamon = sensor_imx518_cis_wait_streamon,
+	.cis_set_laser_control = sensor_imx518_cis_set_laser_control,
+	.cis_set_laser_mode = sensor_imx518_cis_set_laser_mode,
+	.cis_set_laser_current = sensor_imx518_cis_set_vcsel_current,
+	.cis_get_laser_photo_diode = sensor_imx518_cis_get_vcsel_photo_diode,
+	.cis_set_frame_rate = sensor_imx518_cis_set_frame_rate,
+	.cis_get_tof_laser_error_flag = sensor_imx518_cis_laser_error_req,
+	.cis_set_test_pattern = sensor_imx518_cis_set_test_pattern,
 #if defined(USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION) || defined(USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION_SYSFS_ENABLE)
-	.cis_get_tof_tx_freq = sensor_imx516_cis_get_tx_freq,
+	.cis_get_tof_tx_freq = sensor_imx518_cis_get_tx_freq,
+#endif
+#ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
+	.cis_set_tof_tx_freq = sensor_imx518_cis_set_tx_freq,
 #endif
 };
 
-static int cis_imx516_probe(struct i2c_client *client,
+static int cis_imx518_probe(struct i2c_client *client,
 	const struct i2c_device_id *id)
 {
 	int ret = 0;
@@ -1104,7 +1428,7 @@ static int cis_imx516_probe(struct i2c_client *client,
 
 	device = &core->sensor[sensor_id];
 
-	sensor_peri = find_peri_by_cis_id(device, SENSOR_NAME_IMX516);
+	sensor_peri = find_peri_by_cis_id(device, SENSOR_NAME_IMX518);
 	if (!sensor_peri) {
 		probe_info("sensor peri is net yet probed");
 		return -EPROBE_DEFER;
@@ -1125,7 +1449,7 @@ static int cis_imx516_probe(struct i2c_client *client,
 	}
 	sensor_peri->subdev_cis = subdev_cis;
 
-	cis->id = SENSOR_NAME_IMX516;
+	cis->id = SENSOR_NAME_IMX518;
 	cis->subdev = subdev_cis;
 	cis->device = 0;
 	cis->client = client;
@@ -1141,7 +1465,7 @@ static int cis_imx516_probe(struct i2c_client *client,
 		ret = -ENOMEM;
 		goto p_err;
 	}
-	cis->cis_ops = &cis_ops_imx516;
+	cis->cis_ops = &cis_ops_imx518;
 
 	if (of_property_read_string(dnode, "setfile", &setfile)) {
 		err("setfile index read fail(%d), take default setfile!!", ret);
@@ -1150,37 +1474,36 @@ static int cis_imx516_probe(struct i2c_client *client,
 
 	if (strcmp(setfile, "default") == 0 || strcmp(setfile, "setA") == 0) {
 		probe_info("%s setfile_A\n", __func__);
-		sensor_imx516_global = sensor_imx516_setfile_A_Global;
-		sensor_imx516_global_size = ARRAY_SIZE(sensor_imx516_setfile_A_Global);
-		sensor_imx516_setfiles = sensor_imx516_setfiles_A;
-		sensor_imx516_uid = sensor_imx516_setfiles_uid;
-		sensor_imx516_max_uid_num = sensor_imx516_setfiles_uid_num;
-		sensor_imx516_setfile_sizes = sensor_imx516_setfile_A_sizes;
-		sensor_imx516_setfiles_fps = sensor_imx516_setfile_FPS_A;
+		sensor_imx518_global = sensor_imx518_setfile_A_Global;
+		sensor_imx518_global_size = ARRAY_SIZE(sensor_imx518_setfile_A_Global);
+		sensor_imx518_setfiles = sensor_imx518_setfiles_A;
+		sensor_imx518_mode_id = sensor_imx518_setfiles_mode_id;
+		sensor_imx518_max_mode_id_num = sensor_imx518_setfiles_mode_id_num;
+		sensor_imx518_setfile_sizes = sensor_imx518_setfile_A_sizes;
+		sensor_imx518_setfiles_fps = sensor_imx518_setfile_FPS_A;
+		sensor_imx518_laser_setting = sensor_imx518_laser_setting_A;
+		sensor_imx518_laser_setting_sizes = sensor_imx518_laser_setting_A_sizes;
 #ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
-		sensor_imx516_tx_freq_sensor_mode = sensor_imx516_setfile_A_tof_sensor_mode;
-		sensor_imx516_tx_freq_sensor_mode_size = sensor_imx516_setfile_A_verify_sensor_mode_size;
-		sensor_imx516_verify_sensor_mode = sensor_imx516_setfile_A_verify_sensor_mode;
-		sensor_imx516_verify_sensor_mode_size = sensor_imx516_setfile_A_verify_sensor_mode_size;
+		sensor_imx518_tx_freq_sensor_mode = sensor_imx518_setfile_A_tof_sensor_mode;
 #endif
 	}
 #if 0
 	else if (strcmp(setfile, "setB") == 0) {
 		probe_info("%s setfile_B\n", __func__);
-		sensor_imx516_global = sensor_imx516_setfile_B_Global;
-		sensor_imx516_global_size = ARRAY_SIZE(sensor_imx516_setfile_B_Global);
-		sensor_imx516_setfiles = sensor_imx516_setfiles_B;
-		sensor_imx516_setfile_sizes = sensor_imx516_setfile_B_sizes;
+		sensor_imx518_global = sensor_imx518_setfile_B_Global;
+		sensor_imx518_global_size = ARRAY_SIZE(sensor_imx518_setfile_B_Global);
+		sensor_imx518_setfiles = sensor_imx518_setfiles_B;
+		sensor_imx518_setfile_sizes = sensor_imx518_setfile_B_sizes;
 	}
 #endif
 	else {
 		err("%s setfile index out of bound, take default (setfile_A)", __func__);
-		sensor_imx516_global = sensor_imx516_setfile_A_Global;
-		sensor_imx516_global_size = ARRAY_SIZE(sensor_imx516_setfile_A_Global);
-		sensor_imx516_setfiles = sensor_imx516_setfiles_A;
-		sensor_imx516_uid = sensor_imx516_setfiles_uid;
-		sensor_imx516_max_uid_num = sensor_imx516_setfiles_uid_num;
-		sensor_imx516_setfile_sizes = sensor_imx516_setfile_A_sizes;
+		sensor_imx518_global = sensor_imx518_setfile_A_Global;
+		sensor_imx518_global_size = ARRAY_SIZE(sensor_imx518_setfile_A_Global);
+		sensor_imx518_setfiles = sensor_imx518_setfiles_A;
+		sensor_imx518_mode_id = sensor_imx518_setfiles_mode_id;
+		sensor_imx518_max_mode_id_num = sensor_imx518_setfiles_mode_id_num;
+		sensor_imx518_setfile_sizes = sensor_imx518_setfile_A_sizes;
 	}
 
 	/* belows are depend on sensor cis. MUST check sensor spec */
@@ -1215,22 +1538,10 @@ static int cis_imx516_probe(struct i2c_client *client,
 	snprintf(subdev_cis->name, V4L2_SUBDEV_NAME_SIZE, "cis-subdev.%d", cis->id);
 #ifdef USE_CAMERA_REAR_TOF_TX_FREQ_VARIATION
 	{
-		int i = 0, j = 0, mode = 0, index = 0;
-		for (mode = 0; mode < SENSOR_IMX516_MODE_MAX; mode++){
-			for (i = 0; i < sensor_imx516_verify_sensor_mode_size[mode]; i++) {
-				for (j = 0; j < sensor_imx516_max_uid_num[mode]; j++) {
-					if (sensor_imx516_verify_sensor_mode[mode][i] == sensor_imx516_uid[mode][j]) {
-						index = j;
-						break;
-					}
-				}
-
-				if (is_vendor_verify_mipi_channel(sensor_imx516_tx_freq_sensor_mode[mode][index].mipi_channel,
-							sensor_imx516_tx_freq_sensor_mode[mode][index].mipi_channel_size)) {
-					panic("wrong mipi channel");
-					break;
-				}
-			}
+		probe_info("%s verify mipi_channel",__func__);
+		if (is_vendor_verify_mipi_channel(sensor_imx518_tx_freq_sensor_mode[0].mipi_channel,
+					sensor_imx518_tx_freq_sensor_mode[0].mipi_channel_size)) {
+			panic("wrong mipi channel");
 		}
 	}
 #endif
@@ -1240,40 +1551,41 @@ p_err:
 	return ret;
 }
 
-static const struct of_device_id sensor_cis_imx516_match[] = {
+static const struct of_device_id sensor_cis_imx518_match[] = {
 	{
-		.compatible = "samsung,exynos-is-cis-imx516",
+		.compatible = "samsung,exynos-is-cis-imx518",
 	},
 	{},
 };
-MODULE_DEVICE_TABLE(of, sensor_cis_imx516_match);
+MODULE_DEVICE_TABLE(of, sensor_cis_imx518_match);
 
-static const struct i2c_device_id sensor_cis_imx516_idt[] = {
+static const struct i2c_device_id sensor_cis_imx518_idt[] = {
 	{ SENSOR_NAME, 0 },
 	{},
 };
 
-static struct i2c_driver sensor_cis_imx516_driver = {
-	.probe	= cis_imx516_probe,
+static struct i2c_driver sensor_cis_imx518_driver = {
+	.probe	= cis_imx518_probe,
 	.driver = {
 		.name	= SENSOR_NAME,
 		.owner	= THIS_MODULE,
-		.of_match_table = sensor_cis_imx516_match,
+		.of_match_table = sensor_cis_imx518_match,
 		.suppress_bind_attrs = true,
 	},
-	.id_table = sensor_cis_imx516_idt
+	.id_table = sensor_cis_imx518_idt
 };
 
-static int __init sensor_cis_imx516_init(void)
+static int __init sensor_cis_imx518_init(void)
 {
 	int ret;
 
-	probe_info("sensor_cis_imx516_init");
-	ret = i2c_add_driver(&sensor_cis_imx516_driver);
+	probe_info("sensor_cis_imx518_init");
+	ret = i2c_add_driver(&sensor_cis_imx518_driver);
 	if (ret)
 		err("failed to add %s driver: %d\n",
-			sensor_cis_imx516_driver.driver.name, ret);
+			sensor_cis_imx518_driver.driver.name, ret);
 
 	return ret;
 }
-late_initcall_sync(sensor_cis_imx516_init);
+late_initcall_sync(sensor_cis_imx518_init);
+

@@ -47,6 +47,7 @@ struct auto_sleep_thread {
 	s64	idle_start_ns;
 
 	atomic_t	thr_state;	/* enum auto_sleep_thread_state_e */
+	unsigned int	period;		/* check period */
 };
 
 
@@ -54,10 +55,11 @@ struct auto_sleep_thread {
 int auto_sleep_thread_create(struct auto_sleep_thread *newthr, const char *print_name,
 	int (*do_task)(struct auto_sleep_thread_param *data),
 	int (*check_work)(struct auto_sleep_thread_param *data),
-	void (*on_idle)(struct auto_sleep_thread_param *data, s64 idle_duration_ns));
+	void (*on_idle)(struct auto_sleep_thread_param *data, s64 idle_duration_ns),
+	unsigned int period);
 int auto_sleep_thread_start(struct auto_sleep_thread *thr, struct auto_sleep_thread_param param);
 int auto_sleep_thread_terminate(struct auto_sleep_thread *thr);
 void auto_sleep_thread_signal(struct auto_sleep_thread *thr);
-
+void auto_sleep_thread_set_period(struct auto_sleep_thread *thrctx, unsigned int period);
 
 #endif /* _NPU_UTIL_AUTOSLEEPTHR_H_ */

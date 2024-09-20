@@ -75,7 +75,7 @@ module_param(rndis_dl_max_pkt_per_xfer, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(rndis_dl_max_pkt_per_xfer,
 	"Maximum packets per transfer for DL aggregation");
 
-static unsigned int rndis_ul_max_pkt_per_xfer = 3;
+static unsigned int rndis_ul_max_pkt_per_xfer = 5;
 module_param(rndis_ul_max_pkt_per_xfer, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(rndis_ul_max_pkt_per_xfer,
        "Maximum packets per transfer for UL aggregation");
@@ -305,7 +305,7 @@ static struct usb_ss_ep_comp_descriptor ss_intr_comp_desc = {
 	.bDescriptorType =	USB_DT_SS_ENDPOINT_COMP,
 
 	/* the following 3 values can be tweaked if necessary */
-	/* .bMaxBurst =		0, */
+	.bMaxBurst =		4,
 	/* .bmAttributes =	0, */
 	.wBytesPerInterval =	cpu_to_le16(STATUS_BYTECOUNT),
 };
@@ -667,7 +667,6 @@ static void rndis_disable(struct usb_function *f)
 	gether_disconnect(&rndis->port);
 
 	usb_ep_disable(rndis->notify);
-	rndis->notify->desc = NULL;
 }
 
 /*-------------------------------------------------------------------------*/
@@ -860,7 +859,7 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
 		status = -EINVAL;
 		goto fail_free_descs;
 	}
-
+	cdev->is_rndis = 1;
 	/* NOTE:  all that is done without knowing or caring about
 	 * the network link ... which is unavailable to this code
 	 * until we're activated via set_alt().
@@ -903,7 +902,6 @@ void rndis_borrow_net(struct usb_function_instance *f, struct net_device *net)
 }
 EXPORT_SYMBOL_GPL(rndis_borrow_net);
 
-/*
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 static int set_rndis_mac_addr(struct usb_function_instance *fi,
 		    u8 *ethaddr)
@@ -919,7 +917,6 @@ static int set_rndis_mac_addr(struct usb_function_instance *fi,
 	return 0;
 }
 #endif
-*/
 
 static inline struct f_rndis_opts *to_f_rndis_opts(struct config_item *item)
 {
@@ -998,11 +995,11 @@ static struct usb_function_instance *rndis_alloc_inst(void)
 
 	mutex_init(&opts->lock);
 	opts->func_inst.free_func_inst = rndis_free_inst;
-/*
+
 #ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 	opts->func_inst.set_inst_eth_addr = set_rndis_mac_addr;
 #endif
-*/
+
 	opts->net = gether_setup_name_default("rndis");
 	if (IS_ERR(opts->net)) {
 		struct net_device *net = opts->net;
@@ -1077,10 +1074,15 @@ static void rndis_unbind(struct usb_configuration *c, struct usb_function *f)
 		return;
 	}
 
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+	gether_set_host_addr(opts->net, rndis->ethaddr);
+#else
 	gether_get_host_addr_u8(opts->net, rndis->ethaddr);
+#endif
 	rndis->port.ioport = netdev_priv(opts->net);
 
 	opts->bound = false;
+	cdev->is_rndis = 0;
 #endif
 }
 

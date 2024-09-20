@@ -29,42 +29,33 @@
 
 #include "decon.h"
 /* TODO: SoC dependency will be removed */
-#if defined(CONFIG_SOC_EXYNOS3830)
-#include "./cal_3830/regs-dpp.h"
-#include "./cal_3830/dpp_cal.h"
+#include "./cal_9830/regs-dpp.h"
+#include "./cal_9830/dpp_cal.h"
+#ifdef CONFIG_EXYNOS_MCD_HDR
+#include "./mcd_hdr/hdr_drv.h"
 #endif
 
 extern int dpp_log_level;
 
 #define DPP_MODULE_NAME		"exynos-dpp"
-
 #define MAX_DPP_CNT		7 /* + ODMA case */
-#if defined(CONFIG_SOC_EXYNOS3830)
-#define SOC_DPP_CNT		4 /* + ODMA case */
-#endif
-
 #define MAX_FMT_CNT		64
 #define DEFAULT_FMT_CNT		8
 
-/* TODO: remove */
-#ifndef REMOVED
 /* about 1msec @ ACLK=630MHz */
 #define INIT_RCV_NUM		630000
 
-/* TODO: Make sure dpp use define of videodev2_exynos_media.h instead of below */
 #define P010_Y_SIZE(w, h)		((w) * (h) * 2)
 #define P010_CBCR_SIZE(w, h)		((w) * (h))
 #define P010_CBCR_BASE(base, w, h)	((base) + P010_Y_SIZE((w), (h)))
 /* ceil function for positive value */
 #define p_ceil(n, d)	((n)/(d) + ((n)%(d) != 0))
-#endif
 
 #define check_align(width, height, align_w, align_h)\
 	(IS_ALIGNED(width, align_w) && IS_ALIGNED(height, align_h))
 
 #define is_normal(config) (DPP_ROT_NORMAL)
 #define is_rotation(config) (config->dpp_parm.rot > DPP_ROT_180)
-/* TODO: Is is_sbwc necessary also? or is_afbc may be changed to is_comp */
 #define is_afbc(config) (config->compression)
 
 #define IS_WB(attr)	(test_bit(DPP_ATTR_WBMUX, &attr) &&		\
@@ -96,8 +87,8 @@ extern int dpp_log_level;
 			pr_info(pr_fmt(fmt), ##__VA_ARGS__);			\
 	} while (0)
 
-#ifndef REMOVED
 /* TODO: This will be removed */
+
 enum dpp_csc_defs {
 	/* csc_type */
 	DPP_CSC_BT_601 = 0,
@@ -113,7 +104,6 @@ enum dpp_csc_defs {
 	DPP_CSC_ID_DCI_P3 = 2,
 	CSC_CUSTOMIZED_START = 4,
 };
-#endif
 
 enum dpp_state {
 	DPP_STATE_ON,
@@ -133,6 +123,13 @@ enum dpp_reg_area {
 	REG_AREA_ODMA,
 };
 
+#ifdef CONFIG_EXYNOS_MCD_HDR
+enum hdr_path {
+	HDR_PATH_LSI = 0,
+	HDR_PATH_MCD,
+};
+#endif
+
 enum dpp_attr {
 	DPP_ATTR_AFBC		= 0,
 	DPP_ATTR_BLOCK		= 1,
@@ -143,10 +140,8 @@ enum dpp_attr {
 	DPP_ATTR_HDR		= 6,
 	DPP_ATTR_C_HDR		= 7,
 	DPP_ATTR_C_HDR10_PLUS	= 8,
-	DPP_ATTR_C_WCG		= 9,
+	DPP_ATTR_WCG		= 9,
 	DPP_ATTR_SBWC		= 10,
-	DPP_ATTR_HDR10P		= 11,
-	DPP_ATTR_WCG		= 12,
 
 	DPP_ATTR_IDMA		= 16,
 	DPP_ATTR_ODMA		= 17,
@@ -159,7 +154,6 @@ struct dpp_resources {
 	void __iomem *regs;
 	void __iomem *dma_regs;
 	void __iomem *dma_com_regs;
-	void __iomem *hdr_regs;
 	int irq;
 	int dma_irq;
 };
@@ -172,6 +166,11 @@ struct dpp_debug {
 struct dpp_config {
 	struct decon_win_config config;
 	unsigned long rcv_num;
+#ifdef CONFIG_EXYNOS_MCD_HDR
+	u32 wcg_mode;
+	//struct exynos_video_meta meta;
+	struct dpp_hdr10_info hdr_info;
+#endif
 };
 
 struct dpp_size_range {
@@ -243,9 +242,14 @@ struct dpp_device {
 	spinlock_t dma_slock;
 	struct mutex lock;
 	struct dpp_restriction restriction;
+#ifdef CONFIG_EXYNOS_MCD_HDR
+	struct v4l2_subdev *mcd_sd;
+	u32 wcg_src_cm;
+	u32 wcg_dst_cm;
+#endif
 };
 
-extern struct dpp_device *dpp_drvdata[SOC_DPP_CNT];
+extern struct dpp_device *dpp_drvdata[MAX_DPP_CNT];
 
 static inline struct dpp_device *get_dpp_drvdata(u32 id)
 {
@@ -261,7 +265,7 @@ static inline u32 dpp_read(u32 id, u32 reg_id)
 static inline u32 dpp_read_mask(u32 id, u32 reg_id, u32 mask)
 {
 	u32 val = dpp_read(id, reg_id);
-	val &= (~mask);
+	val &= (mask);
 	return val;
 }
 
@@ -278,35 +282,6 @@ static inline void dpp_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
 
 	val = (val & mask) | (old & ~mask);
 	writel(val, dpp->res.regs + reg_id);
-}
-
-/* DPU_WCG/HDR part */
-static inline u32 dpp_hdr_read(u32 id, u32 reg_id)
-{
-	struct dpp_device *dpp = get_dpp_drvdata(id);
-	return readl(dpp->res.hdr_regs + reg_id);
-}
-
-static inline u32 dpp_hdr_read_mask(u32 id, u32 reg_id, u32 mask)
-{
-	u32 val = dpp_hdr_read(id, reg_id);
-	val &= (~mask);
-	return val;
-}
-
-static inline void dpp_hdr_write(u32 id, u32 reg_id, u32 val)
-{
-	struct dpp_device *dpp = get_dpp_drvdata(id);
-	writel(val, dpp->res.hdr_regs + reg_id);
-}
-
-static inline void dpp_hdr_write_mask(u32 id, u32 reg_id, u32 val, u32 mask)
-{
-	struct dpp_device *dpp = get_dpp_drvdata(id);
-	u32 old = dpp_hdr_read(id, reg_id);
-
-	val = (val & mask) | (old & ~mask);
-	writel(val, dpp->res.hdr_regs + reg_id);
 }
 
 /* DPU_DMA Common part */
@@ -380,6 +355,8 @@ static inline void dpp_select_format(struct dpp_device *dpp,
 }
 
 void dpp_dump(struct dpp_device *dpp);
+void dpp_dma_irq_clear(u32 id, const unsigned long attr);
+void dpp_op_irq_clear(u32 id, const unsigned long attr);
 
 #define DPP_WIN_CONFIG			_IOW('P', 0, struct dpp_config)
 #define DPP_STOP			_IOW('P', 1, unsigned long)
@@ -391,5 +368,6 @@ void dpp_dump(struct dpp_device *dpp);
 #define DPP_GET_PORT_NUM		_IOR('P', 7, unsigned long)
 #define DPP_GET_RESTRICTION		_IOR('P', 8, unsigned long)
 #define DPP_GET_SHD_ADDR		_IOR('P', 9, unsigned long)
+#define DPP_CURSOR_WIN_CONFIG		_IOW('P', 10, struct dpp_config)
 
 #endif /* __SAMSUNG_DPP_H__ */

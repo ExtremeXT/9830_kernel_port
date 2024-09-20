@@ -124,7 +124,7 @@ static int __put_entry_unsorted(struct list_head *target_list_head,
 int __lsm_put_entry(struct lsm_internal_data *lsm, lsm_list_type_e type,
 		    struct lsm_base_entry *new_entry)
 {
-	int ret;
+	int ret = 0;
 	struct list_head *target_list_head;
 
 	BUG_ON(!new_entry);
@@ -137,6 +137,10 @@ int __lsm_put_entry(struct lsm_internal_data *lsm, lsm_list_type_e type,
 
 	/* Check whether the entry is properly detached from list */
 	BUG_ON(!list_empty(&(new_entry->list)));
+
+	/* Call preprocess */
+	if (lsm->preprocess)
+		lsm->preprocess(type, &new_entry->data_place);
 
 	/* Call helper, based on compare function availability */
 	if (lsm->compare != NULL) {
@@ -175,10 +179,31 @@ void __lsm_send_signal(struct lsm_internal_data *lsm)
 	auto_sleep_thread_signal(&lsm->ast_worker);
 }
 
+void __lsm_set_preprocess(struct lsm_internal_data *lsm, lsm_hook_t preprocess)
+{
+	BUG_ON(!lsm);
+	lsm->preprocess = preprocess;
+}
+
 void __lsm_set_hook(struct lsm_internal_data *lsm, lsm_hook_t put_hook)
 {
 	BUG_ON(!lsm);
 	lsm->put_hook = put_hook;
+}
+
+int __lsm_is_empty(struct lsm_internal_data *lsm,
+				       lsm_list_type_e type)
+{
+	/* The list for specified type */
+	struct list_head *target_list_head;
+
+	BUG_ON(!lsm);
+	BUG_ON(type < 0);
+	BUG_ON(type >= LSM_LIST_TYPE_INVALID);
+
+	target_list_head = &(lsm->list_for_state[type]);
+	/* Check whether the list is empty */
+	return list_empty(target_list_head);
 }
 
 /* Unit test */

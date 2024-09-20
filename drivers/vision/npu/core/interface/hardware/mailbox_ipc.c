@@ -38,13 +38,14 @@ static u32 get_logging_time_ms(void);
 int mailbox_init(volatile struct mailbox_hdr *header)
 {
 	//Memory Alloc, and Wait Sig.
-	int ret, i;
+	int ret = 0;
+	int i;
 	u32 cur_ofs;
 	volatile struct mailbox_ctrl ctrl[MAX_MAILBOX];
 
 	npu_info("mailbox initialize: start, header base at %pK\n", header);
 	npu_info("mailbox initialize: wait for firmware boot signature.\n");
-	ret = wait_for_mem_value(&(header->signature1), MAILBOX_SIGNATURE1, 9000);
+	ret = wait_for_mem_value(&(header->signature1), MAILBOX_SIGNATURE1, 3000);
 	if (ret) {
 		npu_err("init. error(%d) in firmware waiting\n", ret);
 		goto err_exit;
@@ -71,7 +72,7 @@ int mailbox_init(volatile struct mailbox_hdr *header)
 	header->max_slot = 0;//TODO : TBD in firmware policy.
 	header->debug_time = get_logging_time_ms();
 	/* half low 16 bits is mailbox ipc version, half high 16 bits is command version */
-	header->version = ((COMMAND_VERSION << 16) | MAILBOX_VERSION);
+	header->version = ((COMMAND_SUB_VERSION << 24) | (COMMAND_VERSION << 16) | MAILBOX_VERSION);
 	npu_info("header version \t: %08X\n", header->version);
 	header->log_level = 192;
 
@@ -215,6 +216,11 @@ static void __mbx_ipc_print(char *underlay, volatile struct mailbox_ctrl *ctrl, 
 
 	while (rptr < wptr) {
 		__copy_message_from_line(base, sgmt_len, rptr, &msg);
+		if (msg.length != sizeof(struct command)) {
+			npu_err("Please check the msg->length\n");
+			return;
+		}
+
 		/* copy_command should copy only command part else payload */
 		__copy_command_from_line(base, sgmt_len, msg.data, &cmd, sizeof(struct command));
 		if (is_dbg)
@@ -293,6 +299,11 @@ int mbx_ipc_put(char *underlay, volatile struct mailbox_ctrl *ctrl, struct messa
 
 	msg->magic = MESSAGE_MAGIC;
 	msg->data = cmd_str_wptr;
+
+	if (msg->length != sizeof(struct command)) {
+		ret = -ERESOURCE;
+		goto p_err;
+	}
 	__copy_message_to_line(base, sgmt_len, wptr, msg);
 	//npu_info("sgmt_len : %d\t wptr : %d\t cmd_str_wptr : %d\n", sgmt_len, wptr, cmd_str_wptr);
 	/* if payload is a continous thing behind of command, payload should be updated */
@@ -300,7 +311,8 @@ int mbx_ipc_put(char *underlay, volatile struct mailbox_ctrl *ctrl, struct messa
 		cmd->payload = (u32)(cmd_str_wptr + sizeof(struct command));
 		npu_info("update cmd->payload: %d\n", cmd->payload);
 	}
-	__copy_command_to_line(base, sgmt_len, cmd_str_wptr, cmd, msg->length);
+	__copy_command_to_line(base, sgmt_len, cmd_str_wptr, cmd, sizeof(struct command));
+	npu_memory_sync_for_device();
 	ctrl->wptr = cmd_end_wptr;
 
 p_err:
@@ -324,6 +336,7 @@ int mbx_ipc_peek_msg(char *underlay, volatile struct mailbox_ctrl *ctrl, struct 
 		ret = -EINVAL;
 		goto p_err;
 	}
+
 	base = underlay - ctrl->sgmt_ofs;
 	sgmt_len = ctrl->sgmt_len;
 	rptr = ctrl->rptr;
@@ -340,6 +353,11 @@ int mbx_ipc_peek_msg(char *underlay, volatile struct mailbox_ctrl *ctrl, struct 
 	updated_rptr = __copy_message_from_line(base, sgmt_len, rptr, msg);
 	if (msg->magic != MESSAGE_MAGIC) {
 		ret = -EINVAL;
+		goto p_err;
+	}
+
+	if (msg->length != sizeof(struct command)) {
+		ret = -ERESOURCE;
 		goto p_err;
 	}
 	msg->self = rptr;
@@ -388,6 +406,11 @@ int mbx_ipc_get_msg(char *underlay, volatile struct mailbox_ctrl *ctrl, struct m
 		goto p_err;
 	}
 
+	if (msg->length != sizeof(struct command)) {
+		ret = -ERESOURCE;
+		goto p_err;
+	}
+
 	msg->self = rptr;
 	ctrl->rptr = updated_rptr;
 	ret = sizeof(struct message);
@@ -415,12 +438,12 @@ int mbx_ipc_get_cmd(char *underlay, volatile struct mailbox_ctrl *ctrl, struct m
 	wptr = ctrl->wptr;
 
 	readable_size = __get_readable_size(sgmt_len, wptr, rptr);
-	if (readable_size < msg->length) {
+	if (readable_size < sizeof(struct command)) {
 		ret = -EINVAL;
 		goto p_err;
 	}
 
-	updated_rptr = __copy_command_from_line(base, sgmt_len, msg->data, cmd, msg->length);
+	updated_rptr = __copy_command_from_line(base, sgmt_len, msg->data, cmd, sizeof(struct command));
 
 	ctrl->rptr = updated_rptr;
 
@@ -459,6 +482,11 @@ int mbx_ipc_ref_msg(char *underlay, volatile struct mailbox_ctrl *ctrl, struct m
 		goto p_err;
 	}
 
+	if (next->length != sizeof(struct command)) {
+		ret = -ERESOURCE;
+		goto p_err;
+	}
+
 	next->self = msg_str_rptr;
 
 p_err:
@@ -489,6 +517,11 @@ int mbx_ipc_clr_msg(char *underlay, volatile struct mailbox_ctrl *ctrl, struct m
 		__copy_message_from_line(base, sgmt_len, rptr, &temp);
 		if (temp.magic != MESSAGE_MARK)
 			break;
+
+		if (temp.length != sizeof(struct command)) {
+			ret = -ERESOURCE;
+			goto p_err;
+		}
 
 		rptr = temp.data + temp.length;
 	}

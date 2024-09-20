@@ -13,11 +13,8 @@ config VENDER_DEFAULT
         bool "Default"
 config VENDER_MCD
         bool "MCD"
-config VENDER_MCD_V2
-        bool "MCD_V2"
 endchoice
 
 source "drivers/media/platform/exynos/camera/vendor/default/Kconfig"
 source "drivers/media/platform/exynos/camera/vendor/mcd/Kconfig"
-source "drivers/media/platform/exynos/camera/vendor/mcd_v2/Kconfig"
 endmenu

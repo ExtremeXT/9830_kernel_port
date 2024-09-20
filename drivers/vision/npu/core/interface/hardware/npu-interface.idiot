@@ -98,10 +98,10 @@ void init_sfr(int mbox_idx)
 	interface.sfr->grp[mbox_idx].ms = 0;
 }
 
-void open_interface(struct npu_system system, volatile void *sfr)
+void open_interface(volatile struct mailbox_hdr *mbox_hdr, volatile void *sfr)
 {
 	register_msgid_get_type_idiot(get_type);
-	system.mbox_hdr->signature1 = MAILBOX_SIGNATURE1;
+	mbox_hdr->signature1 = MAILBOX_SIGNATURE1;
 	interface.sfr = (volatile struct mailbox_sfr *)sfr;
 }
 
@@ -121,7 +121,7 @@ static void setup_basic(void) {
 	mbox_hdr = kmalloc(0x100000, GFP_KERNEL);
 	test_system.fw_npu_memory_buffer->vaddr = (void *)mbox_hdr;
 	test_system.mbox_hdr = (volatile struct mailbox_hdr *)((void *)test_system.fw_npu_memory_buffer->vaddr + NPU_MAILBOX_BASE - sizeof(struct mailbox_hdr));
-	open_interface(test_system, sfr);
+	open_interface(test_system.mbox_hdr, sfr);
 }
 
 static void teardown_basic(void) {

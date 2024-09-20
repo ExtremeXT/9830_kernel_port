@@ -8,6 +8,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <asm/byteorder.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -21,7 +22,7 @@
 
 int dpu_panel_log_level = 7;
 
-struct exynos_panel_device *panel_drvdata;
+struct exynos_panel_device *panel_drvdata[MAX_PANEL_DRV_SUPPORT];
 EXPORT_SYMBOL(panel_drvdata);
 
 static struct exynos_panel_ops *panel_list[MAX_PANEL_SUPPORT];
@@ -132,9 +133,6 @@ static void exynos_panel_get_timing_info(struct exynos_panel_info *info,
 	of_property_read_u32(np, "data_lane", &info->data_lane);
 	DPU_INFO_PANEL("data lane count(%d)\n", info->data_lane);
 
-	of_property_read_u32(np, "eotp_disabled", &info->eotp_disabled);
-	DPU_INFO_PANEL("eotp_disabled(%d)\n", info->eotp_disabled);
-
 	if (info->mode == DECON_VIDEO_MODE) {
 		of_property_read_u32(np, "vt_compensation", &info->vt_compensation);
 		DPU_INFO_PANEL("vt_compensation(%d)\n", info->vt_compensation);
@@ -180,7 +178,6 @@ static void exynos_panel_get_mres_info(struct exynos_panel_info *info,
 			info->mres.en ? "enabled" : "disabled");
 
 	if (info->mres.en) {
-		info->mres_mode = 0; /* 0=WQHD, 1=FHD, 2=HD */
 		info->mres.number = 1; /* default = 1 */
 		of_property_read_u32(np, "mres_number", &num);
 		info->mres.number = num;
@@ -197,29 +194,11 @@ static void exynos_panel_get_mres_info(struct exynos_panel_info *info,
 			info->mres.res_info[i].dsc_en = dsc_en[i];
 			info->mres.res_info[i].dsc_width = dsc_w[i];
 			info->mres.res_info[i].dsc_height = dsc_h[i];
-			info->dsc_slice.dsc_enc_sw[i] =
-				exynos_panel_calc_slice_width(info->dsc.cnt,
-						info->dsc.slice_num, w[i]);
-			info->dsc_slice.dsc_dec_sw[i] = w[i] / info->dsc.slice_num;
 
-			if (info->mode == DECON_MIPI_COMMAND_MODE)
-				of_property_read_u32_array(np, "cmd_underrun_cnt",
-						info->cmd_underrun_cnt,
-						info->mres.number);
-
-			DPU_INFO_PANEL(" [%dx%d]: DSC(%d) enc/dec sw(%d %d) lp(%d)\n",
+			DPU_INFO_PANEL(" [%dx%d]: DSC(%d))\n",
 					info->mres.res_info[i].width,
 					info->mres.res_info[i].height,
-					info->mres.res_info[i].dsc_en,
-					info->dsc_slice.dsc_enc_sw[i],
-					info->dsc_slice.dsc_dec_sw[i],
-					info->cmd_underrun_cnt[i]);
-		}
-	} else {
-		if (info->mode == DECON_MIPI_COMMAND_MODE) {
-			of_property_read_u32(np, "cmd_underrun_cnt",
-					&info->cmd_underrun_cnt[0]);
-			DPU_INFO_PANEL("lp(%d)\n", info->cmd_underrun_cnt[0]);
+					info->mres.res_info[i].dsc_en);
 		}
 	}
 }
@@ -254,7 +233,37 @@ static void exynos_panel_get_hdr_info(struct exynos_panel_info *info,
 	}
 }
 
-#define DISPLAY_MODE_ITEM_CNT   8
+
+static void exynos_panel_get_color_mode_info(struct exynos_panel_info *info,
+		struct device_node *np)
+{
+	int i;
+	int cnt = 0;
+
+	struct panel_color_mode *color_mode = &info->color_mode;
+
+	cnt = of_property_count_u32_elems(np, "color_mode");
+
+	DPU_INFO_PANEL("supporting color mode : %d\n", cnt);
+
+	if (cnt > 0) {
+		if (cnt > MAX_COLOR_MODE) {
+			cnt = MAX_COLOR_MODE;
+		}
+		of_property_read_u32_array(np, "color_mode",
+			color_mode->mode, cnt);
+
+		color_mode->cnt = cnt;
+	}
+
+	for(i = 0; i < cnt; i++)
+		DPU_INFO_PANEL("color mode[%d] : %d\n", i, color_mode->mode[i]);
+}
+
+
+#ifdef CONFIG_EXYNOS_SET_ACTIVE
+
+#define DISPLAY_MODE_ITEM_CNT	7
 
 static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 		struct device_node *np)
@@ -268,17 +277,8 @@ static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 
 	DPU_INFO_PANEL("%s +\n", __func__);
 
-	of_property_read_u32(np, "active_fps", &info->active_fps);
-	DPU_INFO_PANEL("active_fps(%d)\n", info->active_fps);
-
 	of_property_read_u32(np, "default_mode", &info->cur_mode_idx);
 	DPU_INFO_PANEL("default display mode index(%d)\n", info->cur_mode_idx);
-
-	of_property_read_u32(np, "underrun_max_num", &info->continuous_underrun_max);
-	DPU_INFO_PANEL("underrun_max_num(%d)\n", info->continuous_underrun_max);
-
-	of_property_read_u32(np, "wait_lp11", &info->wait_lp11);
-	DPU_INFO_PANEL("wait_lp11(%d)\n", info->wait_lp11);
 
 	size = of_property_count_u32_elems(np, "display_mode");
 	if (size < 0) {
@@ -301,33 +301,32 @@ static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 		info->display_mode[i].mode.mm_height = info->height;
 		info->display_mode[i].cmd_lp_ref = be32_to_cpu(mode_item[3]);
 		info->display_mode[i].dsc_en = be32_to_cpu(mode_item[4]);
-		if (info->display_mode[i].dsc_en) {
-			info->display_mode[i].dsc_width = be32_to_cpu(mode_item[5]);
-			info->display_mode[i].dsc_height = be32_to_cpu(mode_item[6]);
-			info->display_mode[i].dsc_enc_sw =
-				exynos_panel_calc_slice_width(info->dsc.cnt,
-						info->dsc.slice_num,
-						info->display_mode[i].mode.width);
-			info->display_mode[i].dsc_dec_sw =
-				info->display_mode[i].mode.width / info->dsc.slice_num;
-		}
+		info->display_mode[i].dsc_width = be32_to_cpu(mode_item[5]);
+		info->display_mode[i].dsc_height = be32_to_cpu(mode_item[6]);
+		info->display_mode[i].dsc_enc_sw =
+			exynos_panel_calc_slice_width(info->dsc.cnt,
+					info->dsc.slice_num,
+					info->display_mode[i].mode.width);
+		info->display_mode[i].dsc_dec_sw =
+			info->display_mode[i].mode.width / info->dsc.slice_num;
+
 		if ((i > 0) &&
 			((info->display_mode[i].mode.width != info->display_mode[i - 1].mode.width) ||
-			 (info->display_mode[i].mode.height != info->display_mode[i - 1].mode.height)))
-			disp_group++;
+			(info->display_mode[i].mode.height != info->display_mode[i - 1].mode.height))) {
+				disp_group++;
+			}
+
 		info->display_mode[i].mode.group = disp_group;
 
-		info->display_mode[i].vfp = be32_to_cpu(mode_item[7]);
-
-		DPU_INFO_PANEL("display mode[%d] : %dx%d@%d, %dmm x %dmm, lp_ref(%d), vfp(%d)\n",
+		DPU_INFO_PANEL("found display mode[%d] : %dx%d@%d, group %d %dmm x %dmm, lp_ref(%d)\n",
 				info->display_mode[i].mode.index,
 				info->display_mode[i].mode.width,
 				info->display_mode[i].mode.height,
 				info->display_mode[i].mode.fps,
+				info->display_mode[i].mode.group,
 				info->display_mode[i].mode.mm_width,
 				info->display_mode[i].mode.mm_height,
-				info->display_mode[i].cmd_lp_ref,
-				info->display_mode[i].vfp);
+				info->display_mode[i].cmd_lp_ref);
 		DPU_INFO_PANEL("\t\tdsc %s, dsc size(%dx%d), dsc enc/dec sw(%d/%d)\n",
 				info->display_mode[i].dsc_en ? "enabled" : "disabled",
 				info->display_mode[i].dsc_width,
@@ -338,6 +337,7 @@ static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 
 	DPU_INFO_PANEL("%s -\n", __func__);
 }
+#endif
 
 void parse_lcd_info(struct device_node *np, EXYNOS_PANEL_INFO *lcd_info)
 {
@@ -359,11 +359,18 @@ void parse_lcd_info(struct device_node *np, EXYNOS_PANEL_INFO *lcd_info)
 	DPU_DEBUG_PANEL("LCD size(%dx%d), DDI type(%d)\n", res[0], res[1],
 			lcd_info->ddi_type);
 
+#if defined(CONFIG_EXYNOS_DECON_DQE)
+	snprintf(lcd_info->ddi_name, MAX_DDI_NAME_LEN, "%s", np->name);
+#endif
+
 	exynos_panel_get_timing_info(lcd_info, np);
 	exynos_panel_get_dsc_info(lcd_info, np);
 	exynos_panel_get_mres_info(lcd_info, np);
 	exynos_panel_get_hdr_info(lcd_info, np);
+	exynos_panel_get_color_mode_info(lcd_info, np);
+#ifdef CONFIG_EXYNOS_SET_ACTIVE
 	exynos_panel_get_display_modes(lcd_info, np);
+#endif
 }
 
 static void exynos_panel_list_up(void)
@@ -449,7 +456,7 @@ static void exynos_panel_init_panel_drv(struct exynos_panel_device *panel)
 	ret = call_panel_ops(panel, init, panel);
 }
 
-static int exynos_panel_parse_dt(struct exynos_panel_device *panel)
+int exynos_panel_parse_dt(struct exynos_panel_device *panel)
 {
 	int ret = 0;
 
@@ -477,7 +484,6 @@ static long exynos_panel_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *a
 		ret = exynos_panel_register(panel, *(u32 *)arg);
 		break;
 	case EXYNOS_PANEL_IOC_RESET:
-		call_panel_ops(panel, reset, panel);
 		break;
 	case EXYNOS_PANEL_IOC_DISPLAYON:
 		call_panel_ops(panel, displayon, panel);
@@ -499,6 +505,9 @@ static long exynos_panel_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *a
 		break;
 	case EXYNOS_PANEL_IOC_READ_STATE:
 		ret = call_panel_ops(panel, read_state, panel);
+		break;
+	case EXYNOS_PANEL_IOC_SET_VREFRESH:
+		call_panel_ops(panel, set_vrefresh, panel, (struct vrr_config_data*)arg);
 		break;
 #if defined(CONFIG_EXYNOS_COMMON_PANEL)
 	case EXYNOS_PANEL_IOC_INIT:
@@ -536,12 +545,14 @@ static long exynos_panel_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *a
 	case EXYNOS_PANEL_IOC_SET_ERROR_CB:
 		ret = call_panel_ops(panel, set_error_cb, panel, arg);
 		break;
-	case EXYNOS_PANEL_IOC_INDISPLAY_PRE:
-		ret = call_panel_ops(panel, indisplay_pre, panel, *(bool *)arg);
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+	case EXYNOS_PANEL_IOC_GET_DISPLAY_MODE:
+		ret = call_panel_ops(panel, get_display_mode, panel, arg);
 		break;
-	case EXYNOS_PANEL_IOC_INDISPLAY_POST:
-		ret = call_panel_ops(panel, indisplay_post, panel, *(bool *)arg);
+	case EXYNOS_PANEL_IOC_SET_DISPLAY_MODE:
+		ret = call_panel_ops(panel, set_display_mode, panel, arg);
 		break;
+#endif
 #endif
 	default:
 		DPU_ERR_PANEL("not supported ioctl (0x%x) by panel driver\n", cmd);
@@ -577,7 +588,7 @@ static int exynos_panel_probe(struct platform_device *pdev)
 	struct exynos_panel_device *panel;
 	int ret = 0;
 
-	DPU_DEBUG_PANEL("%s common_panel_drv.c+\n", __func__);
+	DPU_DEBUG_PANEL("%s +\n", __func__);
 
 	panel = devm_kzalloc(&pdev->dev, sizeof(struct exynos_panel_device),
 			GFP_KERNEL);
@@ -588,7 +599,6 @@ static int exynos_panel_probe(struct platform_device *pdev)
 	}
 
 	panel->dev = &pdev->dev;
-	panel_drvdata = panel;
 
 	mutex_init(&panel->ops_lock);
 
@@ -596,6 +606,8 @@ static int exynos_panel_probe(struct platform_device *pdev)
 	if (ret) {
 		goto err;
 	}
+
+	panel_drvdata[panel->id] = panel;
 
 	exynos_panel_list_up();
 	exynos_panel_register_ops(panel);
@@ -606,11 +618,11 @@ static int exynos_panel_probe(struct platform_device *pdev)
 
 	exynos_panel_init_panel_drv(panel);
 
-	DPU_DEBUG_PANEL("%s common_panel_drv.c-\n", __func__);
+	DPU_DEBUG_PANEL("%s -\n", __func__);
 	return ret;
 
 err:
-	DPU_DEBUG_PANEL("%s common_panel_drv.c-\n", __func__);
+	DPU_DEBUG_PANEL("%s -\n", __func__);
 	return ret;
 }
 

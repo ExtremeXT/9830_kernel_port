@@ -507,43 +507,6 @@ out:
 EXPORT_SYMBOL_GPL(usb_gadget_wakeup);
 
 /**
- * usb_gsi_ep_op - performs operation on GSI accelerated EP based on EP op code
- *
- * Operations such as EP configuration, TRB allocation, StartXfer etc.
- * See gsi_ep_op for more details.
- */
-int usb_gsi_ep_op(struct usb_ep *ep,
-		struct usb_gsi_request *req, enum gsi_ep_op op)
-{
-	if (ep && ep->ops && ep->ops->gsi_ep_op)
-		return ep->ops->gsi_ep_op(ep, req, op);
-
-	return -EOPNOTSUPP;
-}
-EXPORT_SYMBOL_GPL(usb_gsi_ep_op);
-
-/**
- * usb_gadget_func_wakeup - send a function remote wakeup up notification
- * to the host connected to this gadget
- * @gadget: controller used to wake up the host
- * @interface_id: the interface which triggered the remote wakeup event
- *
- * Returns zero on success. Otherwise, negative error code is returned.
- */
-int usb_gadget_func_wakeup(struct usb_gadget *gadget,
-	int interface_id)
-{
-	if (!gadget || (gadget->speed != USB_SPEED_SUPER))
-		return -EOPNOTSUPP;
-
-	if (!gadget->ops || !gadget->ops->func_wakeup)
-		return -EOPNOTSUPP;
-
-	return gadget->ops->func_wakeup(gadget, interface_id);
-}
-EXPORT_SYMBOL_GPL(usb_gadget_func_wakeup);
-
-/**
  * usb_gadget_set_selfpowered - sets the device selfpowered feature.
  * @gadget:the device being declared as self-powered
  *
@@ -852,6 +815,9 @@ int usb_gadget_map_request_by_dev(struct device *dev,
 	if (req->num_sgs) {
 		int     mapped;
 
+		pr_info("%s: req->num_sgs: 0x%x\n", __func__, req->num_sgs);
+		dump_stack();
+
 		mapped = dma_map_sg(dev, req->sg, req->num_sgs,
 				is_in ? DMA_TO_DEVICE : DMA_FROM_DEVICE);
 		if (mapped == 0) {
@@ -860,6 +826,7 @@ int usb_gadget_map_request_by_dev(struct device *dev,
 		}
 
 		req->num_mapped_sgs = mapped;
+		WARN_ON_ONCE(req->num_mapped_sgs);
 	} else {
 		if (is_vmalloc_addr(req->buf)) {
 			dev_err(dev, "buffer is not dma capable\n");
@@ -1396,7 +1363,17 @@ static int udc_bind_to_driver(struct usb_udc *udc, struct usb_gadget_driver *dri
 		driver->unbind(udc->gadget);
 		goto err1;
 	}
-	usb_udc_connect_control(udc);
+
+	/*
+	 * HACK: The Android gadget driver disconnects the gadget
+	 * on bind and expects the gadget to stay disconnected until
+	 * it calls usb_gadget_connect when userspace is ready. Remove
+	 * the call to usb_gadget_connect bellow to avoid enabling the
+	 * pullup before userspace is ready.
+	 */
+#ifndef CONFIG_USB_OLD_CONFIGFS
+	 usb_udc_connect_control(udc);
+#endif
 
 	kobject_uevent(&udc->dev.kobj, KOBJ_CHANGE);
 	return 0;
@@ -1508,13 +1485,10 @@ static ssize_t soft_connect_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t n)
 {
 	struct usb_udc		*udc = container_of(dev, struct usb_udc, dev);
-	ssize_t			ret;
 
-	mutex_lock(&udc_lock);
 	if (!udc->driver) {
 		dev_err(dev, "soft-connect without a gadget driver\n");
-		ret = -EOPNOTSUPP;
-		goto out;
+		return -EOPNOTSUPP;
 	}
 
 	if (sysfs_streq(buf, "connect")) {
@@ -1526,14 +1500,10 @@ static ssize_t soft_connect_store(struct device *dev,
 		usb_gadget_udc_stop(udc);
 	} else {
 		dev_err(dev, "unsupported command '%s'\n", buf);
-		ret = -EINVAL;
-		goto out;
+		return -EINVAL;
 	}
 
-	ret = n;
-out:
-	mutex_unlock(&udc_lock);
-	return ret;
+	return n;
 }
 static DEVICE_ATTR_WO(soft_connect);
 

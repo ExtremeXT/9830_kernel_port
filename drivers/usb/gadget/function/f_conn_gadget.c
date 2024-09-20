@@ -136,7 +136,7 @@ static struct usb_interface_descriptor conn_gadget_interface_desc = {
 	.bNumEndpoints          = 2,
 	.bInterfaceClass        = 0xFF,
 	.bInterfaceSubClass     = 0x40,
-	.bInterfaceProtocol     = 3,
+	.bInterfaceProtocol     = 2,
 };
 
 static struct usb_endpoint_descriptor conn_gadget_superspeed_in_desc = {
@@ -953,6 +953,8 @@ conn_gadget_function_unbind(struct usb_configuration *c, struct usb_function *f)
 	struct conn_gadget_dev	*dev = func_to_conn_gadget(f);
 	struct usb_request *req;
 	int ep_out_excl_locked = 0;
+	int idle = 0;
+	int busy = 0;
 
 	printk(KERN_ERR "conn_gadget_function_unbind\n");
 
@@ -974,13 +976,15 @@ conn_gadget_function_unbind(struct usb_configuration *c, struct usb_function *f)
 	} else {
 		ep_out_excl_locked = 1;
 	}
-
-	while ((req = conn_gadget_req_get(dev, &dev->rx_idle)))
+	while ((req = conn_gadget_req_get(dev, &dev->rx_idle))) {
 		conn_gadget_request_free(req, dev->ep_out);
-
-	while ((req = conn_gadget_req_get(dev, &dev->rx_busy)))
+		idle++;
+	}
+	while ((req = conn_gadget_req_get(dev, &dev->rx_busy))) {
 		conn_gadget_request_free(req, dev->ep_out);
-
+		busy++;
+	}
+	printk("usb: %s: idle=%d, busy%d\n", __func__, idle, busy);
 	while ((req = conn_gadget_req_get(dev, &dev->tx_idle)))
 		conn_gadget_request_free(req, dev->ep_in);
 	if (ep_out_excl_locked) {
@@ -1306,8 +1310,8 @@ static int conn_gadget_setup(struct conn_gadget_instance *fi_conn_gadget)
 	return 0;
 err_:
 
-    if (dev->rd_queue_buf)
-		vfree(dev->rd_queue_buf);
+	if (dev->rd_queue_buf)
+	vfree(dev->rd_queue_buf);
 
 	_conn_gadget_dev = NULL;
 	kfree(dev);
@@ -1326,8 +1330,8 @@ static void conn_gadget_cleanup(struct kref *kref)
 
 	misc_deregister(&conn_gadget_device);
 
-    if (_conn_gadget_dev->rd_queue_buf)
-		vfree(_conn_gadget_dev->rd_queue_buf);
+	if (_conn_gadget_dev->rd_queue_buf)
+	vfree(_conn_gadget_dev->rd_queue_buf);
 
 	kfree(_conn_gadget_dev);
 	_conn_gadget_dev = NULL;
@@ -1452,7 +1456,6 @@ static struct usb_function *conn_gadget_alloc(struct usb_function_instance *fi)
 }
 
 DECLARE_USB_FUNCTION_INIT(conn_gadget, conn_gadget_alloc_inst, conn_gadget_alloc);
-MODULE_LICENSE("GPL");
 
 /*
 static int conn_gadget_function_init(struct android_usb_function *f, struct usb_composite_dev *cdev)

@@ -1702,7 +1702,7 @@ int sensor_2l4_cis_stream_on(struct v4l2_subdev *subdev)
 	 * then 8 ms waiting is needed before the StreamOn of a sensor (SAK2L4).
 	 */
 	if (test_bit(IS_SENSOR_PREPROCESSOR_AVAILABLE, &sensor_peri->peri_state))
-		mdelay(8);
+		usleep_range(8000, 8100);
 
 	/* Sensor stream on */
 #ifdef USE_FLIP_WIDE_SENSOR
@@ -3017,7 +3017,7 @@ int sensor_2l4_cis_long_term_exposure(struct v4l2_subdev *subdev)
 			        shift_count++;
 			}
 			lte_mode->expo[0] = 125000;
-#endif
+#endif 
 			ret |= is_sensor_write16(cis->client, 0xFCFC, 0x4000);
 			ret |= is_sensor_write8(cis->client, 0x0701, shift_count);
 			ret |= is_sensor_write8(cis->client, 0x0702, shift_count);

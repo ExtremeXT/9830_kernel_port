@@ -217,7 +217,6 @@ struct is_sensor_cfg {
 	u32 votf;
 	u32 scm; /* sensor DMA ch mode: default mode(0), spetail mode(1) */
 	u32 binning; /* binning ratio */
-	u32 dummy_pixel[CSI_VIRTUAL_CH_MAX];
 	struct is_vci_config input[CSI_VIRTUAL_CH_MAX];
 	struct is_vci_config output[CSI_VIRTUAL_CH_MAX];
 };
@@ -275,6 +274,7 @@ struct is_module_enum {
 	u32						position;
 	u32						bitwidth;
 	u32						cfgs;
+	u64						act_available_time;
 	struct is_sensor_cfg			*cfg;
 	struct is_sensor_vc_extra_info		vc_extra_info[VC_BUF_DATA_TYPE_MAX];
 	struct i2c_client				*client;
@@ -443,6 +443,7 @@ struct is_device_sensor {
 	u32						use_standby;
 	u32						sstream;
 	u32						ex_mode;
+	u32						ex_mode_option;
 	u32						ex_scenario;
 
 #ifdef ENABLE_INIT_AWB
@@ -533,7 +534,6 @@ int is_sensor_g_bns_width(struct is_device_sensor *device);
 int is_sensor_g_bns_height(struct is_device_sensor *device);
 int is_sensor_g_bns_ratio(struct is_device_sensor *device);
 int is_sensor_g_bratio(struct is_device_sensor *device);
-int is_sensor_g_sensorcrop_bratio(struct is_device_sensor *device);
 int is_sensor_g_module(struct is_device_sensor *device,
 	struct is_module_enum **module);
 int is_sensor_deinit_module(struct is_module_enum *module);
@@ -543,6 +543,7 @@ int is_search_sensor_module_with_sensorid(struct is_device_sensor *device,
 	u32 sensor_id, struct is_module_enum **module);
 int is_search_sensor_module_with_position(struct is_device_sensor *device,
 	u32 position, struct is_module_enum **module);
+int is_sensor_votf_tag(struct is_device_sensor *device, struct is_subdev *subdev);
 int is_sensor_dm_tag(struct is_device_sensor *device,
 	struct is_frame *frame);
 int is_sensor_buf_tag(struct is_device_sensor *device,

@@ -352,7 +352,7 @@ static void __mfc_handle_frame_output_del(struct mfc_ctx *ctx, unsigned int err)
 				mfc_set_vb_flag(dst_mb, MFC_FLAG_HDR_PLUS);
 				mfc_debug(2, "[HDR+] HDR10 plus dyanmic SEI metadata parsed\n");
 			} else {
-				mfc_err_ctx("[HDR+] HDR10 plus cannot be copied\n");
+				mfc_err_ctx("[HDR+] HDR10 plus cannot be parsed\n");
 			}
 		} else {
 			if (dec->hdr10_plus_info)
@@ -467,6 +467,8 @@ static void __mfc_handle_released_buf(struct mfc_ctx *ctx)
 	released_flag = prev_flag & (~dec->dynamic_used);
 	mfc_debug(2, "[DPB] Used flag: old = %#lx, new = %#lx, released = %#lx, queued = %#lx\n",
 			prev_flag, dec->dynamic_used, released_flag, dec->queued_dpb);
+	MFC_TRACE_CTX("DPB Used: %#lx released: %#lx queued: %#lx display: %d\n",
+			dec->dynamic_used, released_flag, dec->queued_dpb, dec->display_index);
 
 	flag = dec->dynamic_used | released_flag;
 	for (i = __ffs(flag); i < MFC_MAX_DPBS;) {
@@ -655,6 +657,8 @@ static void __mfc_handle_frame(struct mfc_ctx *ctx,
 	struct mfc_dec *dec = ctx->dec_priv;
 	unsigned int dst_frame_status, sei_avail_frame_pack;
 	unsigned int res_change, need_dpb_change, need_scratch_change;
+	struct mfc_buf *mfc_buf;
+	int index;
 
 	dst_frame_status = mfc_get_disp_status();
 	res_change = mfc_get_res_change();
@@ -690,6 +694,12 @@ static void __mfc_handle_frame(struct mfc_ctx *ctx,
 		mfc_change_state(ctx, MFCINST_RES_CHANGE_INIT);
 		ctx->wait_state = WAIT_G_FMT | WAIT_STOP;
 		mfc_debug(2, "[DRC] Decoding waiting! : %d\n", ctx->wait_state);
+
+		mfc_buf = mfc_get_buf(ctx, &ctx->src_buf_queue, MFC_BUF_NO_TOUCH_USED);
+		if (mfc_buf) {
+			index = mfc_buf->vb.vb2_buf.index;
+			call_cop(ctx, restore_buf_ctrls, ctx, &ctx->src_ctrls[index]);
+		}
 		return;
 	}
 
@@ -739,6 +749,7 @@ static void __mfc_handle_frame(struct mfc_ctx *ctx,
 			ctx->ts_is_full = 0;
 			mfc_qos_reset_last_framerate(ctx);
 			mfc_qos_set_framerate(ctx, DEC_DEFAULT_FPS);
+			mfc_qos_on(ctx);
 
 			goto leave_handle_frame;
 		} else {
@@ -950,6 +961,9 @@ static int __mfc_handle_stream(struct mfc_ctx *ctx)
 
 	mfc_debug(2, "[STREAM] encoded slice type: %d, size: %d, display order: %d\n",
 			slice_type, strm_size, pic_count);
+
+	/* clear SBWC enable */
+	mfc_clear_enc_src_sbwc(dev);
 
 	/* buffer full handling */
 	if (enc->buf_full) {
@@ -1215,8 +1229,10 @@ static int __mfc_handle_seq_enc(struct mfc_ctx *ctx)
 		mfc_release_codec_buffers(ctx);
 	}
 	ret = mfc_alloc_codec_buffers(ctx);
-	if (ret)
+	if (ret) {
 		mfc_err_ctx("Failed to allocate encoding buffers\n");
+		return ret;
+	}
 
 	mfc_change_state(ctx, MFCINST_HEAD_PARSED);
 

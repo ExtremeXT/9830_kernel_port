@@ -50,8 +50,8 @@
  * -. QBC HDR
  *    [ 15 ] REG_S : QBCHDR Seamless 3264x2448 24fps  : QBCHDR seamless (4:3)        ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
  *    [ 16 ] REG_W : QBCHDR Seamless 3264x1836 30fps  : QBCHDR seamless (16:9)       ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
- *    [ 17 ] REG_X : 2x2Bin Seamless 3264x1836 30fps  : 2X2Bin seamless (4:3)        ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
- *    [ 18 ] REG_Z : 2x2Bin Seamless 3264x2448 24fps  : 2X2Bin seamless (16:9)       ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
+ *    [ 17 ] REG_X : 2x2Bin Seamless 3264x1836 30fps  : 2X2Bin seamless (16:9)       ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
+ *    [ 18 ] REG_Z : 2x2Bin Seamless 3264x2448 24fps  : 2X2Bin seamless (4:3)        ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
  *
  */
 
@@ -3207,47 +3207,6 @@ const u32 sensor_imx616_setfile_B_transition_QHDR_to_2X2BIN[] =
 	0x0B06, 0x00, 0x01,
 };
 
-/* for 3hdr */
-const u32 sensor_imx616_exposure_nr_on[] =
-{
-	0xEB01, 0x01, 0x01,
-	0xF106, 0x28, 0x01,
-	0xF107, 0x0C, 0x01,
-	0xF108, 0x04, 0x01,
-	0xF20D, 0xC0, 0x01,
-	0xF20F, 0x70, 0x01,
-	0xF211, 0x1C, 0x01,
-	0xF012, 0x00, 0x01,
-	0xF014, 0x00, 0x01,
-	0xF016, 0x00, 0x01,
-	0xF007, 0x08, 0x01,
-	0xF009, 0x08, 0x01,
-	0xF00B, 0x08, 0x01,
-	0xF013, 0x10, 0x01,
-	0xF015, 0x10, 0x01,
-	0xF017, 0x10, 0x01,
-};
-
-const u32 sensor_imx616_exposure_nr_off[] =
-{
-	0xEB01, 0x00, 0x01,
-	0xF106, 0x45, 0x01,
-	0xF107, 0x04, 0x01,
-	0xF108, 0x02, 0x01,
-	0xF20D, 0x00, 0x01,
-	0xF20F, 0x3E, 0x01,
-	0xF211, 0x04, 0x01,
-	0xF012, 0x01, 0x01,
-	0xF014, 0x01, 0x01,
-	0xF016, 0x01, 0x01,
-	0xF007, 0xC8, 0x01,
-	0xF009, 0xC8, 0x01,
-	0xF00B, 0xC8, 0x01,
-	0xF013, 0x2C, 0x01,
-	0xF015, 0x2C, 0x01,
-	0xF017, 0x2C, 0x01,
-};
-
 /* H */
 const struct sensor_pll_info_compact sensor_imx616_pllinfo_B_2X2BIN_3264x2448_30FPS = {
 	EXT_CLK_Mhz * 1000 * 1000,	/* ext_clk */
@@ -3359,7 +3318,7 @@ const struct sensor_pll_info_compact sensor_imx616_pllinfo_B_2X2BIN_1968x1968_30
 const struct sensor_pll_info_compact sensor_imx616_pllinfo_B_H2V2_1632x1224_120FPS = {
 	EXT_CLK_Mhz * 1000 * 1000,	/* ext_clk */
 	2054000000,			/* mipi_datarate = OPSYCK */
-	87100000,			/* pclk = VTPXCK of Clock Information */
+	174200000,			/* pclk = VTPXCK of Clock Information */
 	1290,				/* frame_length_lines */
 	2248,				/* line_length_pck */
 };

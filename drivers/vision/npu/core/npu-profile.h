@@ -13,6 +13,59 @@
 #ifndef _NPU_PROFILE_H_
 #define _NPU_PROFILE_H_
 
+	/* FRAME
+	 * 0(0x00) ~ 31 : Processing
+	 * .uid = UID
+	 * .frame_id = frame ID
+	 * .param[0] = direction (EQ and DQ only)
+	 * .param[1] = request ID (between SCHEDULED ~ DONE only)
+	 * .param[2] = reserved
+	 * .param[3] = reserved
+	 * .param[4] = reserved
+	 */
+	/* NW
+	 * 32(0x20) ~ 63 : Network mgmt.
+	 * .uid = UID
+	 * .frame_id = N/A
+	 * .param[0] = Command code (See nw_cmd_e definition in npu-commoh.h)
+	 * .param[1] = request ID (between SCHEDULED ~ DONE only)
+	 * .param[2] = reserved
+	 * .param[3] = reserved
+	 * .param[4] = reserved
+	 */
+#define NPU_PROFILE_ID	{ \
+	NPU_PROFILE_IDS(FRAME_EQ),	\
+	NPU_PROFILE_IDS(FRAME_SCHEDULED),	\
+	NPU_PROFILE_IDS(FRAME_PROCESS),	\
+	NPU_PROFILE_IDS(FRAME_COMPLETED),	\
+	NPU_PROFILE_IDS(FRAME_DONE),	\
+	NPU_PROFILE_IDS(FRAME_DQ),	\
+	NPU_PROFILE_IDS(FRAME_VS4L_QBUF_ENTER),	\
+	NPU_PROFILE_IDS(FRAME_VS4L_DQBUF_RET),	\
+	NPU_PROFILE_IDS(NW_RECEIVED),	\
+	NPU_PROFILE_IDS(NW_SCHEDULED),	\
+	NPU_PROFILE_IDS(NW_PROCESS),	\
+	NPU_PROFILE_IDS(NW_COMPLETED),	\
+	NPU_PROFILE_IDS(NW_DONE),	\
+	NPU_PROFILE_IDS(NW_NOTIFIED),	\
+	NPU_PROFILE_IDS(NW_VS4L_ENTER),	\
+	NPU_PROFILE_IDS(NW_VS4L_RET),	\
+	NPU_PROFILE_IDS(MAX)	\
+}
+
+#undef NPU_PROFILE_IDS
+#define NPU_PROFILE_IDS(x)	PROBE_ID_DD_##x
+enum NPU_PROFILE_ID;
+#undef NPU_PROFILE_IDS
+#define NPU_PROFILE_IDS(x)	#x
+static char *npu_profile_id_name[] = NPU_PROFILE_ID;
+
+struct npu_profile_operation {
+	u32 (*timestamp)(void);
+};
+
+#ifdef CONFIG_NPU_USE_SPROFILER
+
 #include <npu-common.h>
 #include <linux/mutex.h>
 #include <linux/wait.h>
@@ -28,47 +81,6 @@
 #define PROFILE_CMD_POST_RETRY_INTERVAL	100
 #define PROFILE_CMD_POST_RETRY_CNT	10
 #define PROFILE_HW_RESP_TIMEOUT		1000
-
-enum probe_id {
-	/*
-	 * 0(0x00) ~ 31 : Processing
-	 * .uid = UID
-	 * .frame_id = frame ID
-	 * .param[0] = direction (EQ and DQ only)
-	 * .param[1] = request ID (between SCHEDULED ~ DONE only)
-	 * .param[2] = reserved
-	 * .param[3] = reserved
-	 * .param[4] = reserved
-	 */
-	PROBE_ID_DD_FRAME_EQ = 0,
-	PROBE_ID_DD_FRAME_SCHEDULED,
-	PROBE_ID_DD_FRAME_PROCESS,
-	PROBE_ID_DD_FRAME_COMPLETED,
-	PROBE_ID_DD_FRAME_DONE,
-	PROBE_ID_DD_FRAME_DQ,
-	PROBE_ID_DD_FRAME_VS4L_QBUF_ENTER,
-	PROBE_ID_DD_FRAME_VS4L_DQBUF_RET,
-	/*
-	 * 32(0x20) ~ 63 : Network mgmt.
-	 * .uid = UID
-	 * .frame_id = N/A
-	 * .param[0] = Command code (See nw_cmd_e definition in npu-commoh.h)
-	 * .param[1] = request ID (between SCHEDULED ~ DONE only)
-	 * .param[2] = reserved
-	 * .param[3] = reserved
-	 * .param[4] = reserved
-	 */
-	PROBE_ID_DD_NW_RECEIVED = 32,
-	PROBE_ID_DD_NW_SCHEDULED,
-	PROBE_ID_DD_NW_PROCESS,
-	PROBE_ID_DD_NW_COMPLETED,
-	PROBE_ID_DD_NW_DONE,
-	PROBE_ID_DD_NW_NOTIFIED,
-	PROBE_ID_DD_NW_VS4L_ENTER,
-	PROBE_ID_DD_NW_VS4L_RET,
-
-	PROBE_ID_MAX = 99
-};
 
 enum profile_unit_id {
 	PROFILE_UNIT_FIRMWARE = 0,
@@ -109,6 +121,7 @@ struct npu_profile_control {
 	struct npu_profile		*profile_data;	/* Pointer to buf's vaddr */
 	struct npu_memory_buffer        buf;		/* Shared buffer handle to struct profile_data object */
 	struct npu_statekeeper          statekeeper;
+	struct npu_profile_operation	ops;
 	int                             unit_num;       /* Not used yet */
 	int                             point_num;      /* Not used yet */
 	atomic_t			next_probe_point_idx;	/* Index of npu_profile.point[] to be used on next profile data */
@@ -124,10 +137,19 @@ int npu_profile_probe(struct npu_system *system);
 int npu_profile_open(struct npu_system *system);
 int npu_profile_close(struct npu_system *system);
 int npu_profile_release(void);
+int npu_profile_set_operation(const struct npu_profile_operation *ops);
 
 void profile_point1(const u32 point_id, const u32 uid, const u32 frame_id, const u32 p0);
 void profile_point3(
 	const u32 point_id, const u32 uid, const u32 frame_id,
 	const u32 p0, const u32 p1, const u32 p2);
+
+#else	/* !CONFIG_NPU_USE_SPROFILER */
+
+#define profile_point1(point_id, uid, frame_id, p0)
+#define profile_point3(point_id, uid, frame_id, p0, p1, p2)
+#define npu_profile_set_operation(ops)	0
+
+#endif	/* CONFIG_NPU_USE_SPROFILER */
 
 #endif	/* _NPU_PROFILE_H_ */

@@ -100,7 +100,6 @@
 #define IS_ONLINE_CPU_MIN	4
 #define ENABLE_3AA_LIC_OFFSET	1
 #define PDP_RDMA_LINE_GAP      (0x64)
-#define IS_MAX_HW_3AA_SRAM		(13696)
 
 #define ENABLE_MODECHANGE_CAPTURE
 /*
@@ -241,7 +240,7 @@
 #undef RESERVED_MEM_IN_DT
 
 /* init AWB */
-#define ENABLE_INIT_AWB
+// #define ENABLE_INIT_AWB
 #define WB_GAIN_COUNT		(4)
 #define INIT_AWB_COUNT_REAR	(3)
 #define INIT_AWB_COUNT_FRONT	(8)
@@ -253,7 +252,7 @@
 #define CHAIN_TAG_SENSOR_IN_SOFTIRQ_CONTEXT	0
 #define CHAIN_TAG_VC0_DMA_IN_HARDIRQ_CONTEXT	1
 
-#define USE_SKIP_DUMP_LIC_OVERFLOW     1
+#define USE_SKIP_DUMP_LIC_OVERFLOW	1
 
 /* default LIC value for 9830 */
 /*

@@ -6,6 +6,7 @@ obj-$(CONFIG_VIDEO_EXYNOS_PABLO_ISP) += module_framework/ \
 					module_framework/modules/ \
 					module_framework/cis/ \
 					module_framework/actuator/ \
+					module_framework/laser_af/ \
 					module_framework/flash/ \
 					module_framework/pafstat/ \
 					module_framework/aperture/ \

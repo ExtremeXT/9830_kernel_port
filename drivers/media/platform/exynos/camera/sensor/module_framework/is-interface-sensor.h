@@ -153,14 +153,20 @@ enum itf_vc_sensor_mode {
 	VC_SENSOR_MODE_ULTRA_PD_TAIL,
 	VC_SENSOR_MODE_ULTRA_PD_2_NORMAL,
 	VC_SENSOR_MODE_ULTRA_PD_2_TAIL,
+	VC_SENSOR_MODE_ULTRA_PD_3_NORMAL,
+	VC_SENSOR_MODE_ULTRA_PD_3_TAIL,        // HI847(S20 FE). LLLLL RRRRR RRRRR LLLLL
 
 	/* Super PD */
 	VC_SENSOR_MODE_SUPER_PD_NORMAL = 400,
 	VC_SENSOR_MODE_SUPER_PD_TAIL,
 	VC_SENSOR_MODE_SUPER_PD_2_NORMAL,
 	VC_SENSOR_MODE_SUPER_PD_2_TAIL,
-
-	VC_SENSOR_MODE_SUPER_PD_5_TAIL = 413,
+	VC_SENSOR_MODE_SUPER_PD_3_NORMAL,
+	VC_SENSOR_MODE_SUPER_PD_3_TAIL,        // GW2(Hubble X1/X2/Z3), GH1(Hubble Z3). LLLLL RRRRR
+	VC_SENSOR_MODE_SUPER_PD_4_NORMAL_FULL,
+	VC_SENSOR_MODE_SUPER_PD_4_NORMAL_3BIN,
+	VC_SENSOR_MODE_SUPER_PD_4_NORMAL_6BIN,
+	VC_SENSOR_MODE_SUPER_PD_4_TAIL,        // HM1(Hubble Z3). LRLRLRLRLRLRLRLR
 
 	/* IMX PDAF */
 	VC_SENSOR_MODE_IMX_PDAF = 500,
@@ -232,6 +238,7 @@ typedef struct {
 	enum camera2_wdr_mode pre_wdr_mode;
 	enum camera2_disparity_mode disparity_mode;
 	enum camera2_paf_mode paf_mode;
+	enum aa_scene_mode scene_mode;
 } is_shared_data;
 
 typedef struct {
@@ -248,17 +255,17 @@ struct wb_gains {
 };
 
 struct roi_setting_t {
-	bool update;
+	bool    update;
 #ifdef SUPPORT_SENSOR_SEAMLESS_3HDR
-	u16 roi_start_x[2];
-	u16 roi_start_y[2];
-	u16 roi_end_x[2];
-	u16 roi_end_y[2];
+	u16     roi_start_x[2];
+	u16     roi_start_y[2];
+	u16     roi_end_x[2];
+	u16     roi_end_y[2];
 #else
-	u16 roi_start_x;
-	u16 roi_start_y;
-	u16 roi_end_x;
-	u16 roi_end_y;
+	u16 	roi_start_x;
+	u16 	roi_start_y;
+	u16 	roi_end_x;
+	u16 	roi_end_y;
 #endif
 };
 
@@ -329,7 +336,7 @@ typedef struct {
 	/** Video Timing Pixel Clock, vt_pix_clk_freq. */
 	unsigned int pclk;
 	unsigned int min_frame_us_time;
-#ifdef REAR_SUB_CAMERA
+#ifdef CAMERA_REAR2
 	unsigned int min_sync_frame_us_time;
 #endif
 
@@ -351,6 +358,7 @@ typedef struct {
 	unsigned int cur_frame_us_time;
 	unsigned int cur_width;
 	unsigned int cur_height;
+	unsigned int cur_pattern_mode;
 	unsigned int pre_width;
 	unsigned int pre_height;
 
@@ -379,10 +387,10 @@ typedef struct {
 	/* Moved from SensorEntry.cpp Jong 20121008 */
 	unsigned int sen_vsync_count;
 	unsigned int sen_frame_id;
-	unsigned int stream_id;
 	unsigned int product_name; /* sensor names such as IMX134, IMX135, and S5K3L2 */
 	unsigned int sens_config_index_cur;
 	unsigned int sens_config_index_pre;
+	unsigned int sens_config_ex_mode_cur;
 	unsigned int cur_frame_rate;
 	unsigned int pre_frame_rate;
 	bool is_active_area;
@@ -396,28 +404,26 @@ typedef struct {
 
 	unsigned int max_fps;
 
-	unsigned int mipi_err_int_cnt[10];
-	unsigned int mipi_err_print_out_cnt[10];
-
-	bool called_common_sensor_setting; /* [hc0105.kim, 2013/09/13] Added to avoid calling common sensor register setting again. */
 /* #ifdef C1_LSC_CHANGE // [ist.song 2014.08.19] Added to inform videomode to sensor. */
 	bool video_mode;
 #ifdef USE_NEW_PER_FRAME_CONTROL
 	unsigned int num_of_frame;
 #endif
 /* #endif */
-	unsigned int actuator_position;
 
 	is_shared_data is_data;
 	ois_shared_data ois_data;
 	ae_setting auto_exposure[2];
 	preprocessor_ae_setting preproc_auto_exposure[2];
 
-/*	SysSema_t pFlashCtrl_IsrSema; //[2014.08.13, kh14.koo] to add for sema of KTD2692 (flash dirver) */
-
 	bool binning; /* If binning is set, sensor should binning for size */
-
 	bool dual_slave;
+	bool lte_multi_capture_mode;
+	bool highres_capture_mode;
+
+	/* set aeb mode */
+	u32 cur_aeb_mode;
+	u32 pre_aeb_mode;
 
 	u32 cis_rev;
 	u32 cis_model_id;
@@ -493,6 +499,7 @@ struct is_cis_ops {
 #endif
 	int (*cis_set_frs_control)(struct v4l2_subdev *subdev, u32 command);
 	int (*cis_set_super_slow_motion_roi)(struct v4l2_subdev *subdev, struct v4l2_rect *ssm_roi);
+	int (*cis_set_super_slow_motion_setting)(struct v4l2_subdev *subdev, struct v4l2_rect *setting);
 #ifdef CAMERA_REAR2_SENSOR_SHIFT_CROP
 	int (*cis_update_pdaf_tail_size)(struct v4l2_subdev *subdev, struct is_sensor_cfg *select);
 #endif
@@ -503,11 +510,14 @@ struct is_cis_ops {
 	int (*cis_get_super_slow_motion_gmc)(struct v4l2_subdev *subdev, u32 *gmc);
 	int (*cis_get_super_slow_motion_frame_id)(struct v4l2_subdev *subdev, u32 *frameid);
 	int (*cis_set_super_slow_motion_flicker)(struct v4l2_subdev *subdev, u32 flicker);
+	int (*cis_get_super_slow_motion_flicker)(struct v4l2_subdev *subdev, u32 *flicker);
 	int (*cis_get_super_slow_motion_md_threshold)(struct v4l2_subdev *subdev, u32 *threshold);
 	int (*cis_set_super_slow_motion_gmc_table_idx)(struct v4l2_subdev *subdev, u32 idx);
 	int (*cis_set_super_slow_motion_gmc_block_with_md_low)(struct v4l2_subdev *subdev, u32 idx);
 	int (*cis_recover_stream_on)(struct v4l2_subdev *subdev);
+	int (*cis_recover_stream_off)(struct v4l2_subdev *subdev);
 	int (*cis_set_laser_control)(struct v4l2_subdev *subdev, u32 onoff);
+	int (*cis_set_laser_mode)(struct v4l2_subdev *subdev, u32 mode);
 	int (*cis_set_factory_control)(struct v4l2_subdev *subdev, u32 command);
 	int (*cis_set_laser_current)(struct v4l2_subdev *subdev, u32 value);
 	int (*cis_get_laser_photo_diode)(struct v4l2_subdev *subdev, u16 *value);
@@ -522,10 +532,12 @@ struct is_cis_ops {
 	int (*cis_active_test)(struct v4l2_subdev *subdev);
 	int (*cis_set_dual_setting)(struct v4l2_subdev *subdev, u32 mode);
 	int (*cis_get_binning_ratio)(struct v4l2_subdev *subdev, u32 mode, int *binning_ratio);
-	int (*cis_set_totalgain)(struct v4l2_subdev *subdev, struct ae_param *target_exposure, struct ae_param *again, struct ae_param *dgain);
 	int (*cis_init_3hdr_lsc_table)(struct v4l2_subdev *subdev, void *data);
 	int (*cis_set_tone_stat)(struct v4l2_subdev *subdev, struct sensor_imx_3hdr_tone_control tone_control);
 	int (*cis_set_ev_stat)(struct v4l2_subdev *subdev, struct sensor_imx_3hdr_ev_control ev_control);
+	int (*cis_set_totalgain)(struct v4l2_subdev *subdev, struct ae_param *target_exposure, struct ae_param *again, struct ae_param *dgain);
+	int (*cis_set_fake_retention)(struct v4l2_subdev *subdev, bool enable);
+	int (*cis_set_test_pattern)(struct v4l2_subdev *subdev, camera2_sensor_ctl_t *sensor_ctl);
 };
 
 struct is_sensor_ctl
@@ -694,6 +706,11 @@ enum is_aperture_control_step {
 	APERTURE_STEP_MOVING,
 };
 
+enum is_sensor_aeb_mode {
+	SENSOR_AEB_MODE_OFF,
+	SENSOR_AEB_MODE_ON,
+};
+
 typedef int (*actuator_func_type)(struct v4l2_subdev *subdev, u32 *info);
 struct is_actuator_ops {
 	actuator_func_type actuator_init;
@@ -703,6 +720,7 @@ struct is_actuator_ops {
 #ifdef USE_AF_SLEEP_MODE
 	int (*set_active)(struct v4l2_subdev *subdev, int enable);
 #endif
+	int (*soft_landing_on_recording)(struct v4l2_subdev *subdev);
 };
 
 struct is_aperture_ops {
@@ -754,9 +772,19 @@ struct is_long_term_expo_mode {
 	u32 frame_interval;
 };
 
+struct is_ois_hall_data {
+	u64 readTimeStamp;
+	u32 counter;
+	int16_t X_AngVel[4];
+	int16_t Y_AngVel[4];
+	int16_t Z_AngVel[4];
+};
+
 /* OIS */
 struct is_ois_ops {
 	int (*ois_init)(struct v4l2_subdev *subdev);
+	int (*ois_init_fac)(struct v4l2_subdev *subdev);
+	void (*ois_init_rear2)(struct is_core *core);
 #if defined (CONFIG_OIS_USE_RUMBA_S6) || defined (CONFIG_CAMERA_USE_MCU) || \
 	defined (CONFIG_CAMERA_USE_INTERNAL_MCU)
 	int (*ois_deinit)(struct v4l2_subdev *subdev);
@@ -803,6 +831,12 @@ struct is_ois_ops {
 	int (*ois_set_af_active)(struct v4l2_subdev *subdev, int enable);
 	int (*ois_set_af_position)(struct v4l2_subdev *subdev, u32 position);
 	void (*ois_get_hall_pos)(struct is_core *core, u16 *targetPos, u16 *hallPos);
+	int (*ois_check_cross_talk)(struct v4l2_subdev *subdev, u16 *hall_data);
+#ifdef USE_OIS_HALL_DATA_FOR_VDIS
+	int (*ois_get_hall_data)(struct v4l2_subdev *subdev, struct is_ois_hall_data *halldata);
+#endif
+	bool(*ois_get_active)(void);
+	int(*ois_read_ext_clock)(struct v4l2_subdev *subdev, u32 *clock);
 };
 
 struct is_sensor_interface;
@@ -890,7 +924,7 @@ struct is_cis_interface_ops {
 
 	bool (*is_actuator_available)(struct is_sensor_interface *itf);
 	bool (*is_flash_available)(struct is_sensor_interface *itf);
-	int (*get_sensor_mode)(struct is_sensor_interface *itf);
+	bool (*is_companion_available)(struct is_sensor_interface *itf);
 	bool (*is_ois_available)(struct is_sensor_interface *itf);
 	bool (*is_aperture_available)(struct is_sensor_interface *itf);
 #if !defined(DISABLE_LASER_AF)
@@ -1047,12 +1081,19 @@ struct is_cis_ext2_interface_ops {
 				u32 gr_gain, u32 r_gain, u32 b_gain, u32 gb_gain);
 	int (*set_sensor_info_mfhdr_mode_change)(struct is_sensor_interface *itf,
 				u32 count, u32 *long_expo, u32 *long_again, u32 *long_dgain,
-				u32 *expo, u32 *again, u32 *dgain);
+				u32 *expo, u32 *again, u32 *dgain, u32 *sensitivity);
 	int (*set_mainflash_duration)(struct is_sensor_interface *itf,
 				u32 mainflash_duration);
-	int(*set_previous_dm)(struct is_sensor_interface *itf);
-	int (*get_delayed_preflash_time)(struct is_sensor_interface *itf, u32 *delayedTime);
-	void *reserved[11];
+	int (*set_previous_dm)(struct is_sensor_interface *itf);
+	int (*request_direct_flash)(struct is_sensor_interface *itf,
+				u32 mode,
+				bool on,
+				u32 intensity,
+				u32 time);
+	int (*set_lte_multi_capture_mode)(struct is_sensor_interface *itf,
+				bool lte_multi_capture_mode);
+	int (*set_aeb_mode)(struct is_sensor_interface *itf, u32 mode);
+	void *reserved[9];
 };
 
 struct is_cis_event_ops {
@@ -1243,23 +1284,21 @@ struct is_eeprom_ops {
 
 struct is_laser_af_ops
 {
-	int (*resume)(struct v4l2_subdev *subdev);
-	int (*suspend)(struct v4l2_subdev *subdev);
-	int (*get_distance_info)(struct v4l2_subdev *subdev, u32 *distance_mm,
-			u32 *confidence);
+	int (*set_active)(struct v4l2_subdev *subdev, bool is_active);
+	int (*get_distance)(struct v4l2_subdev *subdev, void *data, u32 *size);
 };
 
 #if !defined(DISABLE_LASER_AF)
 struct is_laser_af_interface_ops
 {
-	int (*get_distance)(struct is_sensor_interface *itf, u32 *distance_mm,
-			u32 *confidence);
+	int (*set_active)(struct is_sensor_interface *itf, bool is_active);
+	int (*get_distance)(struct is_sensor_interface *itf, void *data, u32 *size);
 };
 #endif
 
 struct is_tof_af_interface_ops
 {
-	int (*get_data)(struct is_sensor_interface *itf, struct tof_data_t **data);
+	int (*get_data)(struct is_sensor_interface *itf, struct tof_data_t *data);
 };
 
 struct is_sensor_interface {

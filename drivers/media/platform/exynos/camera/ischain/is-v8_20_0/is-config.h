@@ -47,7 +47,7 @@
 #define SOC_SSVC2
 #define SOC_SSVC3
 
-#define SOC_VRA
+/* #define SOC_VRA */
 
 /* Only use for interface sync with DDK (param_set) */
 #define SOC_ORBMCH
@@ -70,9 +70,10 @@
 /* #define ENABLE_10BIT_MCSC */
 /* #define ENABLE_DJAG_IN_MCSC */
 
-#define ENABLE_VRA		1
-#define ENABLE_REPROCESSING_FD		1
-#define ENABLE_VRA_NETARRAY
+/* #define ENABLE_VRA */
+/* #define ENABLE_REPROCESSING_FD */
+/* #define ENABLE_VRA_CHANGE_SETFILE_PARSING */
+/* #define ENABLE_HYBRID_FD */
 
 #define USE_ONE_BINARY
 #define USE_RTA_BINARY
@@ -80,12 +81,7 @@
 #define USE_DDK_SHUT_DOWN_FUNC
 #define ENABLE_IRQ_MULTI_TARGET
 #define IS_ONLINE_CPU_MIN	4
-#define ENABLE_3AA_LIC_OFFSET	1
-#define PDP_RDMA_LINE_GAP		(0x64)
-#define IS_MAX_HW_3AA_SRAM		(7552)
-
-#define ENABLE_MODECHANGE_CAPTURE
-
+/* #define ENABLE_3AA_LIC_OFFSET	1 */
 /*
  * 3AA0: 3AA0, ZSL/STRIP DMA0
  * 3AA1: 3AA1, ZSL/STRIP DMA1
@@ -187,23 +183,15 @@
 #ifdef SECURE_CAMERA_IRIS
 #undef SECURE_CAMERA_IRIS
 #endif
-#define SECURE_CAMERA_FACE              (1) /* For face Detection and face authentication */
-#define SECURE_CAMERA_CH                ((1 << CSI_ID_A))
-#define SECURE_CAMERA_HEAP_ID           (11)
-#define SECURE_CAMERA_MEM_SHARE
-#define SECURE_CAMERA_MEM_ADDR          (0xE1900000)    /* secure_camera_heap */
-#define SECURE_CAMERA_MEM_SIZE          (0x01520000)
-#define NON_SECURE_CAMERA_MEM_ADDR      (0xDB900000)    /* camera_heap */
-#define NON_SECURE_CAMERA_MEM_SIZE      (0x00B00000)
-#define PROTECT_SYSREG_IS               /* If sysreg_is needs to be protected in secure scenario */
+/* #define SECURE_CAMERA_FACE */	/* For face Detection and face authentication */
+#define SECURE_CAMERA_CH		((1 << CSI_ID_C) | (1 << CSI_ID_E))
+#define SECURE_CAMERA_HEAP_ID		(11)
+#define SECURE_CAMERA_MEM_ADDR		(0xA1000000)	/* secure_camera_heap */
+#define SECURE_CAMERA_MEM_SIZE		(0x02B00000)
+#define NON_SECURE_CAMERA_MEM_ADDR	(0xA3B00000)	/* camera_heap */
+#define NON_SECURE_CAMERA_MEM_SIZE	(0x18C00000)
 
-#define SECURE_CAMERA_USE_EXT_HEAP
-#define SECURE_CAMERA_HEAP_ID_EXT      (14)
-#define SECURE_CAMERA_MEM_ADDR_EXT     (0xE2E20000)    /* secure_camera_ext_heap */
-#define SECURE_CAMERA_MEM_SIZE_EXT     (0x00780000)
-
-#define CONVERT_BUFFER_SECURE_TO_NON_SECURE
-#undef SECURE_CAMERA_FACE_SEQ_CHK       /* To check sequence before applying secure protection */
+#define SECURE_CAMERA_FACE_SEQ_CHK	/* To check sequence before applying secure protection */
 #endif
 
 /* #define QOS_INTCAM */
@@ -267,12 +255,5 @@
 #define SETFILE_VERSION_INFO_HEADER2	(0xCA539ADF)
 
 #define META_ITF_VER_20192003
-
-#define SUPPORT_STRIPE_REGION_NUM
-
-#define ENABLE_STRIPE_SYNC_PROCESSING
-/* #define ENABLE_SYNC_REPROCESSING */
-
-#define CONFIG_SW_PDAF		1
 
 #endif /* #ifndef IS_CONFIG_H */

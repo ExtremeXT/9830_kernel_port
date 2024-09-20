@@ -111,6 +111,7 @@ struct smfc_dev {
 	struct pm_qos_request qosreq_int;
 	s32 qosreq_int_level;
 
+	u32 stream_count;
 };
 
 #define SMFC_CTX_COMPRESS	(1 << 0)
@@ -202,6 +203,8 @@ struct smfc_ctx {
 	unsigned int offset_of_sos;
 	__u16 stream_width;
 	__u16 stream_height;
+
+	u32 stream_id;
 };
 
 extern const struct v4l2_ioctl_ops smfc_v4l2_ioctl_ops;

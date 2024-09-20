@@ -34,7 +34,8 @@ struct rational {
 #define CAMERA2_MAX_AVAILABLE_MODE		21
 #define CAMERA2_MAX_FACES			16
 #define CAMERA2_MAX_VENDER_LENGTH		400
-#define CAMERA2_MAX_IPC_VENDER_LENGTH		2962
+#define CAMERA2_AWB_VENDER_LENGTH		415
+#define CAMERA2_MAX_IPC_VENDER_LENGTH		3172
 #define CAMERA2_MAX_PDAF_MULTIROI_COLUMN	13
 #define CAMERA2_MAX_PDAF_MULTIROI_ROW		9
 #define CAMERA2_MAX_UCTL_VENDER_LENGTH		32
@@ -44,13 +45,18 @@ struct rational {
 
 #define CAMERA2_MAX_STRIPE_REGION_NUM		5
 
-#define OPEN_MAGIC_NUMBER		0x20192010
-#define SHOT_MAGIC_NUMBER		0x34567892
+#define EV_LIST_SIZE						24
+#define MANUAL_LIST_SIZE					5
+
+#define OPEN_MAGIC_NUMBER		0x20192014
+#define SHOT_MAGIC_NUMBER		0x78923456
 
 enum is_subscenario_id {
 	ISS_SUB_SCENARIO_STILL_PREVIEW = 0,                                         /* 0: Single preview (HDR Auto/Off) */
 	ISS_SUB_SCENARIO_STILL_PREVIEW_WDR_ON = 1,                                  /* 1: Single preview (HDR On) */
 	ISS_SUB_SCENARIO_STILL_FULL_PREVIEW_WDR_AUTO = 2,                           /* TODO: 2: Full resolution Preview (HDR Auto/Off) */
+	ISS_SUB_SCENARIO_SUPER_NIGHT_SHOT_PREVIEW = 3,                              /* Super night Preview (HDR Auto) */
+	ISS_SUB_SCENARIO_STILL_PREVIEW_GALAXY_RAW = 4,                              /* 4: galaxy raw preview */
 
 	ISS_SUB_SCENARIO_STILL_CAPTURE_WDR_AUTO = 10,                               /* 10: Single/Burst/Snapshot capture (HDR Auto/Off) */
 	ISS_SUB_SCENARIO_STILL_CAPTURE = 11,                                        /* 11: Single capture (HDR Off) : Pro mode	 */
@@ -63,6 +69,11 @@ enum is_subscenario_id {
 	ISS_SUB_SCENARIO_STILL_CAPTURE_LLS = 18,                                    /* 18: Flash LLS capture (HDR Auto/Off) */
 	ISS_SUB_SCENARIO_STILL_FLASH_LLS = ISS_SUB_SCENARIO_STILL_CAPTURE_LLS,
 	ISS_SUB_SCENARIO_STILL_CAPTURE_ZOOM = 19,                                   /* 19: SR Zoom capture ( HDR Auto/Off ) */
+	ISS_SUB_SCENARIO_FULL_RESOLUTION_LOW_LIGHT_CAPTURE = 20,                    /* 20: Full resolution Low Light Capture  (HDR Auto/Off) */
+	ISS_SUB_SCENARIO_SUPER_NIGHT_CAPTURE_LONG_EXPOSURE = 21,                    /* 21: Super night capture Long Exposure (HDR Auto) */
+	ISS_SUB_SCENARIO_MERGED_STILL_CAPTURE_SHORT_REF_LLHDR = 22,                 /* 22: Short Ref LLHDR capture (HDR Auto/Off) */
+	ISS_SUB_SCENARIO_MERGED_STILL_REMOSAIC_CAPTURE_MFNR = 23,                   /* 23: Remosaic TNR capture (HDR Auto/Off) */
+	ISS_SUB_SCENARIO_MERGED_STILL_FUSION_CAPTURE = 24,                          /* 24: fusion capture (HDR Auto/Off) */
 
 	ISS_SUB_SCENARIO_VIDEO = 30,                                                /* 30: FHD 30fps (HDR Off) */
 	ISS_SUB_SCENARIO_VIDEO_WDR_AUTO = 31,                                       /* 31: FHD 30fps (HDR Auto) */
@@ -83,6 +94,13 @@ enum is_subscenario_id {
 	ISS_SUB_SCENARIO_FHD_VIDEO_HDR10_WDR_AUTO = 46,                             /* 46: HDR10+ video (HDR Auto) : FHD 30fps	 */
 	ISS_SUB_SCENARIO_UHD_VIDEO_HDR10_WDR_AUTO = 47,                             /* 47: HDR10+ video (HDR Auto) : UHD 30fps */
 	ISS_SUB_SCENARIO_8K_WDR_AUTO = 48,                                          /* TODO: 48: 8K Video 30fps (HDR Auto) */
+	ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED_960FPS = 49,
+	ISS_SUB_SCENARIO_VIDEO_MERGED_HDR_AUTO = 50,                                /* 50: FHD 30fps (Video HDR Auto - AEB mode) */
+	ISS_SUB_SCENARIO_FHD_VIDEO_HDR10_WDR_AUTO_60FPS = 51,                       /* 51: FHD 60fps (Video HDR 10) */
+	ISS_SUB_SCENARIO_UHD_VIDEO_HDR10_WDR_AUTO_60FPS = 52,                       /* 52: UHD 60fps (Video HDR 10) */
+	ISS_SUB_SCENARIO_UHD_120FPS_SLOW_MOTION = 53,                               /* 53: UHD 120fps (Video slow motion) */
+	ISS_SUB_SCENARIO_VIDEO_FHD_AUTO_FPS = 54,                                   /* 54: FHD auto fps */
+	ISS_SUB_SCENARIO_MULTIVIEW_RECORDING = 55,                                  /* 55: MultiView recording */
 
 	ISS_SUB_SCENARIO_LIVE_OUTFOCUS_PREVIEW = 60,                                /* 60: Bokeh preview (HDR Off) */
 	ISS_SUB_SCENARIO_LIVE_OUTFOCUS_PREVIEW_WDR_AUTO = 61,                       /* 61: Bokeh preview (HDR Auto) */
@@ -96,27 +114,31 @@ enum is_subscenario_id {
 	ISS_SUB_SCENARIO_VIDEO_3RD_PARTY_WDR_AUTO = 68,                             /* 68: 3rd Party Video (HDR Auto) */
 	ISS_SUB_SCENARIO_STILL_CAPTURE_3RD_PARTY_WDR_AUTO = 69,                     /* 69: 3rd Party Capture (HDR Auto) */
 	ISS_SUB_SCENARIO_FRONT_SMART_STAY = 70,                                     /* 70: Smart Stay */
+	ISS_SUB_SCENARIO_FRONT_3RD_PARTY_VT = 71,                                   /* 71: 3rd Party VT call (HDR Auto) */
 
 	ISS_SUB_SCENARIO_VIDEO_ISPLP_TNR = 110,                                     /* TODO: 110: ISPLT_TNR */
 	ISS_SUB_END,
 };
 
-#define IS_VIDEO_SCENARIO(setfile)				\
-	(((setfile) == ISS_SUB_SCENARIO_VIDEO)			\
-	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_WDR_AUTO)	\
-	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_WDR_ON)		\
-	|| ((setfile) == ISS_SUB_SCENARIO_FHD_60FPS)		\
-	|| ((setfile) == ISS_SUB_SCENARIO_FHD_60FPS_WDR_AUTO)	\
-	|| ((setfile) == ISS_SUB_SCENARIO_UHD_30FPS)		\
-	|| ((setfile) == ISS_SUB_SCENARIO_UHD_30FPS_WDR_AUTO)	\
-	|| ((setfile) == ISS_SUB_SCENARIO_UHD_30FPS_WDR_ON)	\
-	|| ((setfile) == ISS_SUB_SCENARIO_UHD_60FPS)		\
-	|| ((setfile) == ISS_SUB_SCENARIO_UHD_60FPS_WDR_AUTO)	\
-	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED))
+#define IS_VIDEO_SCENARIO(setfile)					\
+	(((setfile) == ISS_SUB_SCENARIO_VIDEO)				\
+	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_WDR_AUTO)		\
+	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_WDR_ON)			\
+	|| ((setfile) == ISS_SUB_SCENARIO_FHD_60FPS)			\
+	|| ((setfile) == ISS_SUB_SCENARIO_FHD_60FPS_WDR_AUTO)		\
+	|| ((setfile) == ISS_SUB_SCENARIO_UHD_30FPS)			\
+	|| ((setfile) == ISS_SUB_SCENARIO_UHD_30FPS_WDR_AUTO)		\
+	|| ((setfile) == ISS_SUB_SCENARIO_UHD_30FPS_WDR_ON)		\
+	|| ((setfile) == ISS_SUB_SCENARIO_UHD_60FPS)			\
+	|| ((setfile) == ISS_SUB_SCENARIO_UHD_60FPS_WDR_AUTO)		\
+	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED)		\
+	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED_960FPS)	\
+	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_MERGED_HDR_AUTO))
 
 #define IS_VIDEO_HDR_SCENARIO(setfile)				\
 	(((setfile) == ISS_SUB_SCENARIO_VIDEO_WDR_AUTO)		\
-	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_WDR_ON))
+	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_WDR_ON)		\
+	|| ((setfile) == ISS_SUB_SCENARIO_VIDEO_MERGED_HDR_AUTO))
 
 enum is_scenario_is {
 	IS_SCENARIO_SWVDIS = 1,
@@ -126,6 +148,7 @@ enum is_scenario_is {
 	IS_SCENARIO_HIGH_SPEED_DUALFPS = 5, /* FPS is changed from normal to high speed */
 	IS_SCENARIO_SECURE = 6,
 	IS_SCENAIRO_REMOSAIC = 7,
+	IS_SCENAIRO_FACTORY_RAW = 8,
 	IS_SCENARIO_PRO_VIDEO = 9,
 };
 
@@ -216,6 +239,7 @@ enum optical_stabilization_mode {
 	OPTICAL_STABILIZATION_MODE_SINE_X,      // factory mode x
 	OPTICAL_STABILIZATION_MODE_SINE_Y,      // factory mode y
 	OPTICAL_STABILIZATION_MODE_CENTERING,   // Centering mode
+	OPTICAL_STABILIZATION_MODE_HOLD,        // hold mode
 	OPTICAL_STABILIZATION_MODE_VDIS,        // VDIS mode
 	OPTICAL_STABILIZATION_MODE_VIDEO_RATIO_4_3, // Recording mode(VGA)
 };
@@ -283,6 +307,7 @@ enum sensor_test_pattern_mode {
 	SENSOR_TEST_PATTERN_MODE_COLOR_BARS,
 	SENSOR_TEST_PATTERN_MODE_COLOR_BARS_FADE_TO_GRAY,
 	SENSOR_TEST_PATTERN_MODE_PN9,
+	SENSOR_TEST_PATTERN_MODE_BLACK,
 	SENSOR_TEST_PATTERN_MODE_CUSTOM1 = 257,
 };
 
@@ -410,6 +435,7 @@ enum capture_state {
 	CAPTURE_STATE_ZSL_LIKE = 20,
 	CAPTURE_STATE_STREAM_ON_CAPTURE = 30,
 	CAPTURE_STATE_RAW_CAPTURE = 100,
+	CAPTURE_STATE_VIDEO_RECORD_CHANGE_FPS = 200,
 };
 
 enum flash_info_available {
@@ -454,6 +480,7 @@ enum processing_mode {
 
 	/* vendor feature */
 	PROCESSING_MODE_MANUAL = 100,
+	PROCESSING_MODE_SOFT = 101,
 };
 
 struct camera2_hotpixel_ctl {
@@ -736,12 +763,31 @@ enum stats_wdrAutoState {
 	STATE_WDR_AUTO_REQUIRED = 2,
 };
 
+struct PersonMeta_t {
+  unsigned int face_Yover200;
+  unsigned int face_Yover230;
+  unsigned int face_Yavg;
+  unsigned int face_pixelRatio[3];
+  unsigned int hAvg;
+  unsigned int sAvg;
+  unsigned int vAvg;
+  unsigned int faceIdx;
+  unsigned int faceRegion[4];
+};
+
+struct PersonWholeMeta_t {
+  unsigned int numStat;
+  unsigned int humanRatio;
+  struct PersonMeta_t humanStat[5];
+};
+
 struct camera2_stats_ctl {
 	enum facedetect_mode	faceDetectMode;
 	enum stats_mode		histogramMode;
 	enum stats_mode		sharpnessMapMode;
 	enum stats_mode		hotPixelMapMode;
 	enum stats_mode		lensShadingMapMode;
+	struct PersonWholeMeta_t metaForPerson;
 };
 
 struct camera2_stats_dm {
@@ -794,32 +840,65 @@ enum aa_capture_intent {
 	AA_CAPTURE_INTENT_MOTION_TRACKING,
 
 	/* vendor feature */
-	AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_SINGLE = 100,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_MULTI,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_BEST,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_COMP_BYPASS,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_RAWDUMP = AA_CAPTURE_INTENT_STILL_CAPTURE_COMP_BYPASS,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_DEBLUR,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_DEBLUR_DYNAMIC_SHOT,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_DYNAMIC_SHOT,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_EXPOSURE_DYNAMIC_SHOT,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_MFHDR_DYNAMIC_SHOT,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_LLHDR_DYNAMIC_SHOT,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_HANDHELD,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_CANCEL,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_NORMAL_FLASH,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_SINGLE,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_DYNAMIC_SHOT,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_MFHDR_DYNAMIC_SHOT,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_LLHDR_VEHDR_DYNAMIC_SHOT,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_VENR_DYNAMIC_SHOT,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_LLS_FLASH,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_SPORT_MOTIONLEVEL0,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_SPORT_MOTIONLEVEL1,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_SPORT_MOTIONLEVEL2,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_MOON,
-	AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_EXPOSURE_DYNAMIC_SHOT,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_SINGLE                      = 100,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_MULTI                       = 101,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_BEST                        = 102,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_COMP_BYPASS                     = 103,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_RAWDUMP = AA_CAPTURE_INTENT_STILL_CAPTURE_COMP_BYPASS,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_DEBLUR                      = 104,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_DEBLUR_DYNAMIC_SHOT             = 105,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_DYNAMIC_SHOT                = 106,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_EXPOSURE_DYNAMIC_SHOT           = 107,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_MFHDR_DYNAMIC_SHOT              = 108,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_LLHDR_DYNAMIC_SHOT              = 109,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_HANDHELD       = 110,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD         = 111,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_CANCEL                          = 112,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_NORMAL_FLASH                    = 113,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_SINGLE                 = 114,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_DYNAMIC_SHOT           = 115,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_MFHDR_DYNAMIC_SHOT     = 116,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_LLHDR_VEHDR_DYNAMIC_SHOT        = 117,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_VENR_DYNAMIC_SHOT               = 118,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_LLS_FLASH                       = 119,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_HANDHELD_FAST          = 120,   // 1st frame for JPEG+Thumbnail
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD_FAST            = 121,   // 1st frame for JPEG+Thumbnail
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD_LE_FAST         = 122,   // 1st frame for JPEG+Thumbnail
+    AA_CAPTURE_INTENT_STILL_CAPTURE_CROPPED_REMOSAIC_DYNAMIC_SHOT           = 123,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_SINGLE_FLASH                   = 124,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_CROPPED_REMOSAIC_SINGLE                 = 125,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SHORT_REF_LLHDR_DYNAMIC_SHOT            = 126,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_PROCESSED_REMOSAIC_SINGLE               = 127,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_PROCESSED_REMOSAIC_DYNAMIC_SHOT         = 128,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_PROCESSED_REMOSAIC_MFHDR_DYNAMIC_SHOT   = 129,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_PROCESSED_REMOSAIC_SINGLE_FLASH         = 130,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_AIF_DYNAMIC_SHOT                        = 131,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_GFHDR_DYNAMIC_SHOT                      = 132,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_EXTREME_DARK           = 133,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_HANDHELD_MAX           = 134,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD_MAX             = 135,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_EXTREME_DARK_MAX       = 136,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SR_HDR_DYNAMIC_SHOT                     = 137,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_GALAXY_RAW_DYNAMIC_SHOT                 = 138,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_LLHDR_DYNAMIC_SHOT             = 139,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_AEB_HDR_LIKE                            = 140,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_AI_HIGHRES_SINGLE                       = 150,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_AI_HIGHRES_HDR                          = 151,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_HYBRID_MFHDR_DYNAMIC_SHOT               = 160,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_HYBRID_LLHDR_DYNAMIC_SHOT               = 161,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_EXECUTOR_NIGHT_SHOT                     = 162,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_LIGHT_TRAIL_SHOT                        = 163,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_HANDHELD_POST_LIB      = 164,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD_POST_LIB        = 165,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_ASTRO_SHOT                              = 166,
+
+    AA_CAPTURE_INTENT_VIDEO_RECORD_CHANGE_FPS                               = 500,
+    AA_CAPTURE_INTENT_NOT_USED                                              = 90000,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SPORT_MOTIONLEVEL0                      = 90001,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SPORT_MOTIONLEVEL1                      = 90002,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SPORT_MOTIONLEVEL2                      = 90003,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_MOON                              = 90004,
+    AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_EXPOSURE_DYNAMIC_SHOT          = 90005,
 };
 
 enum aa_mode {
@@ -830,70 +909,79 @@ enum aa_mode {
 };
 
 enum aa_scene_mode {
-	AA_SCENE_MODE_DISABLED = 1,
-	AA_SCENE_MODE_FACE_PRIORITY,
-	AA_SCENE_MODE_ACTION,
-	AA_SCENE_MODE_PORTRAIT,
-	AA_SCENE_MODE_LANDSCAPE,
-	AA_SCENE_MODE_NIGHT,
-	AA_SCENE_MODE_NIGHT_PORTRAIT,
-	AA_SCENE_MODE_THEATRE,
-	AA_SCENE_MODE_BEACH,
-	AA_SCENE_MODE_SNOW,
-	AA_SCENE_MODE_SUNSET,
-	AA_SCENE_MODE_STEADYPHOTO,
-	AA_SCENE_MODE_FIREWORKS,
-	AA_SCENE_MODE_SPORTS,
-	AA_SCENE_MODE_PARTY,
-	AA_SCENE_MODE_CANDLELIGHT,
-	AA_SCENE_MODE_BARCODE,
-	AA_SCENE_MODE_HIGH_SPEED_VIDEO,
-	AA_SCENE_MODE_HDR,
-	AA_SCENE_MODE_FACE_PRIORITY_LOW_LIGHT,
+	AA_SCENE_MODE_DISABLED         = 1,
+	AA_SCENE_MODE_FACE_PRIORITY    = 2,
+	AA_SCENE_MODE_ACTION           = 3,
+	AA_SCENE_MODE_PORTRAIT         = 4,
+	AA_SCENE_MODE_LANDSCAPE        = 5,
+	AA_SCENE_MODE_NIGHT            = 6,
+	AA_SCENE_MODE_NIGHT_PORTRAIT   = 7,
+	AA_SCENE_MODE_THEATRE          = 8,
+	AA_SCENE_MODE_BEACH            = 9,
+	AA_SCENE_MODE_SNOW             = 10,
+	AA_SCENE_MODE_SUNSET           = 11,
+	AA_SCENE_MODE_STEADYPHOTO      = 12,
+	AA_SCENE_MODE_FIREWORKS        = 13,
+	AA_SCENE_MODE_SPORTS           = 14,
+	AA_SCENE_MODE_PARTY            = 15,
+	AA_SCENE_MODE_CANDLELIGHT      = 16,
+	AA_SCENE_MODE_BARCODE          = 17,
+	AA_SCENE_MODE_HIGH_SPEED_VIDEO = 18,
+	AA_SCENE_MODE_HDR              = 19,
+	AA_SCENE_MODE_FACE_PRIORITY_LOW_LIGHT = 20,
 
-	AA_SCENE_MODE_MANUAL_MFHDR,
+	AA_SCENE_MODE_MANUAL_MFHDR     = 21,
 
-	AA_SCENE_MODE_NIGHT_CAPTURE = 100,
-	AA_SCENE_MODE_ANTISHAKE,
-	AA_SCENE_MODE_LLS,
-	AA_SCENE_MODE_FDAE,
-	AA_SCENE_MODE_DUAL,
-	AA_SCENE_MODE_DRAMA,
-	AA_SCENE_MODE_ANIMATED,
-	AA_SCENE_MODE_PANORAMA,
-	AA_SCENE_MODE_GOLF,
-	AA_SCENE_MODE_PREVIEW,
-	AA_SCENE_MODE_VIDEO,
-	AA_SCENE_MODE_SLOWMOTION_2,
-	AA_SCENE_MODE_SLOWMOTION_4_8,
-	AA_SCENE_MODE_DUAL_PREVIEW,
-	AA_SCENE_MODE_DUAL_VIDEO,
-	AA_SCENE_MODE_120_PREVIEW,
-	AA_SCENE_MODE_LIGHT_TRACE,
-	AA_SCENE_MODE_FOOD,
-	AA_SCENE_MODE_AQUA,
-	AA_SCENE_MODE_THERMAL,
-	AA_SCENE_MODE_VIDEO_COLLAGE,
-	AA_SCENE_MODE_PRO_MODE,
-	AA_SCENE_MODE_COLOR_IRIS,
-	AA_SCENE_MODE_FACE_LOCK,
-	AA_SCENE_MODE_LIVE_OUTFOCUS,
-	AA_SCENE_MODE_REMOSAIC,
-	AA_SCENE_MODE_SUPER_SLOWMOTION,
-	AA_SCENE_MODE_HYPERLAPSE,
-	AA_SCENE_MODE_FACTORY_LN2,
-	AA_SCENE_MODE_FACTORY_LN4,
-	AA_SCENE_MODE_LABS,
+	AA_SCENE_MODE_NIGHT_CAPTURE    = 100,
+	AA_SCENE_MODE_ANTISHAKE        = 101,
+	AA_SCENE_MODE_LLS              = 102,
+	AA_SCENE_MODE_FDAE             = 103,
+	AA_SCENE_MODE_DUAL             = 104,
+	AA_SCENE_MODE_DRAMA            = 105,
+	AA_SCENE_MODE_ANIMATED         = 106,
+	AA_SCENE_MODE_PANORAMA         = 107,
+	AA_SCENE_MODE_GOLF             = 108,
+	AA_SCENE_MODE_PREVIEW          = 109,
+	AA_SCENE_MODE_VIDEO            = 110,
+	AA_SCENE_MODE_SLOWMOTION_2     = 111,
+	AA_SCENE_MODE_SLOWMOTION_4_8   = 112,
+	AA_SCENE_MODE_DUAL_PREVIEW     = 113,
+	AA_SCENE_MODE_DUAL_VIDEO       = 114,
+	AA_SCENE_MODE_120_PREVIEW      = 115,
+	AA_SCENE_MODE_LIGHT_TRACE      = 116,
+	AA_SCENE_MODE_FOOD             = 117,
+	AA_SCENE_MODE_AQUA             = 118,
+	AA_SCENE_MODE_THERMAL          = 119,
+	AA_SCENE_MODE_VIDEO_COLLAGE    = 120,
+	AA_SCENE_MODE_PRO_MODE         = 121,
+	AA_SCENE_MODE_COLOR_IRIS       = 122,
+	AA_SCENE_MODE_FACE_LOCK        = 123,
+	AA_SCENE_MODE_LIVE_OUTFOCUS    = 124,
+	AA_SCENE_MODE_REMOSAIC         = 125,
+	AA_SCENE_MODE_SUPER_SLOWMOTION = 126,
+	AA_SCENE_MODE_HYPERLAPSE       = 127,
+	AA_SCENE_MODE_FACTORY_LN2      = 128,
+	AA_SCENE_MODE_FACTORY_LN4      = 129,
+	AA_SCENE_MODE_LABS             = 130,
+	AA_SCENE_MODE_REMOSAIC_PURE_BAYER_ONLY = 131,
+	AA_SCENE_MODE_REMOSAIC_MFHDR_PURE_BAYER_ONLY = 132,
 
-	AA_SCENE_MODE_REMOSAIC_PURE_BAYER_ONLY,
-	AA_SCENE_MODE_REMOSAIC_MFHDR_PURE_BAYER_ONLY,
-
-	AA_SCENE_MODE_SELFI_FOCUS,
-	AA_SCENE_MODE_STICKER,
-	AA_SCENE_MODE_INSTAGRAM,
-	AA_SCENE_MODE_FAST_AE,
-	AA_SCENE_MODE_ILLUMINANCE,
-	AA_SCENE_MODE_SUPER_NIGHT,
+	AA_SCENE_MODE_SELFI_FOCUS      = 133,
+	AA_SCENE_MODE_STICKER          = 134,
+	AA_SCENE_MODE_INSTAGRAM        = 135,
+	AA_SCENE_MODE_FAST_AE          = 136,
+	AA_SCENE_MODE_ILLUMINANCE      = 137,
+	AA_SCENE_MODE_SUPER_NIGHT      = 138,
+	AA_SCENE_MODE_BOKEH_VIDEO      = 139,
+	AA_SCENE_MODE_SINGLE_TAKE      = 140,
+	AA_SCENE_MODE_DIRECTORS_VIEW   = 141,
+	AA_SCENE_MODE_PORTRAIT_NIGHT   = 142,
+	AA_SCENE_MODE_PORTRAIT_VERY_NIGHT = 143,
+	AA_SCENE_MODE_FHD_AUTO         = 144,
+	AA_SCENE_MODE_GALAXY_RAW       = 145,
+	AA_SCENE_MODE_EXECUTOR_TOOL    = 147,
+	AA_SCENE_MODE_LIGHT_TRAIL      = 148,
+	AA_SCENE_MODE_ASTRO            = 149,
 };
 
 enum aa_effect_mode {
@@ -1016,6 +1104,7 @@ enum aa_afmode_option_bit {
 	AA_AFMODE_OPTION_BIT_OBJECT_TRACKING = 5,
 	AA_AFMODE_OPTION_BIT_AF_ROI_NO_CONV = 6,
 	AA_AFMODE_OPTION_BIT_MULTI_AF = 7,
+	AA_AFMODE_OPTION_BIT_AUTO_FRAMING = 8,
 };
 
 enum aa_afmode_ext {
@@ -1159,10 +1248,64 @@ enum aa_aemode_state {
 	AA_AE_TOUCH,
 };
 
-struct camera2_video_output_size
-{
-    uint16_t width;
-    uint16_t height;
+enum aa_night_timelaps_mode {
+	AA_NIGHT_TIMELAPS_MODE_OFF = 0,
+	AA_NIGHT_TIMELAPS_MODE_ON_45X,
+	AA_NIGHT_TIMELAPS_MODE_ON_15X,
+	AA_NIGHT_TIMELAPS_MODE_ON_300X,
+};
+
+enum aa_capture_hint {
+	AA_CAPTURE_HINT_NONE = 0,
+	AA_CAPTURE_HINT_BURST,
+	AA_CAPTURE_HINT_AGIF,
+	AA_CAPTURE_HINT_SINGLE_TAKE,
+	AA_CAPTURE_HINT_FACTORY_MAIN = 100,
+	AA_CAPTURE_HINT_FACTORY_SECONDARY = 101,
+};
+
+enum aa_short_ref_hdr_mode {
+	AA_SHORTREF_HDR_OFF = 0,
+	AA_SHORTREF_HDR_ON,
+};
+
+enum aa_control_ssrm_hint {
+	AA_SSRM_HINT_NONE = 0,
+	AA_SSRM_HINT_LOW_POWER_MODE_L1 = 1 << 0,
+	AA_SSRM_HINT_LOW_POWER_MODE_L2 = 1 << 1,
+	AA_SSRM_HINT_LOW_POWER_MODE_L3 = 1 << 2,
+};
+
+enum aa_ae_extra_mode {
+	AA_AE_EXTRA_MODE_AUTO             = 0,
+	AA_AE_EXTRA_MODE_SHUTTER_PRIORITY = 1,
+	AA_AE_EXTRA_MODE_ISO_PRIORITY     = 2,
+};
+
+enum aa_dynamic_bds_mode {
+	AA_DYNAMIC_BDS_MODE_OFF = 0,
+	AA_DYNAMIC_BDS_MODE_LOW_LIGHT_ON = 1,   /* IQ controlled */
+	AA_DYNAMIC_BDS_MODE_SYSTEM_ON  = 2,     /* HAL controlled */
+	AA_DYNAMIC_BDS_MODE_VT_CALL_LOW_POWER  = 3,     /* HAL controlled */
+};
+
+enum aa_transient_capture_action {
+	AA_TRANSIENT_CAPTURE_ACTION_OFF = 0,
+	AA_TRANSIENT_CAPTURE_ACTION_FAST_CAPTURE = 1,
+};
+
+struct camera2_video_output_size {
+	uint16_t			width;
+	uint16_t			height;
+};
+
+struct tof_info {
+	uint16_t			fps;
+	uint16_t			exposureTime;
+};
+
+struct depth_info {
+	int32_t			AIFCaptureNum;
 };
 
 struct camera2_aa_ctl {
@@ -1210,8 +1353,27 @@ struct camera2_aa_ctl {
 	enum aa_supernightmode		vendor_superNightShotMode;
 	int16_t				vendor_artificialLightSource;
 	int16_t				vendor_flickerDetect;
-	struct camera2_video_output_size	vendor_videoOutputSize;
-	uint32_t			vendor_reserved[39];
+	struct camera2_video_output_size vendor_videoOutputSize;
+	enum aa_night_timelaps_mode	vendor_nightTimelapsMode;
+	uint32_t			vendor_personalPresetIndex;
+	struct tof_info			vendor_TOFInfo;
+	uint32_t			vendor_captureHint;
+	int32_t				vendor_captureEV;
+	uint32_t			vendor_ssrmHint;
+	enum aa_short_ref_hdr_mode	vendor_shortRefHdrEnable;
+	int32_t				vendor_memTotal;
+	struct depth_info		vendor_depthInfo;
+	enum aa_ae_extra_mode		vendor_aeExtraMode;
+	enum aa_dynamic_bds_mode		vendor_enableDynamicBds;
+	enum aa_transient_capture_action	vendor_transientCaptureAction;
+	uint32_t				vendor_currentHyperlapseMode;
+	char					vendor_multiFrameEvList[EV_LIST_SIZE];
+	uint32_t				vendor_multiFrameIsoList[MANUAL_LIST_SIZE];
+	uint32_t				vendor_multiFrameExposureList[MANUAL_LIST_SIZE];
+	uint64_t				vendor_specialImageQualityPolicy;
+	uint32_t				vendor_exposureTableType;
+	uint32_t				vendor_fastCaptureOption;
+	uint32_t				vendor_reserved[28];
 };
 
 struct aa_apexInfo {
@@ -1240,6 +1402,14 @@ struct osdInfo {
 	struct sensorInfo sensorInfo;
 	/* awb,af TBD  */
 	uint32_t          reserved[10];
+};
+
+struct oisHallInfo {
+	uint64_t readTimeStamp;
+	uint32_t counter;
+	int16_t X_AngVel[4];
+	int16_t Y_AngVel[4];
+	int16_t Z_AngVel[4];
 };
 
 struct camera2_aa_dm {
@@ -1304,7 +1474,14 @@ struct camera2_aa_dm {
 	uint32_t			vendor_linearExposureIndex;
 	uint32_t			ispDigitalGain;
 	uint32_t			vendor_previewSkipFrame;
-	uint32_t			vendor_reserved[60];
+	uint32_t			vendor_aeDrcGain;
+	int32_t				vendor_aeStats4VO[8];
+	int32_t				vendor_dynamicShotCaptureDuration;
+	int32_t				vendor_aeBracketingFpsHint;
+	struct oisHallInfo		vendor_oisHallData;
+	int32_t				vendor_fpsHint;
+	enum aa_dynamic_bds_mode		vendor_dynamicBdsInfo;
+	uint32_t			vendor_reserved[37];
 
 	// For dual
 	uint32_t			vendor_wideTeleConvEv;
@@ -1588,10 +1765,10 @@ struct camera2_gyro_sensor_info {
 };
 
 struct camera2_gyro_sensor_history_info {
-	bool valid;
+	bool isValid;
 
 	struct camera2_gyro_sensor_info gyroData[20];
-	uint64_t lastGyroTimeStamp;
+	uint64_t gyroTimeStamp[20];
 };
 
 struct camera2_accelerometer_sensor_info {
@@ -1660,7 +1837,7 @@ struct camera2_ae_udm {
 
 struct camera2_awb_udm {
 	uint32_t	vsLength;
-	uint32_t	vendorSpecific[CAMERA2_MAX_VENDER_LENGTH];
+	uint32_t	vendorSpecific[CAMERA2_AWB_VENDER_LENGTH];
 
 	/** vendor specific2 length */
 	uint32_t	vs2Length;
@@ -1709,10 +1886,10 @@ struct camera2_ipc_udm {
  */
 struct camera2_rta_udm {
 	uint32_t vsLength;
-	uint32_t vendorSpecific[90];
+	uint32_t vendorSpecific[65];
 
 	uint32_t vs2Length;
-	uint32_t vendorSpecific2[48];
+	uint32_t vendorSpecific2[73];
 };
 
 struct camera2_drc_udm {
@@ -1821,6 +1998,7 @@ enum camera2_wdr_mode {
 	CAMERA_WDR_ON = 2,
 	CAMERA_WDR_AUTO = 3,
 	CAMERA_WDR_AUTO_LIKE = 4,
+	CAMERA_WDR_AUTO_3P = 5,
 	TOTALCOUNT_CAMERA_WDR,
 	CAMERA_WDR_UNKNOWN,
 };
@@ -1852,7 +2030,12 @@ enum camera_op_mode {
 	CAMERA_OP_MODE_HAL3_TW,
 	CAMERA_OP_MODE_FAC,
 	CAMERA_OP_MODE_HAL3_FAC,
-	CAMERA_OP_MODE_HAL3_SDK,
+	CAMERA_OP_MODE_HAL3_SDK,  // UNIHAL default
+	CAMERA_OP_MODE_HAL3_CAMERAX,
+	CAMERA_OP_MODE_HAL3_UNIHAL_VIP,
+	CAMERA_OP_MODE_HAL3_SDK_VIP,
+	CAMERA_OP_MODE_HAL3_ATTACH,
+	CAMERA_OP_MODE_HAL3_UNIHAL_VIDEO,
 };
 
 enum camera2_sensor_hdr_mode {
@@ -1862,11 +2045,18 @@ enum camera2_sensor_hdr_mode {
 	CAMERA_SENSOR_HDR_MODE_2AEB,
 };
 
+enum camera2_range_sensor_mode {
+	CAMERA_RANGE_SENSOR_MODE_AUTO,
+	CAMERA_RANGE_SENSOR_MODE_ON,
+	CAMERA_RANGE_SENSOR_MODE_OFF,
+};
+
 struct camera2_is_mode_uctl {
 	enum camera2_sensor_hdr_mode	sensor_hdr_mode;
 	enum camera2_wdr_mode		wdr_mode;
 	enum camera2_paf_mode		paf_mode;
 	enum camera2_disparity_mode	disparity_mode;
+	enum camera2_range_sensor_mode	range_sensor_mode;
 };
 
 struct camera2_pdaf_single_result {
@@ -1888,6 +2078,7 @@ struct camera2_pdaf_udm {
 	uint16_t				numRow;
 	struct camera2_pdaf_multi_result	multiResult[CAMERA2_MAX_PDAF_MULTIROI_ROW][CAMERA2_MAX_PDAF_MULTIROI_COLUMN];
 	struct camera2_pdaf_single_result	singleResult;
+	float					singleResultPhaseDifference;
 	uint16_t				lensPosResolution;
 };
 
@@ -1954,36 +2145,29 @@ enum camera2_dcp_process_mode {
 	DCP_PROCESS_ON,
 };
 
-struct camera2_area {
-	int32_t x;		/* !< x pos */
-	int32_t y;		/* !< y pos */
-	int32_t w;		/* !< width */
-	int32_t h;		/* !< height */
+enum camera2_tnr_gdc_mode {
+    TNR_GDC_MODE_NONE = 0,
+    TNR_GDC_MODE_HW,
+    TNR_GDC_MODE_SW,
+    TNR_GDC_MODE_MAX
 };
 
-struct camera2_dcp_homo_matrix {
-	int32_t dx[7][9];	/* 7 rows x 9 columns, range precision */
-	int32_t dy[7][9];
+struct camera2_grid_info {
+	int32_t grid_x[7][9];
+	int32_t grid_y[7][9];
 };
 
-struct camera2_dcp_rgb_gamma_lut {
-	enum camera2_dcp_process_mode mode;
-	uint32_t x_LUT[32];
-	uint32_t r_LUT[32];
-	uint32_t g_LUT[32];
-	uint32_t b_LUT[32];
-};
-
-struct camera2_dcp_uctl {
-	struct camera2_dcp_homo_matrix wide_gdc_grid_value;
-	struct camera2_dcp_homo_matrix tele_gdc_grid_value;
-	struct camera2_area wide_gdc_upscale_size;
-	struct camera2_area tele_gdc_upscale_size;
-	struct camera2_dcp_rgb_gamma_lut wide_gamma_LUT;
-	struct camera2_dcp_rgb_gamma_lut tele_gamma_LUT;
+struct camera2_tnr_uctl {
+	enum camera2_tnr_gdc_mode tnrGdcMode;
+	struct camera2_grid_info gdc_grid;
+	uint32_t gmeConfidence;
+	uint32_t faceMotion; /* Motion : 0(OFF) 1(ON) */
+	uint32_t reserved[5];
 };
 
 enum camera2_scene_index {
+	SCENE_INDEX_OFF                 = -2,
+	SCENE_INDEX_SCANNING            = -1,
 	SCENE_INDEX_INVALID		= 0,
 	SCENE_INDEX_FOOD		= 1,
 	SCENE_INDEX_TEXT		= 2,
@@ -2033,6 +2217,22 @@ struct camera2_scene_detect_uctl {
 	enum camera2_scene_index	scene_index;
 	uint32_t			confidence_score;
 	uint32_t			object_roi[4];  /* left, top, width, height */
+};
+
+struct score_info
+{
+	uint32_t frameCount;
+	uint32_t score;
+	uint32_t motionIndex;
+	uint32_t localMotionIndex;
+	uint32_t gmeConfidence;
+};
+
+struct camera2_mfstill_uctl
+{
+	struct score_info sinfo[15];
+	uint32_t ref_frameCount;
+	uint32_t rej_frameCount[15];
 };
 
 enum camera_vt_mode {
@@ -2085,14 +2285,45 @@ enum camera_motion_state {
 };
 
 enum camera_client_index {
-	CAMERA_APP_CATEGORY_NONE	= 0,
-	CAMERA_APP_CATEGORY_FACEBOOK	= 1,
-	CAMERA_APP_CATEGORY_WECHAT	= 2,
-	CAMERA_APP_CATEGORY_SNAPCHAT	= 3,
-	CAMERA_APP_CATEGORY_TWITTER	= 4,
-	CAMERA_APP_CATEGORY_INSTAGRAM	= 5,
-	CAMERA_APP_CATEGORY_3P_VT	= 6,
+	CAMERA_APP_CATEGORY_NOT_READ           = -1,
+	CAMERA_APP_CATEGORY_NONE               = 0,
+	CAMERA_APP_CATEGORY_FACEBOOK           = 1,
+	CAMERA_APP_CATEGORY_WECHAT             = 2,
+	CAMERA_APP_CATEGORY_SNAPCHAT           = 3,
+	CAMERA_APP_CATEGORY_TWITTER            = 4,
+	CAMERA_APP_CATEGORY_INSTAGRAM          = 5,
+	CAMERA_APP_CATEGORY_3P_VT              = 6,
+	CAMERA_APP_CATEGORY_VAULT              = 7,
+	CAMERA_APP_CATEGORY_FACEBOOK_MASSENGER = 8,
+	CAMERA_APP_CATEGORY_WHATSAPP           = 9,
+	CAMERA_APP_CATEGORY_ULIKE              = 10,
+	CAMERA_APP_CATEGORY_WEIBO              = 11,
+	CAMERA_APP_CATEGORY_MEITU              = 12,
+	CAMERA_APP_CATEGORY_KAKAOBANK          = 13,
+	CAMERA_APP_CATEGORY_CAMCARD            = 14,
+	CAMERA_APP_CATEGORY_CAMCARD_FREE       = 15,
+	CAMERA_APP_CATEGORY_SNOW               = 16,
+	CAMERA_APP_CATEGORY_B612               = 17,
+	CAMERA_APP_CATEGORY_SODA               = 18,
+	CAMERA_APP_CATEGORY_FOODIE             = 19,
+	CAMERA_APP_CATEGORY_ZOOM               = 20,
+	CAMERA_APP_CATEGORY_TIKTOK             = 21,
+	CAMERA_APP_CATEGORY_SMART_STAY         = 22,
+	CAMERA_APP_CATEGORY_SABC               = 23,
 	CAMERA_APP_CATEGORY_MAX
+};
+
+enum remosaic_oper_mode {
+	REMOSAIC_OPER_MODE_NONE = 0,
+	REMOSAIC_OPER_MODE_SINGLE = 1,
+	REMOSAIC_OPER_MODE_MFHDR = 2,
+	REMOSAIC_OPER_MODE_SINGLE_4_3H = 3,
+};
+
+struct camera2_object_detect_uctl {
+	uint16_t detected;
+	uint16_t confidence_score;
+	uint16_t object_roi[4]; /* left, top, width, height */
 };
 
 /** \brief
@@ -2130,7 +2361,7 @@ struct camera2_uctl {
 	struct camera2_drc_uctl		drcUd;
 
 	/** ispfw specific control(user-defined) of dcp. */
-	struct camera2_dcp_uctl		dcpUd;
+	struct camera2_tnr_uctl   tnrUd;
 	struct camera2_scene_detect_uctl sceneDetectInfoUd;
 	enum camera_vt_mode		vtMode;
 	float				zoomRatio;
@@ -2145,9 +2376,11 @@ struct camera2_uctl {
 	uint8_t				countryCode[4];
 	enum camera_motion_state	motionState;
 	uint32_t			cameraClientIndex;
-	uint32_t			remosaicHighResolutionMode;
+	uint32_t			remosaicOperMode;
 	uint8_t				frame_id[32];
-	uint32_t			reserved[5];
+	struct camera2_mfstill_uctl mfInfoUd;
+	struct camera2_object_detect_uctl moonDetectInfoUd;
+	uint32_t			reserved[2];
 };
 
 struct camera2_udm {
@@ -2182,7 +2415,9 @@ struct camera2_udm {
 	enum camera2_scene_index	scene_index;
 	uint32_t			flicker_detect;
 	struct camera2_tnr_udm		tnr;
-	uint32_t			reserved[8];
+	uint32_t			motionIndex;
+	uint32_t			localMotionIndex;
+	uint32_t			reserved[6];
 };
 
 struct camera2_shot {
@@ -2659,4 +2894,3 @@ typedef struct camera2_ccm_udm      camera2_ccm_udm_t;
 
 typedef struct camera2_me_udm camera2_me_udm_t;
 #endif
-

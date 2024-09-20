@@ -108,24 +108,3 @@ config CAMERA_ACT_ZC569_OBJ
         default n
         help
           Use to build ZC569 driver.
-
-config CAMERA_ACT_DW9817_OBJ
-        bool "Use actuator DW9807"
-	depends on CAMERA_ACT_SELECT
-        default n
-        help
-          Use to build DW9817 driver.
-
-config CAMERA_ACT_FP5529_OBJ
-        bool "Use actuator FP5529"
-	depends on CAMERA_ACT_SELECT
-        default n
-        help
-          Use to build FP5529 driver.
-
-config CAMERA_ACT_GT9778_OBJ
-          bool "Use actuator GT9778"
-          depends on CAMERA_ACT_SELECT
-          default n
-          help
-            Use to build GT9778 driver.

@@ -26,6 +26,13 @@ config EXYNOS_DISPLAYPORT
 	help
 	  Enable DISPLAYPORT driver.
 
+config EXYNOS_DECON_DQE
+	bool "Samsung Exynos DQE driver"
+	depends on EXYNOS_DPU30
+	default n
+	help
+	  Enable DQE driver.
+
 config EXYNOS_WINDOW_UPDATE
         bool "Support Window Update Mode"
         depends on EXYNOS_DPU30
@@ -36,24 +43,36 @@ config EXYNOS_BLOCK_MODE
         depends on EXYNOS_DPU30
         default y
 
+if !EXYNOS_DECON_DQE
 config EXYNOS_HIBERNATION
 	bool "Support Display Hibernation Mode"
         depends on EXYNOS_DPU30
         default n
+endif
 
 config EXYNOS_CHANGE_HIBER_CNT
 	bool "Change Hibernation Entry Count at Runtime"
         depends on EXYNOS_DPU30 && EXYNOS_HIBERNATION
         default n
 
+config EXYNOS_DIRECT_PD_CTRL
+	bool "Support Direct DPU Power Domain Control For Hibernation (EXPERIMENTAL)"
+        depends on EXYNOS_DPU30 && EXYNOS_HIBERNATION
+        default n
+
 config EXYNOS_HIBERNATION_EARLY_WAKEUP
 	bool "Support Hibernation Early Wakeup (EXPERIMENTAL)"
-		depends on EXYNOS_DPU30 && EXYNOS_HIBERNATION
-		default n
+        depends on EXYNOS_DPU30 && EXYNOS_HIBERNATION
+        default n
 
 config EXYNOS_DOZE
 	bool "Support DOZE mode"
         depends on EXYNOS_DPU30
+        default n
+
+config EXYNOS_DOZE_HIBERNATION
+	bool "Support Display Hibernation Mode"
+        depends on EXYNOS_DOZE && EXYNOS_HIBERNATION
         default n
 
 config EXYNOS_AFBC_DEBUG
@@ -107,6 +126,16 @@ config DECON_BTS_LEGACY
         depends on EXYNOS_DPU30
         default n
 
+config DECON_BTS_VRR_ASYNC
+	bool "BTS support VRR Async"
+        depends on EXYNOS_DPU30
+        default n
+
+config DECON_VRR_MODULATION
+	bool "Support VRR Modulation"
+        depends on EXYNOS_DPU30
+        default n
+
 config FB_TEST
 	bool "Framebuffer test only"
         depends on EXYNOS_DPU30
@@ -136,11 +165,60 @@ config EXYNOS_LIMIT_ROTATION
 	bool "Limit Rotation based on Size and Bit-depth"
         depends on EXYNOS_DPU30
         default n
-endif
+
+config EXYNOS_SUPPORT_READBACK
+	bool "Support readback buffer"
+		depends on EXYNOS_DPU30
+		default n
+
+config EXYNOS_SET_ACTIVE
+	bool "Support Set active control for mres/vrr"
+	depends on EXYNOS_DPU30
+	default y
+
+config EXYNOS_SET_ACTIVE_WITH_EMPTY_WINDOW
+	bool "Support Set active control for mres/vrr"
+	depends on EXYNOS_DPU30 && EXYNOS_SET_ACTIVE
+	default n
+
+config EXYNOS_LATENCY_MONITOR
+	bool "Read Data Latency Monitor"
+		depends on EXYNOS_DPU30
+		default n
 
 config EXYNOS_DPU_SYSTRACE
 	bool "Support Systrace for DPU"
 		depends on EXYNOS_DPU30
-		default y
+		default n
+
+config EXYNOS_FPS_CHANGE_NOTIFY
+	bool "Support fps change notify"
+		depends on EXYNOS_DPU30
+		default n
+
+config USE_DISPLAYPORT_CCIC_EVENT_QUEUE
+	bool "use queue for CCIC notifications"
+        depends on EXYNOS_DISPLAYPORT
+        default n
+
+config SUPPORT_MCD_MOTTO_TUNE
+	depends on EXYNOS_DPU30
+	tristate "Support MOTTO features"
+	default n
+
+endif
+
+config DISPLAYPORT_ENG
+	bool "DISPLAYPORT eng bin"
+	depends on EXYNOS_DISPLAYPORT
+	default n
+	help
+	  For DISPLAYPORT eng binary.
+
+config EXYNOS_DOZE_FIRST_FRAME_BLACK
+	bool "Support DOZE first black frame"
+        depends on EXYNOS_DPU30
+        default n
 
 source "drivers/video/fbdev/exynos/dpu30/panels/Kconfig"
+source "drivers/video/fbdev/exynos/dpu30/mcd_hdr/Kconfig"

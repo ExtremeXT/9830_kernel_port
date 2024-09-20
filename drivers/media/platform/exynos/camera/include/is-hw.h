@@ -25,8 +25,6 @@
 #define CSI_VIRTUAL_CH_3	3
 #define CSI_VIRTUAL_CH_MAX	4
 
-#define SENSOR_DUMMY_ELEMS	2
-
 #define SHARED_META_INIT	0
 #define SHARED_META_SHOT	1
 #define SHARED_META_SHOT_DONE	2
@@ -223,9 +221,9 @@ void csi_hw_s_output_dma(u32 __iomem *base_reg, u32 vc, bool enable);
 bool csi_hw_g_output_dma_enable(u32 __iomem *base_reg, u32 vc);
 bool csi_hw_g_output_cur_dma_enable(u32 __iomem *base_reg, u32 vc);
 #ifdef CONFIG_USE_SENSOR_GROUP
-int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 channel, struct is_frame_cfg *cfg, u32 hwformat, u32 dummy_pixel);
+int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 channel, struct is_frame_cfg *cfg, u32 hwformat);
 #else
-int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 channel, struct is_image *image, u32 hwformat, u32 dummy_pixel);
+int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 channel, struct is_image *image, u32 hwformat);
 #endif
 int csi_hw_dma_common_reset(u32 __iomem *base_reg, bool on);
 int csi_hw_s_dma_common_dynamic(u32 __iomem *base_reg, size_t size, u32 dma_ch);

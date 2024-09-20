@@ -41,8 +41,7 @@ fimc-is-objs	:= is-core.o \
 		is-dt.o \
 		is-binary.o \
 		is-i2c-config.o \
-		is-work.o \
-		is-sock.o
+		is-work.o
 
 fimc-is-objs += is-interface-wrap.o
 
@@ -72,7 +71,6 @@ subdir-ccflags-y += -Idrivers/media/platform/exynos/camera/vendor
 subdir-ccflags-y += -Idrivers/media/platform/exynos/camera/sensor/csi
 subdir-ccflags-y += -Idrivers/media/platform/exynos/camera/sensor/module_framework
 subdir-ccflags-y += -Idrivers/media/platform/exynos/camera/vendor/mcd/preprocessor
-subdir-ccflags-y += -Idrivers/media/platform/exynos/camera/vendor/mcd_v2/preprocessor
 subdir-ccflags-$(CONFIG_PABLO_V7_0_0) += -Idrivers/media/platform/exynos/camera/ischain/is-v7_0_0
 subdir-ccflags-$(CONFIG_PABLO_V8_0_0) += -Idrivers/media/platform/exynos/camera/ischain/is-v8_0_0
 subdir-ccflags-$(CONFIG_PABLO_V8_1_0) += -Idrivers/media/platform/exynos/camera/ischain/is-v8_1_0
@@ -92,15 +90,6 @@ subdir-ccflags-$(CONFIG_VENDER_MCD) += -Idrivers/media/platform/exynos/camera/ve
 ifeq ($(CONFIG_VENDER_MCD),y)
 subdir-ccflags-$(CONFIG_PABLO_V8_1_0) += -Idrivers/media/platform/exynos/camera/vendor/mcd/v8_1_0
 subdir-ccflags-$(CONFIG_PABLO_V8_10_0) += -Idrivers/media/platform/exynos/camera/vendor/mcd/v8_10_0
-subdir-ccflags-$(CONFIG_PABLO_V8_20_0) += -Idrivers/media/platform/exynos/camera/vendor/mcd/v8_20_0
 endif
-
-subdir-ccflags-$(CONFIG_VENDER_MCD_V2) += -Idrivers/media/platform/exynos/camera/vendor/mcd_v2
-ifeq ($(CONFIG_VENDER_MCD_V2),y)
-subdir-ccflags-$(CONFIG_PABLO_V8_1_0) += -Idrivers/media/platform/exynos/camera/vendor/mcd_v2/v8_1_0
-subdir-ccflags-$(CONFIG_PABLO_V8_10_0) += -Idrivers/media/platform/exynos/camera/vendor/mcd_v2/v8_10_0
-subdir-ccflags-$(CONFIG_PABLO_V8_20_0) += -Idrivers/media/platform/exynos/camera/vendor/mcd_v2/v8_20_0
-endif
-
 
 subdir-ccflags-y += -Idrivers/media/platform/exynos/camera-pp

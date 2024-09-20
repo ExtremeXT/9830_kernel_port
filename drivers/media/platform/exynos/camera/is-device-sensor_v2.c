@@ -106,30 +106,44 @@ int is_search_sensor_module_with_position(struct is_device_sensor *device,
 
 	module_enum = device->module_enum;
 	*module = NULL;
-	if (position < SENSOR_POSITION_MAX) {
-		/* physical sensor position */
-		sensor_id = priv->sensor_id[position];
-		if (!sensor_id) {
-			merr("invalid module position(P)(%d)", device, position);
-			ret = -EINVAL;
-			goto p_err;
-		}
-	} else {
-		/* virtual sensor position */
-		switch (position) {
+
+	switch (position) {
+	case SENSOR_POSITION_REAR:
+		sensor_id = priv->rear_sensor_id;
+		break;
+	case SENSOR_POSITION_FRONT:
+		sensor_id = priv->front_sensor_id;
+		break;
+	case SENSOR_POSITION_REAR2:
+		sensor_id = priv->rear2_sensor_id;
+		break;
+	case SENSOR_POSITION_FRONT2:
+		sensor_id = priv->front2_sensor_id;
+		break;
+	case SENSOR_POSITION_REAR3:
+		sensor_id = priv->rear3_sensor_id;
+		break;
+	case SENSOR_POSITION_REAR4:
+		sensor_id = priv->rear4_sensor_id;
+		break;
 #ifdef CONFIG_SECURE_CAMERA_USE
-		case SENSOR_POSITION_SECURE:
-			sensor_id = priv->secure_sensor_id;
-			break;
+	case SENSOR_POSITION_SECURE:
+		sensor_id = priv->secure_sensor_id;
+		break;
 #endif
-		case SENSOR_POSITION_VIRTUAL:
-			sensor_id = SENSOR_NAME_VIRTUAL;
-			break;
-		default:
-			merr("invalid module position(%d)", device, position);
-			ret = -EINVAL;
-			goto p_err;
-		}
+	case SENSOR_POSITION_REAR_TOF:
+		sensor_id = priv->rear_tof_sensor_id;
+		break;
+	case SENSOR_POSITION_FRONT_TOF:
+		sensor_id = priv->front_tof_sensor_id;
+		break;
+	case SENSOR_POSITION_VIRTUAL:
+		sensor_id = SENSOR_NAME_VIRTUAL;
+		break;
+	default:
+		merr("invalid module position(%d)", device, position);
+		ret = -EINVAL;
+		goto p_err;
 	}
 
 	mmax = atomic_read(&device->module_count);
@@ -308,7 +322,7 @@ struct is_sensor_cfg *is_sensor_g_mode(struct is_device_sensor *device)
 	long approximate_value = LONG_MAX;
 	struct is_sensor_cfg *cfg_table;
 	u32 cfgs, i;
-	u32 width, height, framerate, ex_mode;
+	u32 width, height, framerate, ex_mode, ex_mode_option;
 	struct is_module_enum *module;
 	int deviation;
 #ifdef CAMERA_REAR2_SENSOR_SHIFT_CROP
@@ -335,33 +349,60 @@ struct is_sensor_cfg *is_sensor_g_mode(struct is_device_sensor *device)
 	height = device->image.window.height;
 	framerate = device->image.framerate;
 	ex_mode = device->ex_mode;
+	ex_mode_option = device->ex_mode_option;
 
-	minfo("try to find sensor mode(%dx%d@%d) ex_mode(%d)", device,
+	minfo("try to find sensor mode(%dx%d@%d) ex_mode(%d:%d)", device,
 		width,
 		height,
 		framerate,
-		ex_mode);
+		ex_mode,
+		ex_mode_option);
 
-	/* find sensor mode by w/h and fps range */
-	for (i = 0; i < cfgs; i++) {
-		if ((cfg_table[i].width == width) && (cfg_table[i].height == height)
-			&& (cfg_table[i].ex_mode == ex_mode)) {
-			deviation = cfg_table[i].framerate - framerate;
-			if (deviation == 0) {
-				/* You don't need to find another sensor mode */
-				select = &cfg_table[i];
-				break;
-			} else if ((deviation > 0) && approximate_value > abs(deviation)) {
-				/* try to find framerate smaller than previous */
-				approximate_value = abs(deviation);
-				select = &cfg_table[i];
+
+#ifdef USE_EX_MODE_OPTION
+	/* find sensor mode first by w/h, fps range and ex_mode_option */
+	if (ex_mode_option > 0) {
+		for (i = 0; i < cfgs; i++) {
+			if ((cfg_table[i].width == width) && (cfg_table[i].height == height)
+				&& (cfg_table[i].ex_mode == ex_mode_option)) {
+				deviation = cfg_table[i].framerate - framerate;
+				if (deviation == 0) {
+					/* You don't need to find another sensor mode */
+					select = &cfg_table[i];
+					break;
+				} else if ((deviation > 0) && approximate_value > abs(deviation)) {
+					/* try to find framerate smaller than previous */
+					approximate_value = abs(deviation);
+					select = &cfg_table[i];
+				}
 			}
 		}
 	}
+#endif
 
 	if (!select) {
-		merr("sensor mode(%dx%d@%dfps, ex_mode:%d) is not found", device, width, height, framerate, ex_mode);
-		goto p_err;
+		/* find sensor mode by w/h and fps range */
+		for (i = 0; i < cfgs; i++) {
+			if ((cfg_table[i].width == width) && (cfg_table[i].height == height)
+				&& (cfg_table[i].ex_mode == ex_mode)) {
+				deviation = cfg_table[i].framerate - framerate;
+				if (deviation == 0) {
+					/* You don't need to find another sensor mode */
+					select = &cfg_table[i];
+					break;
+				} else if ((deviation > 0) && approximate_value > abs(deviation)) {
+					/* try to find framerate smaller than previous */
+					approximate_value = abs(deviation);
+					select = &cfg_table[i];
+				}
+			}
+		}
+
+		if (!select) {
+			merr("sensor mode(%dx%d@%dfps, ex_mode:%d,%d) is not found",
+				device, width, height, framerate, ex_mode, ex_mode_option);
+			goto p_err;
+		}
 	}
 
 #ifdef CAMERA_REAR2_SENSOR_SHIFT_CROP
@@ -611,7 +652,7 @@ int is_sensor_gpio_on(struct is_device_sensor *device)
 		struct exynos_platform_is_module *pdata;
 
 		ret = is_vender_sensor_gpio_on_sel(vender,
-			scenario, &gpio_scenario);
+			scenario, &gpio_scenario, module);
 		if (ret) {
 			clear_bit(IS_MODULE_GPIO_ON, &module->state);
 			merr("is_vender_sensor_gpio_on_sel is fail(%d)",
@@ -718,7 +759,7 @@ int is_sensor_gpio_off(struct is_device_sensor *device)
 			goto p_err;
 		}
 
-		ret = is_vender_sensor_gpio_off(vender, scenario, gpio_scenario);
+		ret = is_vender_sensor_gpio_off(vender, scenario, gpio_scenario, module);
 		if (ret) {
 			merr("is_vender_sensor_gpio_off is fail(%d)", device, ret);
 			goto p_err;
@@ -977,7 +1018,7 @@ p_err:
 	return ret;
 }
 
-static int is_sensor_votf_tag(struct is_device_sensor *device, struct is_subdev *subdev)
+int is_sensor_votf_tag(struct is_device_sensor *device, struct is_subdev *subdev)
 {
 	int ret = 0;
 	struct is_frame *votf_frame;
@@ -1048,11 +1089,34 @@ int is_sensor_buf_tag(struct is_device_sensor *device,
 	unsigned long flags;
 	struct is_framemgr *framemgr;
 	struct is_frame *frame;
+	struct is_framemgr *ldr_framemgr;
+	struct is_group *group;
+	int ldr_req_cnt, sub_req_cnt;
+	int ldr_pro_cnt, sub_pro_cnt;
+
+	group = &device->group_sensor;
+	ldr_framemgr = GET_SUBDEV_FRAMEMGR(&group->leader);
+	FIMC_BUG(!ldr_framemgr);
 
 	framemgr = GET_SUBDEV_FRAMEMGR(f_subdev);
 	FIMC_BUG(!framemgr);
 
 	framemgr_e_barrier_irqs(framemgr, 0, flags);
+
+	if (!test_bit(IS_SENSOR_OTF_OUTPUT, &device->state)) {
+		ldr_req_cnt = ldr_framemgr->queued_count[FS_REQUEST];
+		ldr_pro_cnt = ldr_framemgr->queued_count[FS_PROCESS];
+		sub_req_cnt = framemgr->queued_count[FS_REQUEST];
+		sub_pro_cnt = framemgr->queued_count[FS_PROCESS];
+
+		if ((sub_req_cnt > ldr_req_cnt) || (sub_pro_cnt > ldr_pro_cnt))
+			mgrwarn("subdev DQ might be blocked: ldr(R%d, P%d, C%d), sub[%s](R%d, P%d, C%d)",
+				group, group,
+				ldr_frame, ldr_req_cnt, ldr_pro_cnt,
+				ldr_framemgr->queued_count[FS_COMPLETE],
+				f_subdev->name, sub_req_cnt, sub_pro_cnt,
+				framemgr->queued_count[FS_COMPLETE]);
+	}
 
 	frame = peek_frame(framemgr, FS_REQUEST);
 	if (frame) {
@@ -1074,7 +1138,6 @@ int is_sensor_buf_tag(struct is_device_sensor *device,
 			ret = -EINVAL;
 		} else {
 			set_bit(f_subdev->id, &ldr_frame->out_flag);
-			trans_frame(framemgr, frame, FS_PROCESS);
 
 			if (test_bit(IS_SUBDEV_VOTF_USE, &f_subdev->state)) {
 				/* update mater first for preventing mismatch */
@@ -1861,6 +1924,7 @@ int is_sensor_open(struct is_device_sensor *device,
 	device->early_buf_done_mode = 0;
 	device->ex_scenario = 0;
 	device->ex_mode = 0;
+	device->ex_mode_option = 0;
 	memset(&device->sensor_ctl, 0, sizeof(struct camera2_sensor_ctl));
 	memset(&device->lens_ctl, 0, sizeof(struct camera2_lens_ctl));
 	memset(&device->flash_ctl, 0, sizeof(struct camera2_flash_ctl));
@@ -2110,9 +2174,26 @@ int is_sensor_runtime_module_sel(struct is_device_sensor *device,
 		goto p_err;
 	}
 
-	if (position < SENSOR_POSITION_MAX) {
-		priv->sensor_id[position] = ctrl.value;
-	} else {
+	switch (position) {
+	case SENSOR_POSITION_REAR:
+		priv->rear_sensor_id = ctrl.value;
+		break;
+	case SENSOR_POSITION_FRONT:
+		priv->front_sensor_id = ctrl.value;
+		break;
+	case SENSOR_POSITION_REAR2:
+		priv->rear2_sensor_id = ctrl.value;
+		break;
+	case SENSOR_POSITION_FRONT2:
+		priv->front2_sensor_id = ctrl.value;
+		break;
+	case SENSOR_POSITION_REAR3:
+		priv->rear3_sensor_id = ctrl.value;
+		break;
+	case SENSOR_POSITION_REAR4:
+		priv->rear4_sensor_id = ctrl.value;
+		break;
+	default:
 		merr("invalid module position(%d)", device, position);
 		ret = -EINVAL;
 		goto p_err;
@@ -2127,38 +2208,48 @@ p_err:
 
 static int is_sensor_i2c_dummy_module_set(struct is_device_sensor *device, struct is_core *core, u32 position)
 {
-       struct is_vender_specific *priv;
-       struct is_module_enum *module;
+	struct is_vender_specific *priv;
+	struct is_module_enum *module;
 
-       FIMC_BUG(!device);
-       FIMC_BUG(!core);
+	FIMC_BUG(!device);
+	FIMC_BUG(!core);
 
-       if (!core->vender.private_data) {
-               merr("vender private data is null", device);
-               return -EINVAL;
-       }
-       priv = core->vender.private_data;
+	if (!core->vender.private_data) {
+		merr("vender private data is null", device);
+		return -EINVAL;
+	}
+	priv = core->vender.private_data;
 
-       module = &device->module_enum[0];
+	module = &device->module_enum[0];
 
-       switch (position) {
-       case SENSOR_POSITION_REAR:
-       case SENSOR_POSITION_FRONT:
-       case SENSOR_POSITION_REAR2:
-       case SENSOR_POSITION_FRONT2:
-       case SENSOR_POSITION_REAR3:
-       case SENSOR_POSITION_REAR4:
-               priv->sensor_id[position] = module->sensor_id;
-               break;
-       default:
-               merr("invalid module position(%d)", device, position);
-               return -EINVAL;
-       }
+	switch (position) {
+	case SENSOR_POSITION_REAR:
+		priv->rear_sensor_id = module->sensor_id;
+		break;
+	case SENSOR_POSITION_FRONT:
+		priv->front_sensor_id = module->sensor_id;
+		break;
+	case SENSOR_POSITION_REAR2:
+		priv->rear2_sensor_id = module->sensor_id;
+		break;
+	case SENSOR_POSITION_FRONT2:
+		priv->front2_sensor_id = module->sensor_id;
+		break;
+	case SENSOR_POSITION_REAR3:
+		priv->rear3_sensor_id = module->sensor_id;
+		break;
+	case SENSOR_POSITION_REAR4:
+		priv->rear4_sensor_id = module->sensor_id;
+		break;
+	default:
+		merr("invalid module position(%d)", device, position);
+		return -EINVAL;
+	}
 
-       set_bit(IS_SENSOR_I2C_DUMMY_MODULE_SELECTED, &device->state);
-       minfo("%s, sensor_id: %d\n", device, __func__, module->sensor_id);
+	set_bit(IS_SENSOR_I2C_DUMMY_MODULE_SELECTED, &device->state);
+	minfo("%s, sensor_id: %d\n", device, __func__, module->sensor_id);
 
-       return 0;
+	return 0;
 }
 
 int is_sensor_s_input(struct is_device_sensor *device,
@@ -2209,44 +2300,57 @@ int is_sensor_s_input(struct is_device_sensor *device,
 		(!test_bit(IS_SENSOR_RUNTIME_MODULE_SELECTED, &device->state))) {
 		ret = is_sensor_runtime_module_sel(device, input);
 		if (ret) {
-                       merr("runtime_module_sel is fail(%d)", device, ret);
-                       goto p_err;
-               }
-       }
-
-       if (device->pdata->i2c_dummy_enable &&
-               (!test_bit(IS_SENSOR_I2C_DUMMY_MODULE_SELECTED, &device->state))) {
-               ret = is_sensor_i2c_dummy_module_set(device, core, input);
-               if (ret) {
-                       merr("i2c_dummy_module_set is fail(%d)", device, ret);
+			merr("runtime_module_sel is fail(%d)", device, ret);
 			goto p_err;
 		}
 	}
 
-	if (input < SENSOR_POSITION_MAX) {
-		/* physical sensor position */
-		sensor_id = priv->sensor_id[input];
-		if (!sensor_id) {
-			merr("invalid module position(P)(%d)", device, input);
-			ret = -EINVAL;
+	if (device->pdata->i2c_dummy_enable &&
+		(!test_bit(IS_SENSOR_I2C_DUMMY_MODULE_SELECTED, &device->state))) {
+		ret = is_sensor_i2c_dummy_module_set(device, core, input);
+		if (ret) {
+			merr("i2c_dummy_module_set is fail(%d)", device, ret);
 			goto p_err;
 		}
-	} else {
-		/* virtual sensor position */
-		switch (input) {
+	}
+
+	switch (input) {
+	case SENSOR_POSITION_REAR:
+		sensor_id = priv->rear_sensor_id;
+		break;
+	case SENSOR_POSITION_FRONT:
+		sensor_id = priv->front_sensor_id;
+		break;
+	case SENSOR_POSITION_REAR2:
+		sensor_id = priv->rear2_sensor_id;
+		break;
+	case SENSOR_POSITION_FRONT2:
+		sensor_id = priv->front2_sensor_id;
+		break;
+	case SENSOR_POSITION_REAR3:
+		sensor_id = priv->rear3_sensor_id;
+		break;
+	case SENSOR_POSITION_REAR4:
+		sensor_id = priv->rear4_sensor_id;
+		break;
 #ifdef CONFIG_SECURE_CAMERA_USE
-		case SENSOR_POSITION_SECURE:
-			sensor_id = priv->secure_sensor_id;
-			break;
+	case SENSOR_POSITION_SECURE:
+		sensor_id = priv->secure_sensor_id;
+		break;
 #endif
-		case SENSOR_POSITION_VIRTUAL:
-			sensor_id = SENSOR_NAME_VIRTUAL;
-			break;
-		default:
-			merr("invalid module position(%d)", device, input);
-			ret = -EINVAL;
-			goto p_err;
-		}
+	case SENSOR_POSITION_REAR_TOF:
+		sensor_id = priv->rear_tof_sensor_id;
+		break;
+	case SENSOR_POSITION_FRONT_TOF:
+		sensor_id = priv->front_tof_sensor_id;
+		break;
+	case SENSOR_POSITION_VIRTUAL:
+		sensor_id = SENSOR_NAME_VIRTUAL;
+		break;
+	default:
+		merr("invalid module position(%d)", device, input);
+		ret = -EINVAL;
+		goto p_err;
 	}
 
 	module_count = atomic_read(&device->module_count);
@@ -2468,9 +2572,13 @@ int is_sensor_s_input(struct is_device_sensor *device,
 		sensor_peri->subdev_laser_af = device->subdev_laser_af;
 		sensor_peri->laser_af = device->laser_af;
 		sensor_peri->laser_af->sensor_peri = sensor_peri;
+		sensor_peri->laser_af->laser_lock = &core->laser_lock;
+		sensor_peri->laser_af->active = false;
 
 		info("%s[%d] laser_af position = %d\n",
 				__func__, __LINE__, core->current_position);
+
+		set_bit(IS_SENSOR_LASER_AF_AVAILABLE, &sensor_peri->peri_state);
 	} else {
 		sensor_peri->subdev_laser_af = NULL;
 		sensor_peri->laser_af = NULL;
@@ -3193,30 +3301,6 @@ p_err:
 	return device->cfg->binning;
 }
 
-int is_sensor_g_sensorcrop_bratio(struct is_device_sensor *device)
-{
-	int binning = 0;
-	struct is_module_enum *module;
-
-	FIMC_BUG(!device);
-	FIMC_BUG(!device->subdev_module);
-
-	module = (struct is_module_enum *)v4l2_get_subdevdata(device->subdev_module);
-	if (!module) {
-		merr("module is NULL", device);
-		goto p_err;
-	}
-
-	/* remosaic crop size is 2 times tetra size */
-	binning = min(BINNING(module->active_width, device->image.window.width * 2),
-		BINNING(module->active_height, device->image.window.height * 2));
-	/* sensor binning only support natural number */
-	binning = (binning / 1000) * 1000;
-
-p_err:
-	return binning;
-}
-
 int is_sensor_g_position(struct is_device_sensor *device)
 {
 	return device->position;
@@ -3253,10 +3337,11 @@ int is_sensor_g_fast_mode(struct is_device_sensor *device)
 	framerate = is_sensor_g_framerate(device);
 	height = is_sensor_g_height(device);
 
-	if (ex_mode == EX_DUALFPS_960 ||
+	if (test_bit(IS_SENSOR_OTF_OUTPUT, &device->state) &&
+		(ex_mode == EX_DUALFPS_960 ||
 		ex_mode == EX_DUALFPS_480 ||
 		framerate >= 240 ||
-		height <= LINE_FOR_SHOT_VALID_TIME)
+		height <= LINE_FOR_SHOT_VALID_TIME))
 		return 1;
 	else
 		return 0;
@@ -3358,7 +3443,6 @@ int is_sensor_group_tag(struct is_device_sensor *device,
 	struct is_subdev *subdev;
 	struct camera2_node_group *node_group;
 	struct camera2_node *cap_node;
-	int vc;
 
 	group = &device->group_sensor;
 	node_group = &frame->shot_ext->node_group;
@@ -3367,15 +3451,6 @@ int is_sensor_group_tag(struct is_device_sensor *device,
 	if (ret) {
 		merr("is_sensor_group_tag is fail(%d)", device, ret);
 		goto p_err;
-	}
-
-	for (vc = ENTRY_SSVC0; vc <= ENTRY_SSVC3; vc++) {
-		subdev = group->subdev[vc];
-		if (subdev && test_bit(IS_SUBDEV_VOTF_USE, &subdev->state)) {
-			ret = is_sensor_votf_tag(device, subdev);
-			if (ret)
-				msrwarn("votf_frame is drop(%d)", device, subdev, frame, ret);
-		}
 	}
 
 	for (capture_id = 0; capture_id < CAPTURE_NODE_MAX; ++capture_id) {
@@ -3608,6 +3683,12 @@ static int is_sensor_back_stop(void *qdevice,
 		goto p_err;
 	}
 
+	/*
+	 * If OTF case, skip force buffer done for sensor leader's frame
+	 * because force buffer done will be done in process_stop sequence.
+	 */
+	is_sensor_group_force_stop(device, device->group_sensor.id);
+
 	ret = is_group_stop(groupmgr, group);
 	if (ret)
 		merr("is_group_stop is fail(%d)", device, ret);
@@ -3776,7 +3857,7 @@ int is_sensor_front_start(struct is_device_sensor *device,
 		mutex_unlock(&dvfs_ctrl->lock);
 	}
 #endif
-	mdbgd_sensor("%s(sensor id : %d, csi ch : %d, size : %d x %d)\n", device,
+	mdbgd_sensor("%s(snesor id : %d, csi ch : %d, size : %d x %d)\n", device,
 		__func__,
 		module->sensor_id,
 		device->pdata->csi_ch,
@@ -3855,6 +3936,7 @@ already_stopped:
 	mutex_unlock(&device->mlock_state);
 
 	device->ex_mode = 0;
+	device->ex_mode_option = 0;
 
 	return ret;
 }
@@ -3924,6 +4006,8 @@ static int is_sensor_suspend(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct is_device_sensor *device;
 	struct exynos_platform_is_sensor *pdata;
+	
+	is_vendor_sensor_suspend();
 
 	if (!is_sensor_g_device(pdev, &device)) {
 		pdata = device->pdata;
@@ -4155,30 +4239,9 @@ static int is_sensor_shot(struct is_device_ischain *ischain,
 		goto p_err;
 	}
 
-	if (!test_bit(IS_SENSOR_OTF_OUTPUT, &sensor->state)) {
-		/* In case of M2M case, check the late shot */
-		if (test_bit(IS_SENSOR_FRONT_START, &sensor->state) &&
-			(sensor->line_fcount + 1) > frame->fcount) {
-			merr("[G%d] late shot (sensor:%d, line:%d, frame:%d, scount:%d)", ischain, group->id,
-					sensor->fcount, sensor->line_fcount,
-					frame->fcount, atomic_read(&group->scount));
-			ret = -EINVAL;
-			goto p_err;
-		}
-
-		/*
-		 * (M2M) return without first shot only.
-		 * Because second shot was applied in line interrupt
-		 * like concept of 3AA configure lock.
-		 *
-		 * case1) After sensor stream on
-		 * case2) Before sensor stream on and it's first shot
-		 */
-		if (test_bit(IS_SENSOR_FRONT_START, &sensor->state) ||
-			(!test_bit(IS_SENSOR_FRONT_START, &sensor->state)
-			&& atomic_read(&group->scount)))
-			goto p_err;
-	}
+	/* It is used for sensor only scenario such as TOF sensor or remosic sequence. */
+	if (!test_bit(IS_SENSOR_OTF_OUTPUT, &sensor->state))
+		goto shot_callback;
 
 	mgrdbgs(1, " DEVICE SENSOR SHOT CALLBACK(%d) (sensor:%d, line:%d, scount:%d)\n",
 		group->device, group, frame, frame->index,
@@ -4204,6 +4267,7 @@ static int is_sensor_shot(struct is_device_ischain *ischain,
 
 	PROGRAM_COUNT(8);
 
+shot_callback:
 	ret = is_devicemgr_shot_callback(group, frame, frame->fcount, IS_DEVICE_SENSOR);
 	if (ret) {
 		merr("is_ischainmgr_shot_callback fail(%d)", ischain, ret);

@@ -85,6 +85,8 @@
 #define SMPL_EN_SHIFT			7
 #define WTSR_EN_MASK			(1 << WTSR_EN_SHIFT)
 #define SMPL_EN_MASK			(1 << SMPL_EN_SHIFT)
+#define SUB_SMPL_EN_SHIFT               3
+#define SUB_SMPL_EN_MASK                (1 << SUB_SMPL_EN_SHIFT)
 /* RTC Update Register */
 #define RTC_RUDR_SHIFT			0
 #define RTC_RUDR_MASK			(1 << RTC_RUDR_SHIFT)

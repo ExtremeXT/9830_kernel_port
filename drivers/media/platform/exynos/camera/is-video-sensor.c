@@ -870,7 +870,8 @@ static int is_ssx_video_s_ctrl(struct file *file, void *priv,
 	case V4L2_CID_IS_S_BNS:
 		break;
 	case V4L2_CID_SENSOR_SET_EXTENDEDMODE:
-		device->ex_mode = ctrl->value;
+		device->ex_mode = (ctrl->value & 0x1f);
+		device->ex_mode_option = (ctrl->value & 0xe0);
 		break;
 	case V4L2_CID_IS_S_STANDBY_OFF:
 		/*
@@ -1211,7 +1212,7 @@ static void is_ssx_buffer_queue(struct vb2_buffer *vb)
 
 static void is_ssx_buffer_finish(struct vb2_buffer *vb)
 {
-	int ret = 0;
+	int ret;
 	struct is_video_ctx *vctx;
 	struct is_device_sensor *device;
 
@@ -1224,13 +1225,11 @@ static void is_ssx_buffer_finish(struct vb2_buffer *vb)
 
 	mvdbgs(3, "%s(%d)\n", vctx, &vctx->queue, __func__, vb->index);
 
-	is_queue_buffer_finish(vb);
-
 	ret = is_sensor_buffer_finish(device, vb->index);
-	if (ret) {
+	if (ret)
 		merr("is_sensor_buffer_finish is fail(%d)", device, ret);
-		return;
-	}
+
+	is_queue_buffer_finish(vb);
 }
 
 const struct vb2_ops is_ssx_qops = {

@@ -38,7 +38,7 @@
 #define SCALER_INT_EN			0x08
 #define SCALER_INT_EN_FRAME_END		(1 << 0)
 #define SCALER_INT_EN_ALL		0x807fffff
-#define SCALER_INT_EN_ALL_v3		0x83ffffff
+#define SCALER_INT_EN_ALL_v3		0x82ffffff
 #define SCALER_INT_EN_ALL_v4		0xb2ffffff
 #define SCALER_INT_EN_ALL_v5		0xe0ffffff
 #define SCALER_INT_EN_DEFAULT		0xffffffff
@@ -50,9 +50,9 @@
 #define SCALER_SRC_CFG			0x10
 
 /* Source Image Configuration */
+#define SCALER_CFG_TILE_EN		(1 << 10)
 #define SCALER_CFG_VHALF_PHASE_EN	(1 << 9)
 #define SCALER_CFG_BIG_ENDIAN		(1 << 8)
-#define SCALER_CFG_SBWC_LOSSY		(1 << 10)
 #define SCALER_CFG_SBWC_FORMAT		(1 << 9)
 #define SCALER_CFG_10BIT_P010		(1 << 7)
 #define SCALER_CFG_10BIT_S10		(2 << 7)
@@ -87,7 +87,6 @@
 #define SCALER_CFG_FMT_ABGR2101010	(0x19 << 0)
 #define SCALER_CFG_FMT_RGBA1010102	(0x1a << 0)
 #define SCALER_CFG_FMT_BGRA1010102	(0x1b << 0)
-#define SCALER_CFG_SBWC_LOSSY_BYTES32NUM(x)	(((x) & 0x7) << 11)
 
 /* Source Y Base Address */
 #define SCALER_SRC_Y_BASE		0x14
@@ -169,7 +168,6 @@
 #define SCALER_SEL_MASK			(2 << 29)
 #define SCALER_OP_SEL_INV_MASK		(1 << 28)
 #define SCALER_OP_SEL_MASK		(0xf << 24)
-#define SCALER_BLEND_GLOBAL_ALPHA_MASK	(0xff)
 #define SCALER_SEL_INV_SHIFT		(31)
 #define SCALER_SEL_SHIFT		(29)
 #define SCALER_OP_SEL_INV_SHIFT		(28)
@@ -198,54 +196,6 @@
 #define SCALER_SRC_CH_INIT_PHASE	0x2d8
 #define SCALER_SRC_CV_INIT_PHASE	0x2dc
 
-/* Source blending */
-#define SCALER_BLEND_CFG_REG		0x300
-#define SCALER_SRC_ALPHA_MUL_EN_SHIFT		(17)
-#define SCALER_SRC_ALPHA_DIV_EN_SHIFT		(16)
-#define SCALER_BLEND_SRC_ALPHA_DIV_EN_SHIFT	(15)
-#define SCALER_BLEND_SRC_COLOR_BYTE_SWAP_SHIFT	(13)
-#define SCALER_BLEND_SRC_COLOR_FORMAT_SHIFT	(8)
-#define SCALER_BLEND_DST_CSC_HOFFSET_SHIFT	(4)
-#define SCALER_BLEND_DST_CSC_VOFFSET_SHIFT	(0)
-
-#define SCALER_SRC_ALPHA_MUL_EN_MASK	 \
-					(1 << SCALER_SRC_ALPHA_MUL_EN_SHIFT)
-#define SCALER_SRC_ALPHA_DIV_EN_MASK	 \
-					(1 << SCALER_SRC_ALPHA_DIV_EN_SHIFT)
-#define SCALER_BLEND_SRC_ALPHA_DIV_EN_MASK	 \
-				(1 << SCALER_BLEND_SRC_ALPHA_DIV_EN_SHIFT)
-#define SCALER_BLEND_SRC_COLOR_BYTE_SWAP_MASK	 \
-				(2 << SCALER_BLEND_SRC_COLOR_BYTE_SWAP_SHIFT)
-#define SCALER_BLEND_SRC_COLOR_FORMAT_MASK	 \
-				(0x1F << SCALER_BLEND_SRC_COLOR_FORMAT_SHIFT)
-#define SCALER_BLEND_DST_CSC_HOFFSET_MASK	 \
-				(3 << SCALER_BLEND_DST_CSC_HOFFSET_SHIFT)
-#define SCALER_BLEND_DST_CSC_VOFFSET_MASK	 \
-				(3 << SCALER_BLEND_DST_CSC_VOFFSET_SHIFT)
-
-#define SCALER_BLEND_SRC_BASE_REG	(0x304)
-
-#define SCALER_BLEND_SRC_SPAN_REG	(0x310)
-#define SCALER_BLEND_SRC_SPAN_SHIFT     (0)
-#define SCALER_BLEND_SRC_SPAN_MASK     (0x7FFF << SCALER_BLEND_SRC_SPAN_SHIFT)
-
-#define SCALER_BLEND_SRC_POS_REG	(0x314)
-
-#define SCALER_BLEND_SRC_H_POS_SHIFT	(16)
-#define SCALER_BLEND_SRC_H_POS_MASK  \
-				(0x3FFF << SCALER_BLEND_SRC_H_POS_SHIFT)
-#define SCALER_BLEND_SRC_V_POS_SHIFT	(0)
-#define SCALER_BLEND_SRC_V_POS_MASK  \
-				(0x3FFF << SCALER_BLEND_SRC_V_POS_SHIFT)
-
-#define SCALER_BLEND_SRC_WH_REG		(0x318)
-#define SCALER_BLEND_SRC_WH_WIDTH_SHIFT	(16)
-#define SCALER_BLEND_SRC_WH_WIDTH_MASK	\
-				(0x3FFF << SCALER_BLEND_SRC_WH_WIDTH_SHIFT)
-#define SCALER_BLEND_SRC_WH_HEIGHT_SHIFT 0
-#define SCALER_BLEND_SRC_WH_HEIGHT_MASK	\
-				(0x3FFF << SCALER_BLEND_SRC_WH_HEIGHT_SHIFT)
-
 /* macros to make words to SFR */
 #define SCALER_VAL_WH(w, h)	 (((w) & 0x3FFF) << 16) | ((h) & 0x3FFF)
 #define SCALER_VAL_SRC_POS(l, t) (((l) & 0x3FFF) << 18) | (((t) & 0x3FFF) << 2)
@@ -253,9 +203,8 @@
 
 static inline void sc_hwset_clk_request(struct sc_dev *sc, bool enable)
 {
-	if (sc->version >= SCALER_VERSION(5, 0, 1) ||
-	    sc->version == SCALER_VERSION(4, 2, 0))
-		__raw_writel(enable ? 1 : 0, sc->regs + SCALER_CLK_REQ);
+	if (sc->version >= SCALER_VERSION(5, 0, 1))
+		writel(enable ? 1 : 0, sc->regs + SCALER_CLK_REQ);
 }
 
 static inline void sc_hwset_src_pos(struct sc_dev *sc, __s32 left, __s32 top,
@@ -332,19 +281,19 @@ static inline void sc_hwset_int_en(struct sc_dev *sc)
 static inline void sc_clear_aux_power_cfg(struct sc_dev *sc)
 {
 	/* Clearing all power saving features */
-	__raw_writel(__raw_readl(sc->regs + SCALER_CFG) & ~SCALER_CFG_DRCG_EN,
+	writel(readl(sc->regs + SCALER_CFG) & ~SCALER_CFG_DRCG_EN,
 			sc->regs + SCALER_CFG);
 }
 
 static inline void sc_hwset_bus_idle(struct sc_dev *sc)
 {
-	if (sc->version == SCALER_VERSION(5, 0, 1)) {
+	if (sc->version >= SCALER_VERSION(5, 0, 1)) {
 		int cnt = 1000;
 
-		__raw_writel(SCALER_CFG_STOP_REQ, sc->regs + SCALER_CFG);
+		writel(SCALER_CFG_STOP_REQ, sc->regs + SCALER_CFG);
 
 		while (cnt-- > 0)
-			if (__raw_readl(sc->regs + SCALER_CFG)
+			if (readl(sc->regs + SCALER_CFG)
 						& SCALER_CFG_RESET_OKAY)
 				break;
 
@@ -357,7 +306,6 @@ static inline void sc_hwset_init(struct sc_dev *sc)
 	unsigned long cfg;
 
 	sc_hwset_clk_request(sc, true);
-	sc_hwset_bus_idle(sc);
 
 #ifdef SC_NO_SOFTRST
 	cfg = (SCALER_CFG_CSC_Y_OFFSET_SRC | SCALER_CFG_CSC_Y_OFFSET_DST);
@@ -365,20 +313,6 @@ static inline void sc_hwset_init(struct sc_dev *sc)
 	cfg = SCALER_CFG_SOFT_RST;
 #endif
 	writel(cfg, sc->regs + SCALER_CFG);
-
-	if (sc->version >= SCALER_VERSION(3, 0, 1))
-		__raw_writel(
-			__raw_readl(sc->regs + SCALER_CFG) | SCALER_CFG_DRCG_EN,
-			sc->regs + SCALER_CFG);
-	if (sc->version >= SCALER_VERSION(4, 0, 1) &&
-			sc->version != SCALER_VERSION(4, 2, 0)) {
-		__raw_writel(
-			__raw_readl(sc->regs + SCALER_CFG) | SCALER_CFG_BURST_RD,
-			sc->regs + SCALER_CFG);
-		__raw_writel(
-			__raw_readl(sc->regs + SCALER_CFG) & ~SCALER_CFG_BURST_WR,
-			sc->regs + SCALER_CFG);
-	}
 }
 
 static inline void sc_hwset_soft_reset(struct sc_dev *sc)
@@ -387,15 +321,27 @@ static inline void sc_hwset_soft_reset(struct sc_dev *sc)
 	writel(SCALER_CFG_SOFT_RST, sc->regs + SCALER_CFG);
 }
 
+static inline bool sc_hwget_is_sbwc(struct sc_dev *sc)
+{
+	if (sc->version >= SCALER_VERSION(5, 2, 0) &&
+	    readl(sc->regs + SCALER_DST_CFG) & SCALER_CFG_SBWC_FORMAT)
+		return true;
+
+	return false;
+}
+
+static inline void sc_hwset_soft_reset_no_bus_idle(struct sc_dev *sc)
+{
+	writel(SCALER_CFG_SOFT_RST, sc->regs + SCALER_CFG);
+}
+
 static inline void sc_hwset_start(struct sc_dev *sc)
 {
-	unsigned long cfg = __raw_readl(sc->regs + SCALER_CFG);
+	unsigned long cfg = readl(sc->regs + SCALER_CFG);
 
 	cfg |= SCALER_CFG_START_CMD;
 	if (sc->version >= SCALER_VERSION(3, 0, 1)) {
-		if ((sc->version == SCALER_VERSION(4, 2, 0)) &&
-					!(cfg & SCALER_CFG_BLEND_EN))
-			cfg |= SCALER_CFG_CORE_BYP_EN;
+		cfg |= SCALER_CFG_CORE_BYP_EN;
 		cfg |= SCALER_CFG_SRAM_CG_EN;
 	}
 	writel(cfg, sc->regs + SCALER_CFG);

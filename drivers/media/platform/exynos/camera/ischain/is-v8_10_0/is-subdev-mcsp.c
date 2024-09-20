@@ -45,7 +45,7 @@ int is_ischain_mxp_stripe_cfg(struct is_subdev *subdev,
 	u32 h_ratio = GET_ZOOM_RATIO(incrop->w, otcrop->w);
 
 	/* Do not use outcrop when MCSC crop is used */
-	*use_out_crop = 0;
+	*use_out_crop = (incrop->x == 0) ? 1 : 0;
 
 	framemgr = GET_SUBDEV_FRAMEMGR(subdev);
 	if (!framemgr)
@@ -491,8 +491,7 @@ static int is_ischain_mxp_start(struct is_device_ischain *device,
 		}
 	}
 
-	if ((index >= PARAM_MCS_OUTPUT0 && index < PARAM_MCS_OUTPUT5) &&
-		frame->shot_ext->mcsc_flip[index - PARAM_MCS_OUTPUT0] != mcs_output->flip) {
+	if (frame->shot_ext->mcsc_flip[index - PARAM_MCS_OUTPUT0] != mcs_output->flip) {
 		flip = frame->shot_ext->mcsc_flip[index - PARAM_MCS_OUTPUT0];
 		queue->framecfg.flip = flip << 1;
 		mdbg_pframe("flip is changed(%d->%d)\n",
@@ -786,8 +785,7 @@ static int is_ischain_mxp_tag(struct is_subdev *subdev,
 			pixelformat = node->pixelformat;
 		}
 
-		if ((index >= PARAM_MCS_OUTPUT0 && index < PARAM_MCS_OUTPUT5) &&
-			ldr_frame->shot_ext->mcsc_flip[index - PARAM_MCS_OUTPUT0] != mcs_output->flip)
+		if (ldr_frame->shot_ext->mcsc_flip[index - PARAM_MCS_OUTPUT0] != mcs_output->flip)
 			change_flip = true;
 
 		inparm.x = mcs_output->crop_offset_x;

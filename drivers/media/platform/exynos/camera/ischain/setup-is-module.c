@@ -26,6 +26,8 @@
 
 #include <exynos-is-module.h>
 #include "is-i2c-config.h"
+#include "is-vender.h"
+#include "is-time.h"
 
 static int acquire_shared_rsc(struct exynos_sensor_pin *pin_ctrls)
 {
@@ -153,6 +155,11 @@ static int exynos_is_module_pin_control(struct is_module_enum *module,
 						module, module->sensor_id, name);
 
 				ret = regulator_enable(regulator);
+
+				if (pin_ctrls->actuator_i2c_delay > 0) {
+					module->act_available_time = is_get_timestamp_boot() + (pin_ctrls->actuator_i2c_delay * 1000);
+				}
+
 				if (ret) {
 					merr("[M%d] regulator_enable(%s) fail\n",
 						module, module->sensor_id, name);
@@ -180,8 +187,40 @@ static int exynos_is_module_pin_control(struct is_module_enum *module,
 			regulator_put(regulator);
 		}
 		break;
+	case PIN_REGULATOR_OPTION:
+		{
+			struct regulator *regulator = NULL;
+
+			regulator = devm_regulator_get(dev, name);
+			if (IS_ERR_OR_NULL(regulator)) {
+				merr("[M%d] regulator_get(%s) fail\n",
+					module, module->sensor_id, name);
+				return PTR_ERR(regulator);
+			}
+
+			if (value) {
+				ret = regulator_set_mode(regulator, REGULATOR_MODE_FAST);
+				if(ret) {
+					dev_err(dev, "Failed to configure fPWM mode: %d\n", ret);
+					regulator_put(regulator);
+					return ret;
+				}
+			} else {
+				ret = regulator_set_mode(regulator, REGULATOR_MODE_NORMAL);
+				if (ret) {
+					dev_err(dev, "Failed to configure auto mode: %d\n", ret);
+					regulator_put(regulator);
+					return ret;
+				}
+			}
+
+			udelay(delay);
+			regulator_put(regulator);
+		}
+		break;
 	case PIN_I2C:
 		ret = is_i2c_pin_control(module, scenario, value);
+		udelay(delay);
 		break;
 	case PIN_MCLK:
 		subdev_module = module->subdev;

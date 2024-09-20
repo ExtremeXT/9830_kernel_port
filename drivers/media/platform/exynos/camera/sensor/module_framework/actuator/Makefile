@@ -9,14 +9,11 @@ obj-$(CONFIG_CAMERA_ACT_DW9780_OBJ) += is-actuator-dw9780.o
 obj-$(CONFIG_CAMERA_ACT_DW9804_OBJ) += is-actuator-dw9804.o
 obj-$(CONFIG_CAMERA_ACT_DW9807_OBJ) += is-actuator-dw9807.o
 obj-$(CONFIG_CAMERA_ACT_DW9808_OBJ) += is-actuator-dw9808.o
-obj-$(CONFIG_CAMERA_ACT_DW9817_OBJ) += is-actuator-dw9817.o
 obj-$(CONFIG_CAMERA_ACT_DW9823_OBJ) += is-actuator-dw9823.o
 obj-$(CONFIG_CAMERA_ACT_DW9839_OBJ) += is-actuator-dw9839.o
-obj-$(CONFIG_CAMERA_ACT_GT9778_OBJ) += is-actuator-gt9778.o
 obj-$(CONFIG_CAMERA_ACT_LC898217_OBJ) += is-actuator-lc898217.o
 obj-$(CONFIG_CAMERA_ACT_ZC533_OBJ) += is-actuator-zc533.o
 obj-$(CONFIG_CAMERA_ACT_ZC569_OBJ) += is-actuator-zc569.o
-obj-$(CONFIG_CAMERA_ACT_FP5529_OBJ) += is-actuator-fp5529.o
 
 EXTRA_CFLAGS += -Idrivers/media/platform/exynos/camera
 EXTRA_CFLAGS += -Idrivers/media/platform/exynos/camera/include

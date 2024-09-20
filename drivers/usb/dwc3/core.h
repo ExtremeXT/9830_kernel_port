@@ -30,9 +30,7 @@
 
 #include <linux/phy/phy.h>
 
-#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
-#include "../../battery/common/sec_charging_common.h"
-#endif
+#include "../../battery_v2/include/sec_charging_common.h"
 
 #define DWC3_MSG_MAX	500
 
@@ -308,7 +306,6 @@
 #define DWC3_GUCTL_DTOUT_MASK		(0x7ff)
 
 /* Global User Control 1 Register */
-#define DWC3_GUCTL1_PARKMODE_DISABLE_SS	BIT(17)
 #define DWC3_GUCTL1_TX_IPGAP_LINECHECK_DIS	BIT(28)
 #define DWC3_GUCTL1_DEV_L1_EXIT_BY_HW	BIT(24)
 #define DWC3_GUCTL1_IP_GAP_ADD_ON(n)		((n) << 21)
@@ -331,7 +328,6 @@
 
 /* Global USB2 PHY Vendor Control Register */
 #define DWC3_GUSB2PHYACC_NEWREGREQ	BIT(25)
-#define DWC3_GUSB2PHYACC_DONE		BIT(24)
 #define DWC3_GUSB2PHYACC_BUSY		BIT(23)
 #define DWC3_GUSB2PHYACC_WRITE		BIT(22)
 #define DWC3_GUSB2PHYACC_ADDR(n)	(n << 16)
@@ -361,10 +357,6 @@
 #define DWC31_GTXFIFOSIZ_TXFDEF(n)	((n) & 0x7fff)	/* DWC_usb31 only */
 #define DWC3_GTXFIFOSIZ_TXFDEF(n)	((n) & 0xffff)
 #define DWC3_GTXFIFOSIZ_TXFSTADDR(n)	((n) & 0xffff0000)
-
-/* Global RX Fifo Size Register */
-#define DWC31_GRXFIFOSIZ_RXFDEP(n)	((n) & 0x7fff)	/* DWC_usb31 only */
-#define DWC3_GRXFIFOSIZ_RXFDEP(n)	((n) & 0xffff)
 
 /* Global Event Size Registers */
 #define DWC3_GEVNTSIZ_INTMASK		BIT(31)
@@ -771,9 +763,7 @@ struct dwc3_ep {
 #define DWC3_EP_WEDGE		BIT(2)
 #define DWC3_EP_TRANSFER_STARTED BIT(3)
 #define DWC3_EP_PENDING_REQUEST	BIT(5)
-#define DWC3_EP_DELAY_START	BIT(6)
 #define DWC3_EP_END_TRANSFER_PENDING	BIT(7)
-#define DWC3_EP_PENDING_CLEAR_STALL	BIT(11)
 
 	/* This last one is specific to EP0 */
 #define DWC3_EP0_DIR_IN		BIT(31)
@@ -839,6 +829,11 @@ enum dwc3_link_state {
 	DWC3_LINK_STATE_RESET		= 0x0e,
 	DWC3_LINK_STATE_RESUME		= 0x0f,
 	DWC3_LINK_STATE_MASK		= 0x0f,
+};
+
+enum {
+	RELEASE	= 0,
+	NOTIFY	= 1,
 };
 
 /* TRB Length, PCM and Status */
@@ -1094,8 +1089,6 @@ struct dwc3_scratchpad_array {
  *			change quirk.
  * @dis_tx_ipgap_linecheck_quirk: set if we disable u2mac linestate
  *			check during HS transmit.
- * @parkmode_disable_ss_quirk: set if we need to disable all SuperSpeed
- *			instances in park mode.
  * @tx_de_emphasis_quirk: set if we enable Tx de-emphasis quirk
  * @tx_de_emphasis: Tx de-emphasis value
  * 	0	- -6dB de-emphasis
@@ -1289,7 +1282,6 @@ struct dwc3 {
 	unsigned		dis_u2_freeclk_exists_quirk:1;
 	unsigned		dis_del_phy_power_chg_quirk:1;
 	unsigned		dis_tx_ipgap_linecheck_quirk:1;
-	unsigned		parkmode_disable_ss_quirk:1;
 
 	unsigned		tx_de_emphasis_quirk:1;
 	unsigned		tx_de_emphasis:2;
@@ -1303,21 +1295,31 @@ struct dwc3 {
 	unsigned		sparse_transfer_control:1;
 	unsigned		is_not_vbus_pad:1;
 	unsigned		start_config_issued:1;
-	unsigned		vbus_state:1;
 
-	unsigned		no_extra_delay:1; 
+	unsigned		no_extra_delay:1; /* Added for exynos9830 */
 	unsigned		force_gen1:1; /* Force GEN1 */
+	unsigned		vbus_state:1;
 	u32			usb_host_device_timeout;
 
 	struct workqueue_struct	*int_qos_lock_wq;
 	struct work_struct	int_qos_work;
 	int level_val;
-#if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
 	struct work_struct      set_vbus_current_work;
 	int			vbus_current; /* 100mA,  500mA,  900mA */
+	struct delayed_work		usb_qos_lock_delayed_work;
+#if defined(CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE) && defined(CONFIG_SEC_FACTORY)
+	struct delayed_work		usb_link_state_check_work;
 #endif
+	struct delayed_work usb_event_work;
+	ktime_t rst_time_before;
+	ktime_t rst_time_first;
+	int rst_err_cnt;
+	bool rst_err_noti;
+	bool event_state;
 };
 
+#define ERR_RESET_CNT	3
+#define USB_BUS_CLOCK_DELAY_MS 3000
 #define INCRX_BURST_MODE 0
 #define INCRX_UNDEF_LENGTH_BURST_MODE 1
 

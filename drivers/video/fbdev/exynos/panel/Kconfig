@@ -1,51 +1,52 @@
 config EXYNOS_DECON_LCD
-	depends on EXYNOS_DPU30
 	bool "Select LCD panel driver"
+	depends on EXYNOS_DECON_8895 || EXYNOS_DECON_9810 || CONFIG_EXYNOS_DPU20 || EXYNOS_DPU30
+	select BACKLIGHT_CLASS_DEVICE
 
-config EXYNOS_DECON_MDNIE
+config EXYNOS_DECON_MDNIE_LITE
+	tristate "Support MDNIE LITE"
 	depends on EXYNOS_DECON_LCD
-	tristate "Support MDNIE"
 	default n
 
 config SUPPORT_AFC
-	depends on EXYNOS_DECON_LCD && EXYNOS_DECON_MDNIE
 	tristate "Support AFC"
+	depends on EXYNOS_DECON_LCD && EXYNOS_DECON_MDNIE_LITE
 	default n
 
 config SUPPORT_ISC_TUNE_TEST
-	depends on EXYNOS_DECON_LCD
 	tristate "Support ISC TUNE TEST"
+	depends on EXYNOS_DECON_LCD
 	default n
 
 config EXYNOS_DECON_LCD_SYSFS
-	depends on EXYNOS_DECON_LCD
 	tristate "Support LCD SYSFS"
+	depends on EXYNOS_DECON_LCD
 	default y
 
 config EXYNOS_DECON_LCD_SPI
-	depends on EXYNOS_DECON_LCD
 	tristate "Support LCD SPI"
+	depends on EXYNOS_DECON_LCD
 	default n
 
 config EXYNOS_DECON_LCD_COPR
-	depends on EXYNOS_DECON_LCD
 	tristate "Support COPR"
+	depends on EXYNOS_DECON_LCD
 	default n
 
 config EXYNOS_DECON_LCD_TUNING
-	depends on EXYNOS_DECON_LCD
 	tristate "Support LCD TUNING"
+	depends on EXYNOS_DECON_LCD
 	default n
 
 config PANEL_AID_DIMMING
-	depends on EXYNOS_DECON_LCD
 	tristate "Support AID Dimming"
+	depends on EXYNOS_DECON_LCD
 	default y
 
 config PANEL_AID_DIMMING_DEBUG
+	tristate "Support AID Dimming Debug"
 	depends on PANEL_AID_DIMMING
 	depends on !SAMSUNG_PRODUCT_SHIP
-	tristate "Support AID Dimming Debug"
 	default y
 
 config SUPPORT_DSU
@@ -59,13 +60,8 @@ config SUPPORT_HMD
 	default n
 
 config SUPPORT_DOZE
-	depends on EXYNOS_DECON_LCD
 	tristate "Support Panel AOD"
-	default n
-
-config SUPPORT_INDISPLAY
 	depends on EXYNOS_DECON_LCD
-	tristate "Support Panel indisplay FOD"
 	default n
 
 config EXTEND_LIVE_CLOCK
@@ -74,119 +70,153 @@ config EXTEND_LIVE_CLOCK
 	default n
 
 config SUPPORT_AOD_BL
-	depends on EXYNOS_DECON_LCD && SUPPORT_DOZE
 	tristate "Support AOD(Active On Display) BL(BackLight) Driver"
+	depends on EXYNOS_DECON_LCD && SUPPORT_DOZE
 	default n
 
-config PANEL_BACKLIGHT_PAC_3_0
+config SUPPORT_DISPLAY_PROFILER
+	tristate "Support Display Profiler"
 	depends on EXYNOS_DECON_LCD
+	default n
+
+config SUPPORT_DDI_FLASH
+	tristate "Support display ddi flash"
+	depends on EXYNOS_DECON_LCD
+	default n
+
+config SUPPORT_POC_FLASH
+	tristate "Support display poc flash"
+	depends on EXYNOS_DECON_LCD
+	default n
+
+
+config SUPPORT_MAFPC
+	tristate "SUPPORT_S6E3HAB_MAFPC"
+	default n
+
+config SUPPORT_DIM_FLASH
+	tristate "Support display dimming flash"
+	depends on EXYNOS_DECON_LCD && SUPPORT_DDI_FLASH
+	default n
+
+config SUPPORT_GRAM_CHECKSUM
+	tristate "Support GRAM Checksum"
+	depends on EXYNOS_DECON_LCD
+	default n
+
+config SUPPORT_CCD_TEST
+	tristate "Support CCD TEST"
+	depends on EXYNOS_DECON_LCD
+	default n
+
+config SUPPORT_DYNAMIC_HLPM
+	tristate "Support Dynamic HLPM TEST"
+	depends on EXYNOS_DECON_LCD && SUPPORT_DOZE
+	default n
+
+config SUPPORT_TDMB_TUNE
+	tristate "Support TDMB Tuning"
+	depends on EXYNOS_DECON_LCD && TDMB_NOTIFIER
+	default y
+
+config PANEL_BACKLIGHT_PAC_3_0
 	tristate "Support baclight PAC 3.0"
+	depends on EXYNOS_DECON_LCD
 	default n
 
 config DISPLAY_USE_INFO
-	depends on EXYNOS_DECON_LCD
 	tristate "Support display use info logging"
+	depends on EXYNOS_DECON_LCD
+	default n
+
+config SELF_MOVE_3PX
+	tristate "self move 3 pixel"
+	depends on EXYNOS_DECON_LCD
 	default n
 
 config PANEL_NOTIFY
-	depends on EXYNOS_DECON_LCD
 	tristate "Support panel notifier"
-	default n
+	depends on EXYNOS_DECON_LCD
+	default y
 
 config SUPPORT_POC_SPI
-	depends on EXYNOS_DECON_LCD
 	tristate "Support poc SPI connection"
+	depends on EXYNOS_DECON_LCD
 	default n
 
-config SUPPORT_I2C
+config SUPPORT_GM2_FLASH
+	tristate "Support to get Gamma-mode2 panel info from flash"
 	depends on EXYNOS_DECON_LCD
-	tristate "Support LCD I2C"
 	default n
 
 config DYNAMIC_FREQ
-	depends on EXYNOS_DECON_LCD
 	tristate "Support Dynamic Freq"
+	depends on EXYNOS_DECON_LCD
+	default n
+
+config PANEL_DISPLAY_MODE
+	tristate "Support panel display mode"
+	depends on EXYNOS_DECON_LCD
+	default n
+
+config PANEL_VRR_BRIDGE
+	tristate "Support panel vrr bridge"
+	depends on EXYNOS_DECON_LCD && PANEL_DISPLAY_MODE
+	default n
+
+config SUPPORT_FAST_DISCHARGE
+	tristate "Support fast discharge function"
+	depends on EXYNOS_DECON_LCD
+	default n
+
+config EXYNOS_LCD_ENG
+	tristate "Support LCD featue on ENG binary"
+	depends on EXYNOS_DECON_LCD
+	default n
+
+config PANEL_DEBUG
+	tristate "Support panel debug"
+	depends on EXYNOS_DECON_LCD
+	default y
+
+config SUPPORT_MASK_LAYER
+	tristate "Support FP mask layer function"
+	depends on EXYNOS_DECON_LCD
 	default n
 
 config SUPPORT_ERRFG_RECOVERY
-	depends on EXYNOS_DECON_LCD
 	tristate "Support ERRFG recovery"
+	depends on EXYNOS_DECON_LCD
 	default n
 
-config SUPPORT_ERRFG_RECOVERY_BY_FB_BLANK
-	depends on SUPPORT_ERRFG_RECOVERY
-	tristate "Support ERRFG recovery by fb blank"
+config PANEL_DECON_BOARD
+	tristate "Support decon board"
+	depends on EXYNOS_DECON_LCD
 	default n
 
-config SMCDSD_LCD_DEBUG
-	bool "Support LCD_DEBUG"
+config PANEL_MAGNA_DDI
+	tristate "Support magna ddi"
+	depends on EXYNOS_DECON_LCD
 	default n
 
-config EXYNOS_DECON_LCD_DUMMY_LCD_V320
-	depends on EXYNOS_DECON_LCD
-	tristate "DUMMY_LCD_V320 LCD driver"
+source "drivers/video/fbdev/exynos/panel/s6e3xa0/Kconfig"
 
-config EXYNOS_DECON_LCD_FT8203_BOE_T260
-	depends on EXYNOS_DECON_LCD
-	tristate "FT8203_BOE_T260 LCD driver"
+source "drivers/video/fbdev/exynos/panel/s6e3fa7/Kconfig"
 
-config EXYNOS_DECON_LCD_HX83102_T270
-	depends on EXYNOS_DECON_LCD
-	tristate "HX83102_BOE_T270 LCD driver"
+source "drivers/video/fbdev/exynos/panel/s6e3fa9/Kconfig"
 
-config EXYNOS_DECON_LCD_HX83112F_BOE_A13
-	depends on EXYNOS_DECON_LCD
-	tristate "HX83112F_BOE_A13 LCD driver"
+source "drivers/video/fbdev/exynos/panel/s6e3fab/Kconfig"
 
-config EXYNOS_DECON_LCD_NT36672C_CSOT_A13
-	depends on EXYNOS_DECON_LCD
-	tristate "NT36672C_CSOT_A13 LCD driver"
+source "drivers/video/fbdev/exynos/panel/s6e3ha8/Kconfig"
 
-config EXYNOS_DECON_LCD_NT36672C_TIANMA_A13
-	depends on EXYNOS_DECON_LCD
-	tristate "NT36672C_TIANMA_A13 LCD driver"
-	
-config EXYNOS_DECON_LCD_TD4375_BOE_A13
-	depends on EXYNOS_DECON_LCD
-	tristate "TD4375_BOE_A13 LCD driver"
+source "drivers/video/fbdev/exynos/panel/s6e3ha9/Kconfig"
 
-config EXYNOS_DECON_LCD_ILI7807_BOE_M13
-	depends on EXYNOS_DECON_LCD
-	tristate "ILI7807_BOE_M13 LCD driver"
+source "drivers/video/fbdev/exynos/panel/s6e3hab/Kconfig"
 
-config EXYNOS_DECON_LCD_HX83112F_BOE_M13
-	depends on EXYNOS_DECON_LCD
-	tristate "HX83112F_BOE_M13 LCD driver"
+source "drivers/video/fbdev/exynos/panel/s6e3hac/Kconfig"
 
-config EXYNOS_DECON_LCD_FT8720_DTC_M13
-	depends on EXYNOS_DECON_LCD
-	tristate "FT8720_DTC_M13 LCD driver"
-	
-config EXYNOS_DECON_LCD_TD4160_BOE_A04S
-	depends on EXYNOS_DECON_LCD
-	tristate "TD4160_BOE_A04S LCD driver"
+source "drivers/video/fbdev/exynos/panel/ea8076/Kconfig"
 
-config EXYNOS_DECON_LCD_NT36525C_SHARP_A04S
-	depends on EXYNOS_DECON_LCD
-	tristate "NT36525C_SHARP_A04S LCD driver"
+source "drivers/video/fbdev/exynos/panel/ea8079/Kconfig"
 
-config EXYNOS_DECON_LCD_NT36525C_SHARP_VE_A04S
-	depends on EXYNOS_DECON_LCD
-	tristate "NT36525C_SHARP_VE_A04S LCD driver"
-
-config EXYNOS_DECON_LCD_TD4162_BOE_A04S
-	depends on EXYNOS_DECON_LCD
-	tristate "TD4162_BOE_A04S LCD driver"
-
-config EXYNOS_DECON_LCD_NT36525C_TIANMA_A04S
-	depends on EXYNOS_DECON_LCD
-	tristate "NT36525C_TIANMA_A04S LCD driver"
-
-config EXYNOS_DECON_LCD_NT36525C_DTC_A04S
-	depends on EXYNOS_DECON_LCD
-	tristate "NT36525C_DTC_A04S LCD driver"
-
-config EXYNOS_DECON_LCD_NT36672C_TIANMA_A14
-	depends on EXYNOS_DECON_LCD
-	tristate "NT36672C_TIANMA_A14 LCD driver"
-
+source "drivers/video/fbdev/exynos/panel/s6e3fc3/Kconfig"

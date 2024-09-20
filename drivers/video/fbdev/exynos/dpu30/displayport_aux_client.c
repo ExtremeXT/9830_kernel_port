@@ -271,10 +271,6 @@ void displayport_msg_tx(u32 msg_type)
 	case REMOTE_DPCD_WRITE:
 		msg_tx_buf[msg_tx_buf_size++] =
 				(msg_aux_tx.port_num << 4) | (msg_aux_tx.dpcd_address >> 16);
-
-		displayport_info("msg_aux_tx.port_num2 = %d\n", msg_aux_tx.port_num);
-		displayport_info("msg_tx_buf[msg_tx_buf_size] = %d\n", msg_tx_buf[msg_tx_buf_size - 1]);
-
 		msg_tx_buf[msg_tx_buf_size++] =
 				(msg_aux_tx.dpcd_address >> 8) & 0x000000FF;
 		msg_tx_buf[msg_tx_buf_size++] =
@@ -284,7 +280,7 @@ void displayport_msg_tx(u32 msg_type)
 		break;
 	case REMOTE_I2C_READ:
 		msg_tx_buf[msg_tx_buf_size++] =
-				(msg_aux_tx.num_i2c_tx << 4) | msg_aux_tx.port_num;
+				(msg_aux_tx.port_num << 4) | msg_aux_tx.num_i2c_tx;
 		msg_tx_buf[msg_tx_buf_size++] =	msg_aux_tx.write_i2c_dev_id;
 		msg_tx_buf[msg_tx_buf_size++] =	msg_aux_tx.num_write_bytes;
 		msg_tx_buf[msg_tx_buf_size++] = msg_aux_tx.write_data;
@@ -391,9 +387,10 @@ u8 displayport_sideband_msg_get_rdy_bit(u32 msg_type)
 	return rdy_irq_bit;
 }
 
-void displayport_msg_aux_wait_rep_rdy_clr(u32 msg_type)
+int displayport_msg_aux_wait_rep_rdy_clr(u32 msg_type)
 {
-	u32 cnt = 4000; /* wait max 4s */
+	int ret = 0;
+	int cnt = 200;
 	u8 val = 0;
 	u8 rdy_irq_bit = displayport_sideband_msg_get_rdy_bit(msg_type);
 
@@ -405,16 +402,22 @@ void displayport_msg_aux_wait_rep_rdy_clr(u32 msg_type)
 		cnt--;
 	} while (((val & rdy_irq_bit) == rdy_irq_bit) && cnt);
 
-	do {
-		displayport_reg_dpcd_write(DPCD_ADD_DEVICE_SERVICE_IRQ_VECTOR_ESI0, 1, &rdy_irq_bit);
-		val = 0;
-		usleep_range(1000, 1030);
-		displayport_reg_dpcd_read(DPCD_ADD_DEVICE_SERVICE_IRQ_VECTOR_ESI0, 1, &val);
-		cnt--;
-	} while (((val & rdy_irq_bit) == rdy_irq_bit) && cnt);
+	if (cnt > 0) {
+		do {
+			displayport_reg_dpcd_write(DPCD_ADD_DEVICE_SERVICE_IRQ_VECTOR_ESI0, 1, &rdy_irq_bit);
+			val = 0;
+			usleep_range(1000, 1030);
+			displayport_reg_dpcd_read(DPCD_ADD_DEVICE_SERVICE_IRQ_VECTOR_ESI0, 1, &val);
+			cnt--;
+		} while (((val & rdy_irq_bit) == rdy_irq_bit) && cnt);
+	}
 
-	if (!cnt)
+	if (!cnt) {
 		displayport_err("%s is timeout.\n", __func__);
+		ret = -ETIMEDOUT;
+	}
+
+	return ret;
 }
 
 int displayport_sideband_msg_rx(u32 msg_type, u8 *data)
@@ -453,7 +456,8 @@ int displayport_sideband_msg_rx(u32 msg_type, u8 *data)
 			data[data_size++] = sb_msg_rx_buf[header_size + i];
 	}
 
-	displayport_msg_aux_wait_rep_rdy_clr(msg_type);
+	if (displayport_msg_aux_wait_rep_rdy_clr(msg_type) < 0)
+		displayport_err("MSG_RDY not clr fail\n");
 
 	body_crc = displayport_sideband_msg_body_crc(reply_data_size, data);
 
@@ -469,9 +473,10 @@ int displayport_sideband_msg_rx(u32 msg_type, u8 *data)
 	return data_size - 1; /* except body CRC */
 }
 
-void displayport_msg_aux_wait_rep_rdy(u32 msg_type)
+int displayport_msg_aux_wait_rep_rdy(u32 msg_type)
 {
-	u32 cnt = 4000; /* wait max 4s */
+	int ret = 0;
+	int cnt = 200;
 	u8 val = 0;
 	u8 rdy_irq_bit = displayport_sideband_msg_get_rdy_bit(msg_type);
 
@@ -482,15 +487,21 @@ void displayport_msg_aux_wait_rep_rdy(u32 msg_type)
 		cnt--;
 	} while (((val & rdy_irq_bit) != rdy_irq_bit) && cnt);
 
-	do {
-		val = 0;
-		usleep_range(1000, 1030);
-		displayport_reg_dpcd_read(DPCD_ADD_DEVICE_SERVICE_IRQ_VECTOR_ESI0, 1, &val);
-		cnt--;
-	} while (((val & rdy_irq_bit) != rdy_irq_bit) && cnt);
+	if (cnt > 0) {
+		do {
+			val = 0;
+			usleep_range(1000, 1030);
+			displayport_reg_dpcd_read(DPCD_ADD_DEVICE_SERVICE_IRQ_VECTOR_ESI0, 1, &val);
+			cnt--;
+		} while (((val & rdy_irq_bit) != rdy_irq_bit) && cnt);
+	}
 
-	if (!cnt)
+	if (!cnt) {
 		displayport_err("%s is timeout.\n", __func__);
+		ret = -ETIMEDOUT;
+	}
+
+	return ret;
 }
 
 u32 displayport_msg_get_max_size(u32 msg_type)
@@ -535,7 +546,16 @@ void displayport_msg_rx(u32 msg_type)
 
 MSG_RX_READ_RETRY:
 	for (i = 0; i < max_msg_size; i += msg_rx_buf_size) {
-		displayport_msg_aux_wait_rep_rdy(msg_type);
+		if ((displayport_msg_aux_wait_rep_rdy(msg_type) < 0) && (retry_cnt > 0)) {
+			msg_rx_buf_size = 0;
+			total_msg_rx_buf_size = 0;
+			retry_cnt--;
+			goto MSG_RX_READ_RETRY;
+		} else if (retry_cnt <= 0) {
+			msg_aux_rx.req_id = 0xFF;
+			displayport_err("MSG_RDY not set fail\n");
+			break;
+		}
 
 		msg_rx_buf_size = displayport_sideband_msg_rx(msg_type, &msg_rx_buf[i]);
 
@@ -768,7 +788,16 @@ void displayport_msg_aux_remote_i2c_read(u8 *edid_buf)
 
 REMOTE_I2C_READ_RETRY:
 	for (i = 0; i < max_msg_size; i += msg_rx_buf_size) {
-		displayport_msg_aux_wait_rep_rdy(DOWN_REP);
+		if ((displayport_msg_aux_wait_rep_rdy(DOWN_REP) < 0) && (retry_cnt > 0)) {
+			msg_rx_buf_size = 0;
+			total_msg_rx_buf_size = 0;
+			retry_cnt--;
+			goto REMOTE_I2C_READ_RETRY;
+		} else if (retry_cnt <= 0) {
+			msg_aux_rx.req_id = 0xFF;
+			displayport_err("MSG_RDY not set fail\n");
+			break;
+		}
 
 		msg_rx_buf_size = displayport_sideband_msg_rx(DOWN_REP, &msg_rx_buf[i]);
 

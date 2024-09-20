@@ -1452,13 +1452,6 @@ struct is_fdae_info {
 	spinlock_t		slock;
 };
 
-struct seamless_mode_change_info {
-	int	width;
-	int	height;
-	int	fps;
-	int	ex_mode;
-};
-
 struct fd_rect {
 	float	offset_x;
 	float	offset_y;

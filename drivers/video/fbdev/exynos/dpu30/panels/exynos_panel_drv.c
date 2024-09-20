@@ -8,6 +8,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <asm/byteorder.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -17,12 +18,11 @@
 #include <linux/of_platform.h>
 #include <linux/of_gpio.h>
 
-#include "panel_i2c.h"
 #include "exynos_panel_drv.h"
 
 int dpu_panel_log_level = 7;
 
-struct exynos_panel_device *panel_drvdata;
+struct exynos_panel_device *panel_drvdata[MAX_PANEL_DRV_SUPPORT];
 EXPORT_SYMBOL(panel_drvdata);
 
 static struct exynos_panel_ops *panel_list[MAX_PANEL_SUPPORT];
@@ -41,10 +41,15 @@ static int exynos_backlight_get_brightness(struct backlight_device *bl)
 
 static int exynos_backlight_update_status(struct backlight_device *bl)
 {
-	u32 brightness = bl->props.brightness;
-	struct dsim_device *dsim = get_dsim_drvdata(0);
+	int brightness = bl->props.brightness;
+	struct dsim_device *dsim;
+	struct exynos_panel_device *panel;
 
-	DPU_INFO_PANEL("%s: brightness = %d\n", __func__, brightness);
+	panel = dev_get_drvdata(&bl->dev);
+	dsim = get_dsim_drvdata(panel->id);
+
+	DPU_INFO_PANEL("%s: panel-%d, brightness = %d\n", __func__, panel->id,
+			brightness);
 #if 0
 	if (bl->props.power != FB_BLANK_UNBLANK ||
 			bl->props.fb_blank != FB_BLANK_UNBLANK ||
@@ -52,7 +57,7 @@ static int exynos_backlight_update_status(struct backlight_device *bl)
 		brightness = 0;
 #endif
 
-	if (brightness <= bl->props.max_brightness) {
+	if (brightness >= 0) {
 		/* brightness bit-depth and para order can be different */
 		dsim_call_panel_ops(dsim, EXYNOS_PANEL_IOC_SET_LIGHT, &brightness);
 	} else {
@@ -114,21 +119,23 @@ static int exynos_panel_parse_regulators(struct exynos_panel_device *panel)
 
 	if(!of_property_read_string(dev->of_node, "regulator_1p8v",
 				(const char **)&str_regulator[0])) {
-		res->regulator[0] = regulator_get_exclusive(dev, str_regulator[0]);
+		res->regulator[0] = regulator_get(dev, str_regulator[0]);
 		if (IS_ERR(res->regulator[0])) {
 			DPU_ERR_PANEL("panel regulator 1.8V get failed\n");
 			res->regulator[0] = NULL;
 		}
 	}
+	DPU_INFO_PANEL("get regulator 1.8V");
 
 	if(!of_property_read_string(dev->of_node, "regulator_3p3v",
 				(const char **)&str_regulator[1])) {
-		res->regulator[1] = regulator_get_exclusive(dev, str_regulator[1]);
+		res->regulator[1] = regulator_get(dev, str_regulator[1]);
 		if (IS_ERR(res->regulator[1])) {
 			DPU_ERR_PANEL("panel regulator 3.3V get failed\n");
 			res->regulator[1] = NULL;
 		}
 	}
+	DPU_INFO_PANEL("get regulator 3.3V");
 
 	return 0;
 }
@@ -188,6 +195,7 @@ static int exynos_panel_set_power(struct exynos_panel_device *panel, bool on)
 			gpio_free(res->lcd_power[1]);
 			usleep_range(10000, 11000);
 		}
+		/*
 		if (res->regulator[0] > 0) {
 			ret = regulator_enable(res->regulator[0]);
 			if (ret) {
@@ -204,22 +212,8 @@ static int exynos_panel_set_power(struct exynos_panel_device *panel, bool on)
 				return ret;
 			}
 		}
-
-		panel_i2c_write(0x0c, 0x28);
-		panel_i2c_write(0x0d, 0x26);
-		panel_i2c_write(0x0e, 0x26);
-		panel_i2c_write(0x09, 0xbe);
-		panel_i2c_write(0x02, 0x69);
-		panel_i2c_write(0x03, 0x0d);
-		panel_i2c_write(0x11, 0x75);
-		panel_i2c_write(0x04, 0x04);
-		panel_i2c_write(0x05, 0xee);
-		panel_i2c_write(0x10, 0x07);
-		panel_i2c_write(0x08, 0x13);
-
+		*/
 	} else {
-		panel_i2c_write(0x09, 0x98);
-
 		ret = gpio_request_one(res->lcd_reset, GPIOF_OUT_INIT_LOW,
 				"lcd_reset");
 		if (ret < 0) {
@@ -249,6 +243,7 @@ static int exynos_panel_set_power(struct exynos_panel_device *panel, bool on)
 			gpio_free(res->lcd_power[1]);
 			usleep_range(5000, 6000);
 		}
+		/*
 		if (res->regulator[0] > 0) {
 			ret = regulator_disable(res->regulator[0]);
 			if (ret) {
@@ -264,6 +259,7 @@ static int exynos_panel_set_power(struct exynos_panel_device *panel, bool on)
 				return ret;
 			}
 		}
+		*/
 	}
 
 	DPU_DEBUG_PANEL("%s(%d) -\n", __func__, on);
@@ -415,7 +411,6 @@ static void exynos_panel_get_mres_info(struct exynos_panel_info *info,
 			info->mres.en ? "enabled" : "disabled");
 
 	if (info->mres.en) {
-		info->mres_mode = 0; /* 0=WQHD, 1=FHD, 2=HD */
 		info->mres.number = 1; /* default = 1 */
 		of_property_read_u32(np, "mres_number", &num);
 		info->mres.number = num;
@@ -432,29 +427,11 @@ static void exynos_panel_get_mres_info(struct exynos_panel_info *info,
 			info->mres.res_info[i].dsc_en = dsc_en[i];
 			info->mres.res_info[i].dsc_width = dsc_w[i];
 			info->mres.res_info[i].dsc_height = dsc_h[i];
-			info->dsc_slice.dsc_enc_sw[i] =
-				exynos_panel_calc_slice_width(info->dsc.cnt,
-						info->dsc.slice_num, w[i]);
-			info->dsc_slice.dsc_dec_sw[i] = w[i] / info->dsc.slice_num;
 
-			if (info->mode == DECON_MIPI_COMMAND_MODE)
-				of_property_read_u32_array(np, "cmd_underrun_cnt",
-						info->cmd_underrun_cnt,
-						info->mres.number);
-
-			DPU_INFO_PANEL(" [%dx%d]: DSC(%d) enc/dec sw(%d %d) lp(%d)\n",
+			DPU_INFO_PANEL(" [%dx%d]: DSC(%d))\n",
 					info->mres.res_info[i].width,
 					info->mres.res_info[i].height,
-					info->mres.res_info[i].dsc_en,
-					info->dsc_slice.dsc_enc_sw[i],
-					info->dsc_slice.dsc_dec_sw[i],
-					info->cmd_underrun_cnt[i]);
-		}
-	} else {
-		if (info->mode == DECON_MIPI_COMMAND_MODE) {
-			of_property_read_u32(np, "cmd_underrun_cnt",
-					&info->cmd_underrun_cnt[0]);
-			DPU_INFO_PANEL("lp(%d)\n", info->cmd_underrun_cnt[0]);
+					info->mres.res_info[i].dsc_en);
 		}
 	}
 }
@@ -489,7 +466,9 @@ static void exynos_panel_get_hdr_info(struct exynos_panel_info *info,
 	}
 }
 
-#define DISPLAY_MODE_ITEM_CNT   8
+#ifdef CONFIG_EXYNOS_SET_ACTIVE
+
+#define DISPLAY_MODE_ITEM_CNT	7
 
 static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 		struct device_node *np)
@@ -499,7 +478,6 @@ static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 	int i;
 	const unsigned int *addr;
 	unsigned int *mode_item;
-	u32 disp_group = 0;
 
 	DPU_INFO_PANEL("%s +\n", __func__);
 
@@ -537,22 +515,15 @@ static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 			info->display_mode[i].dsc_dec_sw =
 				info->display_mode[i].mode.width / info->dsc.slice_num;
 		}
-		if ((i > 0) &&
-			((info->display_mode[i].mode.width != info->display_mode[i - 1].mode.width) ||
-			 (info->display_mode[i].mode.height != info->display_mode[i - 1].mode.height)))
-			disp_group++;
-		info->display_mode[i].mode.group = disp_group;
-		info->display_mode[i].vfp = be32_to_cpu(mode_item[7]);
 
-		DPU_INFO_PANEL("display mode[%d] : %dx%d@%d, %dmm x %dmm, lp_ref(%d), vfp(%d)\n",
+		DPU_INFO_PANEL("display mode[%d] : %dx%d@%d, %dmm x %dmm, lp_ref(%d)\n",
 				info->display_mode[i].mode.index,
 				info->display_mode[i].mode.width,
 				info->display_mode[i].mode.height,
 				info->display_mode[i].mode.fps,
 				info->display_mode[i].mode.mm_width,
 				info->display_mode[i].mode.mm_height,
-				info->display_mode[i].cmd_lp_ref,
-				info->display_mode[i].vfp);
+				info->display_mode[i].cmd_lp_ref);
 		DPU_INFO_PANEL("\t\tdsc %s, dsc size(%dx%d), dsc enc/dec sw(%d/%d)\n",
 				info->display_mode[i].dsc_en ? "enabled" : "disabled",
 				info->display_mode[i].dsc_width,
@@ -563,15 +534,14 @@ static void exynos_panel_get_display_modes(struct exynos_panel_info *info,
 
 	DPU_INFO_PANEL("%s -\n", __func__);
 }
+#endif
 
 static void exynos_panel_parse_lcd_info(struct exynos_panel_device *panel,
 		struct device_node *np)
 {
 	u32 res[2];
 	struct exynos_panel_info *lcd_info = &panel->lcd_info;
-	u32 max_br, dft_br, eotp_disabled;
-	u32 underrun_max_num = 0;
-	u32 wait_lp11 = 0;
+	u32 max_br, dft_br;
 
 	of_property_read_u32(np, "mode", &lcd_info->mode);
 	of_property_read_u32_array(np, "resolution", res, 2);
@@ -589,13 +559,6 @@ static void exynos_panel_parse_lcd_info(struct exynos_panel_device *panel,
 	DPU_DEBUG_PANEL("LCD size(%dx%d), DDI type(%d)\n", res[0], res[1],
 			lcd_info->ddi_type);
 
-	if (!of_property_read_u32(np, "eotp_disabled", &eotp_disabled))
-		lcd_info->eotp_disabled = eotp_disabled;
-	else
-		lcd_info->eotp_disabled = 0;
-	DPU_INFO_PANEL("eotp %s\n", lcd_info->eotp_disabled ? "disabled" : "enabled");
-
-
 	panel->bl->props.max_brightness = DEFAULT_MAX_BRIGHTNESS;
 	panel->bl->props.brightness = DEFAULT_BRIGHTNESS;
 	if (!of_property_read_u32(np, "max-brightness", &max_br))
@@ -606,35 +569,25 @@ static void exynos_panel_parse_lcd_info(struct exynos_panel_device *panel,
 	DPU_INFO_PANEL("max brightness : %d\n", panel->bl->props.max_brightness);
 	DPU_INFO_PANEL("default brightness : %d\n", panel->bl->props.brightness);
 
+#if defined(CONFIG_EXYNOS_DECON_DQE)
+	snprintf(lcd_info->ddi_name, MAX_DDI_NAME_LEN, "%s", np->name);
+#endif
+
 	exynos_panel_get_timing_info(lcd_info, np);
 	exynos_panel_get_dsc_info(lcd_info, np);
 	exynos_panel_get_mres_info(lcd_info, np);
 	exynos_panel_get_hdr_info(lcd_info, np);
+#ifdef CONFIG_EXYNOS_SET_ACTIVE
 	exynos_panel_get_display_modes(lcd_info, np);
-
-	if (!of_property_read_u32(np, "underrun_max_num", &underrun_max_num)) {
-		lcd_info->continuous_underrun_max = underrun_max_num;
-		DPU_INFO_PANEL("underrun_max_num(%d)\n", underrun_max_num);
-	} else {
-		lcd_info->continuous_underrun_max = 0;
-		DPU_INFO_PANEL("underrun_max_num not founded\n");
-	}
-
-	if (!of_property_read_u32(np, "wait_lp11", &wait_lp11))
-		lcd_info->wait_lp11 = wait_lp11;
-	else
-		lcd_info->wait_lp11 = 0;
-	DPU_INFO_PANEL("wait_lp11(%d)\n", lcd_info->wait_lp11);
-
+#endif
 }
 
 static void exynos_panel_list_up(void)
 {
-	panel_list[0] = &panel_s6e3ha8_ops;
+	panel_list[0] = &panel_s6e3hab_ops;
 	panel_list[1] = &panel_s6e3ha9_ops;
-	panel_list[2] = &panel_s6e3fa0_ops;
-	panel_list[3] = &panel_ea8076_ops;
-	panel_list[4] = &panel_td4150_ops;
+	panel_list[2] = &panel_s6e3ha8_ops;
+	panel_list[3] = &panel_s6e3fa0_ops;
 }
 
 static int exynos_panel_register_ops(struct exynos_panel_device *panel)
@@ -759,7 +712,6 @@ static long exynos_panel_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *a
 
 	panel = container_of(sd, struct exynos_panel_device, sd);
 
-
 	switch (cmd) {
 	case EXYNOS_PANEL_IOC_REGISTER:
 		ret = exynos_panel_register(panel, *(u32 *)arg);
@@ -796,6 +748,9 @@ static long exynos_panel_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *a
 		break;
 	case EXYNOS_PANEL_IOC_SET_LIGHT:
 		call_panel_ops(panel, set_light, panel, *(int *)arg);
+		break;
+	case EXYNOS_PANEL_IOC_SET_VREFRESH:
+		call_panel_ops(panel, set_vrefresh, panel, (struct vrr_config_data*)arg);
 		break;
 	default:
 		DPU_ERR_PANEL("not supported ioctl by panel driver\n");
@@ -870,6 +825,7 @@ static int exynos_panel_probe(struct platform_device *pdev)
 {
 	struct exynos_panel_device *panel;
 	int ret = 0;
+	char name[16];
 
 	DPU_DEBUG_PANEL("%s +\n", __func__);
 
@@ -882,7 +838,6 @@ static int exynos_panel_probe(struct platform_device *pdev)
 	}
 
 	panel->dev = &pdev->dev;
-	panel_drvdata = panel;
 
 	mutex_init(&panel->ops_lock);
 
@@ -901,19 +856,21 @@ static int exynos_panel_probe(struct platform_device *pdev)
 		panel->power_mode = POWER_SAVE_OFF;
 	}
 
-	panel->bl = devm_backlight_device_register(panel->dev,
-			dev_name(panel->dev), NULL, panel,
-			&exynos_backlight_ops, NULL);
+	ret = exynos_panel_parse_dt(panel);
+	if (ret) {
+		goto err_dev_file;
+	}
+
+	snprintf(name, sizeof(name), "panel_%d", panel->id);
+	panel->bl = devm_backlight_device_register(panel->dev, name, NULL,
+			panel, &exynos_backlight_ops, NULL);
 	if (IS_ERR(panel->bl)) {
 		DPU_ERR_PANEL("failed to register backlight device\n");
 		ret = PTR_ERR(panel->bl);
 		goto err_dev_file;
 	}
 
-	ret = exynos_panel_parse_dt(panel);
-	if (ret) {
-		goto err_dev_file;
-	}
+	panel_drvdata[panel->id] = panel;
 
 	exynos_panel_list_up();
 	exynos_panel_find_id(panel);

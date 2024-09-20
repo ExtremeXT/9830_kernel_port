@@ -167,19 +167,7 @@ static irqreturn_t __is_isr1_mcs1(int irq, void *data)
 
 static irqreturn_t __is_isr1_vra(int irq, void *data)
 {
-	struct is_interface_hwip *itf_hw = NULL;
-	struct hwip_intr_handler *intr_hw = NULL;
-
-	itf_hw = (struct is_interface_hwip *)data;
-	intr_hw = &itf_hw->handler[INTR_HWIP1];
-
-	if (intr_hw->valid) {
-		is_enter_lib_isr();
-		intr_hw->handler(intr_hw->id, itf_hw->hw_ip);
-		is_exit_lib_isr();
-	} else {
-		err_itfc("[ID:%d](2) empty handler!!", itf_hw->id);
-	}
+	__is_isr_ddk(data, INTR_HWIP2);
 	return IRQ_HANDLED;
 }
 
@@ -368,9 +356,6 @@ inline int is_hw_slot_id(int hw_id)
 		break;
 	case DEV_HW_MCSC1:
 		slot_id = 5;
-		break;
-	case DEV_HW_3AA2:
-	case DEV_HW_ISP1:
 		break;
 	default:
 		err("Invalid hw id(%d)", hw_id);
@@ -636,8 +621,8 @@ int is_hw_get_irq(void *itfc_data, void *pdev_data, int hw_id)
 		}
 		break;
 	case DEV_HW_VRA:
-		itf_hwip->irq[INTR_HWIP1] = platform_get_irq(pdev, 7);
-		if (itf_hwip->irq[INTR_HWIP1] < 0) {
+		itf_hwip->irq[INTR_HWIP2] = platform_get_irq(pdev, 7);
+		if (itf_hwip->irq[INTR_HWIP2] < 0) {
 			err("Failed to get irq clh0\n");
 			return -EINVAL;
 		}
@@ -708,7 +693,7 @@ int is_hw_request_irq(void *itfc_data, int hw_id)
 		ret = __is_hw_request_irq(itf_hwip, "mcs0", INTR_HWIP1, IRQF_TRIGGER_NONE, __is_isr1_mcs0);
 		break;
 	case DEV_HW_VRA:
-		ret = __is_hw_request_irq(itf_hwip, "VRA0", INTR_HWIP1, IRQF_TRIGGER_NONE, __is_isr1_vra);
+		ret = __is_hw_request_irq(itf_hwip, "VRA0", INTR_HWIP2, IRQF_TRIGGER_NONE, __is_isr1_vra);
 		break;
 	case DEV_HW_MCSC1:
 		ret = __is_hw_request_irq(itf_hwip, "mcs1", INTR_HWIP1, IRQF_TRIGGER_NONE, __is_isr1_mcs1);
@@ -964,93 +949,43 @@ int is_hw_camif_cfg(void *sensor_data)
 	void __iomem *is_sys_regs;
 	struct is_device_sensor *sensor;
 	struct is_device_csi *csi;
-	struct exynos_platform_is_sensor *pdata;
-	struct is_core *core;
-	struct is_device_ischain *ischain;
-	u32 sel_ipp0_input = CSI_ID_A;
-	u32 sel_ipp1_input = CSI_ID_B;
-	int i = 0, sensor_open_cnt = 0;
 
 	FIMC_BUG(!sensor_data);
 
 	sensor = (struct is_device_sensor *)sensor_data;
 
 	csi = (struct is_device_csi *)v4l2_get_subdevdata(sensor->subdev_csi);
+
 	if (!csi) {
 		merr("csi is null\n", sensor);
 		ret = -ENODEV;
 		return ret;
 	}
 
-	pdata = sensor->pdata;
-	if (!pdata) {
-		merr("pdata is null\n", sensor);
-		ret = -ENODEV;
-		return ret;
-	}
-
-	core = sensor->private_data;
-	if (!core) {
-		merr("core is null\n", sensor);
-		ret = -ENODEV;
-		return ret;
-	}
-
-	ischain = sensor->ischain;
-	if (!ischain) {
-		merr("ischain is null\n", sensor);
-		ret = -ENODEV;
-		return ret;
-	}
-
-	/* IPP input path set by DT */
-	if (pdata->csi_mux) {
-		sel_ipp0_input = pdata->csi_mux & 0x000F;
-		sel_ipp1_input = (pdata->csi_mux & 0x00F0) >> 4;
-	} else {
-		merr("csi-ipp mux dt value is null\n", sensor);
-	}
-
-	for (i = 0; i < IS_SENSOR_COUNT; i++) {
-		if (test_bit(IS_SENSOR_OPEN, &(core->sensor[i].state)))
-			sensor_open_cnt++;
-	}
-	if (sensor_open_cnt == 1) {
-		if (ischain->group_3aa.id == GROUP_ID_3AA0)
-			sel_ipp0_input = csi->ch;
-		else if (ischain->group_3aa.id == GROUP_ID_3AA1)
-			sel_ipp1_input = csi->ch;
-		info("USE path CSIS(%d) - IPP(%d)\n", csi->ch, ischain->group_3aa.id);
-	}
-
-#if defined(SECURE_CAMERA_FACE)
-	mutex_lock(&core->secure_state_lock);
-	if (core->secure_state == IS_STATE_UNSECURE
-			&& core->scenario == IS_SCENARIO_SECURE
-			&& sensor_open_cnt != 1) {
-		err("sensor open cnt: (%d != 1)", sensor_open_cnt);
-		mutex_unlock(&core->secure_state_lock);
-		return -EINVAL;
-	}
-	mutex_unlock(&core->secure_state_lock);
-#endif
-
 	is_sys_regs = ioremap_nocache(SYSREG_IS_BASE_ADDR, 0x1000);
 
-	mutex_lock(&ischain->resourcemgr->sysreg_lock);
-
+	/* Need to FIX for various scenario */
 	switch (csi->ch) {
 	case CSI_ID_A:
+		is_hw_set_field(is_sys_regs,
+			&sysreg_is_regs[SYSREG_R_IS_USER_GLUE_CON0],
+			&sysreg_is_fields[SYSREG_F_MUX_FOR_OTF0], CSI_ID_A);
 		is_hw_set_field(is_sys_regs,
 			&sysreg_is_regs[SYSREG_R_IS_USER_GLUE_CON4],
 			&sysreg_is_fields[SYSREG_F_MASK_FOR_CSIS0_OTF], 0x1);
 		break;
 	case CSI_ID_B:
 		is_hw_set_field(is_sys_regs,
+			&sysreg_is_regs[SYSREG_R_IS_USER_GLUE_CON2],
+			&sysreg_is_fields[SYSREG_F_MUX_FOR_OTF1], CSI_ID_B);
+		is_hw_set_field(is_sys_regs,
 			&sysreg_is_regs[SYSREG_R_IS_USER_GLUE_CON6],
 			&sysreg_is_fields[SYSREG_F_MASK_FOR_CSIS1_OTF], 0x1);
 		break;
 	case CSI_ID_C:
+		is_hw_set_field(is_sys_regs,
+			&sysreg_is_regs[SYSREG_R_IS_USER_GLUE_CON2],
+			&sysreg_is_fields[SYSREG_F_MUX_FOR_OTF1], CSI_ID_C);
 		is_hw_set_field(is_sys_regs,
 			&sysreg_is_regs[SYSREG_R_IS_USER_GLUE_CON8],
 			&sysreg_is_fields[SYSREG_F_MASK_FOR_CSIS2_OTF], 0x1);
@@ -1058,40 +993,6 @@ int is_hw_camif_cfg(void *sensor_data)
 	default:
 		break;
 	}
-
-	is_hw_set_field(is_sys_regs,
-		&sysreg_is_regs[SYSREG_R_IS_USER_GLUE_CON0],
-		&sysreg_is_fields[SYSREG_F_MUX_FOR_OTF0], sel_ipp0_input);
-	is_hw_set_field(is_sys_regs,
-		&sysreg_is_regs[SYSREG_R_IS_USER_GLUE_CON2],
-		&sysreg_is_fields[SYSREG_F_MUX_FOR_OTF1], sel_ipp1_input);
-
-#if defined(SECURE_CAMERA_FACE) && defined(PROTECT_SYSREG_IS)
-	if (sensor->ex_scenario == IS_SCENARIO_SECURE) {
-		struct is_sensor_cfg *sensor_cfg;
-		u32 settle;
-
-		sensor_cfg = csi->sensor_cfg;
-		if (!sensor_cfg) {
-			merr("[CSI%d] sensor cfg is null", csi, csi->ch);
-			ret = -EINVAL;
-			goto p_err;
-		}
-
-		if (sensor_cfg->mipi_speed) {
-			settle = is_hw_find_settle(sensor_cfg->mipi_speed, csi->use_cphy);
-		} else {
-			merr("[CSI%d] mipi_speed is invalid", csi, csi->ch);
-			ret = -EINVAL;
-			goto p_err;
-		}
-
-		ret = csi_hw_s_phy_set(csi->phy, sensor_cfg->lanes, sensor_cfg->mipi_speed, settle, csi->ch,
-				csi->use_cphy);
-	}
-p_err:
-#endif
-	mutex_unlock(&ischain->resourcemgr->sysreg_lock);
 
 	info("SYSREG_GLUE_CON: 0[%x], 2[%x], 4[%x], 6[%x], 8[%x]\n",
 		is_hw_get_reg(is_sys_regs, &sysreg_is_regs[SYSREG_R_IS_USER_GLUE_CON0]),

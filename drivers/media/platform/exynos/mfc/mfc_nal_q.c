@@ -562,6 +562,26 @@ static void __mfc_nal_q_set_slice_mode(struct mfc_ctx *ctx, EncoderInputStr *pIn
 	}
 }
 
+static void __mfc_nal_q_set_enc_ts_delta(struct mfc_ctx *ctx, EncoderInputStr *pInStr)
+{
+	struct mfc_enc *enc = ctx->enc_priv;
+	struct mfc_enc_params *p = &enc->params;
+	int ts_delta;
+
+	ts_delta = mfc_enc_get_ts_delta(ctx);
+
+	pInStr->TimeStampDelta &= ~(0xFFFF);
+	pInStr->TimeStampDelta |= (ts_delta & 0xFFFF);
+
+	if (ctx->ts_last_interval)
+		mfc_debug(3, "[NALQ][DFR] fps %d -> %ld, delta: %d, reg: %#x\n",
+				p->rc_framerate, USEC_PER_SEC / ctx->ts_last_interval,
+				ts_delta, pInStr->TimeStampDelta);
+	else
+		mfc_debug(3, "[NALQ][DFR] fps %d -> 0, delta: %d, reg: %#x\n",
+				p->rc_framerate, ts_delta, pInStr->TimeStampDelta);
+}
+
 static void __mfc_nal_q_get_hdr_plus_info(struct mfc_ctx *ctx, DecoderOutputStr *pOutStr,
 		struct hdr10_plus_meta *sei_meta)
 {
@@ -771,6 +791,7 @@ static int __mfc_nal_q_run_in_buf_enc(struct mfc_ctx *ctx, EncoderInputStr *pInS
 	dma_addr_t src_addr[3] = {0, 0, 0};
 	dma_addr_t addr_2bit[2] = {0, 0};
 	unsigned int index, i;
+	int is_uncomp = 0;
 
 	mfc_debug_enter();
 
@@ -865,6 +886,34 @@ static int __mfc_nal_q_run_in_buf_enc(struct mfc_ctx *ctx, EncoderInputStr *pInS
 		}
 	}
 
+	/* Support per-frame SBWC change for encoder source */
+	if (MFC_FEATURE_SUPPORT(dev, dev->pdata->sbwc_enc_src_ctrl)
+			&& ctx->is_sbwc) {
+		pInStr->ParamChange &= ~(0xf << 14);
+
+		if (mfc_check_vb_flag(src_mb, MFC_FLAG_ENC_SRC_UNCOMP)) {
+			mfc_debug(2, "[NALQ][SBWC] src is uncomp\n");
+			is_uncomp = 1;
+			pInStr->ParamChange |= (MFC_ENC_SRC_SBWC_OFF << 14);
+		} else {
+			is_uncomp = 0;
+			pInStr->ParamChange |= (MFC_ENC_SRC_SBWC_ON << 14);
+		}
+
+		mfc_set_linear_stride_size(ctx, (is_uncomp ? enc->uncomp_fmt : ctx->src_fmt));
+
+		for (i = 0; i < raw->num_planes; i++) {
+			pInStr->SourcePlaneStride[i] = raw->stride[i];
+			mfc_debug(2, "[NALQ][FRAME] enc src plane[%d] stride: %d\n",
+					i, raw->stride[i]);
+			if (!is_uncomp) {
+				pInStr->SourcePlane2BitStride[i] = raw->stride_2bits[i];
+				mfc_debug(2, "[NALQ][FRAME] enc src plane[%d] 2bit stride: %d\n",
+						i, raw->stride_2bits[i]);
+			}
+		}
+	}
+
 	/* HDR10+ sei meta */
 	index = src_mb->vb.vb2_buf.index;
 	if (MFC_FEATURE_SUPPORT(dev, dev->pdata->hdr10_plus)) {
@@ -904,6 +953,7 @@ static int __mfc_nal_q_run_in_buf_enc(struct mfc_ctx *ctx, EncoderInputStr *pInS
 			dst_mb->vb.vb2_buf.index);
 
 	__mfc_nal_q_set_slice_mode(ctx, pInStr);
+	__mfc_nal_q_set_enc_ts_delta(ctx, pInStr);
 
 	mfc_debug_leave();
 
@@ -1256,6 +1306,7 @@ static void __mfc_nal_q_handle_reuse_buffer(struct mfc_ctx *ctx, DecoderOutputSt
 					dst_mb->vb.vb2_buf.index, dst_mb->dpb_index, disp_addr);
 			dst_mb->used = 0;
 			clear_bit(dst_mb->dpb_index, &dec->available_dpb);
+			MFC_TRACE_CTX("NAL DPB[%d] addr: %#llx reuse\n", dst_mb->dpb_index, disp_addr);
 		} else {
 			mfc_err_ctx("[NALQ][DPB] couldn't find DPB 0x%08llx\n",
 								disp_addr);
@@ -1509,7 +1560,7 @@ static void __mfc_nal_q_handle_frame_output_del(struct mfc_ctx *ctx,
 				mfc_set_vb_flag(dst_mb, MFC_FLAG_HDR_PLUS);
 				mfc_debug(2, "[NALQ][HDR+] HDR10 plus dyanmic SEI metadata parsed\n");
 			} else {
-				mfc_err_ctx("[NALQ][HDR+] HDR10 plus cannot be copied\n");
+				mfc_err_ctx("[NALQ][HDR+] HDR10 plus cannot be parsed\n");
 			}
 		} else {
 			if (dec->hdr10_plus_info)
@@ -1634,6 +1685,8 @@ static void __mfc_nal_q_handle_released_buf(struct mfc_ctx *ctx, DecoderOutputSt
 
 	mfc_debug(2, "[NALQ][DPB] Used flag: old = %#lx, new = %#lx, released = %#lx, queued = %#lx\n",
 			prev_flag, cur_flag, released_flag, dec->queued_dpb);
+	MFC_TRACE_CTX("NAL DPB Used: %#lx released: %#lx queued: %#lx display: %d\n",
+			cur_flag, released_flag, dec->queued_dpb, dec->display_index);
 
 	__mfc_nal_q_move_released_buf(ctx, released_flag);
 	dec->dynamic_used = cur_flag;

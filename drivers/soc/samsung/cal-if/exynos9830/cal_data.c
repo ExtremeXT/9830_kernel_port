@@ -31,6 +31,10 @@
 
 #include <soc/samsung/exynos-cpupm.h>
 
+#if defined(CONFIG_SEC_DEBUG)
+#include <soc/samsung/exynos-pm.h>
+#endif
+
 /* defines for EWF WA */
 #include <soc/samsung/cmu_ewf.h>
 #define EXYNOS9830_CMU_BUS0_BASE	(0x1A300000)
@@ -214,6 +218,51 @@ void exynos9830_cal_data_init(void)
 }
 
 void (*cal_data_init)(void) = exynos9830_cal_data_init;
+
+#if defined(CONFIG_SEC_DEBUG)
+int asv_ids_information(enum ids_info id)
+{
+        int res;
+
+        switch (id) {
+        case tg:
+                res = asv_get_table_ver();
+                break;
+        case lg:
+                res = asv_get_grp(CPUCL0);
+                break;
+        case mg:
+                res = asv_get_grp(CPUCL1);
+                break;
+        case bg:
+                res = asv_get_grp(CPUCL2);
+                break;
+        case g3dg:
+                res = asv_get_grp(G3D);
+                break;
+        case mifg:
+                res = asv_get_grp(MIF);
+                break;
+        case lids:
+                res = asv_get_ids_info(CPUCL0);
+                break;
+        case mids:
+                res = asv_get_ids_info(CPUCL1);
+                break;
+        case bids:
+                res = asv_get_ids_info(CPUCL2);
+                break;
+        case gids:
+                res = asv_get_ids_info(G3D);
+                break;
+        default:
+                res = 0;
+                break;
+        };
+        return res;
+}
+
+#endif
 
 static void __exynos9830_set_cmuewf(unsigned int index, unsigned int en, void *cmu_cmu)
 {

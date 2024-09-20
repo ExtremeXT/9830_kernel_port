@@ -369,6 +369,8 @@ struct is_core {
 	struct is_dual_info		dual_info;
 	struct mutex				ois_mode_lock;
 	struct ois_mcu_dev			*mcu;
+	struct mutex				laser_lock;
+	atomic_t					laser_refcount;
 };
 
 int is_secure_func(struct is_core *core,

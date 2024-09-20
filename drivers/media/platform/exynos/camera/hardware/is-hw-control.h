@@ -60,6 +60,8 @@
 
 #define DUMP_SPLIT_MAX			10
 
+#define IS_MAX_HW_3AA_SRAM		(13696)
+
 /* sysfs variable for debug */
 extern struct is_sysfs_debug sysfs_debug;
 

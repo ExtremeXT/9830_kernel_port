@@ -39,7 +39,6 @@ int is_ischain_mxp_stripe_cfg(struct is_subdev *subdev,
 	u32 stripe_x, stripe_w;
 	u32 dma_offset = 0;
 	int temp_stripe_x = 0, temp_stripe_w = 0;
-	u32 scn_check_remosaic = 0, temp_stripe_margin_width = 0;;
 
 	framemgr = GET_SUBDEV_FRAMEMGR(subdev);
 	if (!framemgr)
@@ -49,10 +48,6 @@ int is_ischain_mxp_stripe_cfg(struct is_subdev *subdev,
 
 	frame = peek_frame(framemgr, ldr_frame->state);
 	if (frame) {
-		scn_check_remosaic = CHK_MODECHANGE_SCN(ldr_frame->shot->ctl.aa.captureIntent);
-		if (!scn_check_remosaic)
-			temp_stripe_margin_width = STRIPE_MARGIN_WIDTH;
-
 		/* Input crop configuration */
 		if (!region_id) {
 			/* Left region w/o margin */
@@ -63,7 +58,7 @@ int is_ischain_mxp_stripe_cfg(struct is_subdev *subdev,
 			frame->stripe_info.in.h_pix_num = stripe_w;
 		} else if (region_id < ldr_frame->stripe_info.region_num - 1) {
 			/* Middle region w/o margin */
-			stripe_x = temp_stripe_margin_width;
+			stripe_x = STRIPE_MARGIN_WIDTH;
 			temp_stripe_w = ldr_frame->stripe_info.in.h_pix_num - frame->stripe_info.in.h_pix_num - incrop->x;
 
 			/* Stripe x when crop offset x start in middle region */
@@ -83,7 +78,7 @@ int is_ischain_mxp_stripe_cfg(struct is_subdev *subdev,
 			frame->stripe_info.in.h_pix_num += stripe_w;
 		} else {
 			/* Right region w/o margin */
-			stripe_x = temp_stripe_margin_width;
+			stripe_x = STRIPE_MARGIN_WIDTH;
 			temp_stripe_w = incrop->w - frame->stripe_info.in.h_pix_num;
 			stripe_w = temp_stripe_w > 0 ? temp_stripe_w: 0;
 		}
@@ -410,8 +405,7 @@ static int is_ischain_mxp_start(struct is_device_ischain *device,
 			mdbg_pframe("CRange:N\n", device, subdev, frame);
 	}
 
-	if ((index >= PARAM_MCS_OUTPUT0 && index < PARAM_MCS_OUTPUT5) &&
-		frame->shot_ext->mcsc_flip[index - PARAM_MCS_OUTPUT0] != mcs_output->flip) {
+	if (frame->shot_ext->mcsc_flip[index - PARAM_MCS_OUTPUT0] != mcs_output->flip) {
 		mdbg_pframe("flip is changed(%d->%d)\n",
 			device, subdev, frame,
 			mcs_output->flip,
@@ -675,8 +669,7 @@ static int is_ischain_mxp_tag(struct is_subdev *subdev,
 			pixelformat = node->pixelformat;
 		}
 
-		if ((index >= PARAM_MCS_OUTPUT0 && index < PARAM_MCS_OUTPUT5) &&
-			ldr_frame->shot_ext->mcsc_flip[index - PARAM_MCS_OUTPUT0] != mcs_output->flip)
+		if (ldr_frame->shot_ext->mcsc_flip[index - PARAM_MCS_OUTPUT0] != mcs_output->flip)
 			change_flip = true;
 
 		inparm.x = mcs_output->crop_offset_x;

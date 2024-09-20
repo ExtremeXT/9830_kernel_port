@@ -35,9 +35,6 @@ enum AOD_SEQ {
 	SELF_MASK_IMG_SEQ = 0,
 	SELF_MASK_ENA_SEQ,
 	SELF_MASK_DIS_SEQ,
-	SELF_MASK_CHECKSUM_SEQ,
-	SELF_MASK_GC_ON_SEQ,
-	SELF_MASK_GC_OFF_SEQ,
 	ANALOG_IMG_SEQ,
 	ANALOG_CTRL_SEQ,
 	ANALOG_DISABLE_SEQ,
@@ -61,6 +58,7 @@ enum AOD_SEQ {
 	ENABLE_SELF_MOVE_SEQ,
 	DISABLE_SELF_MOVE_SEQ,
 #endif
+	SELF_MASK_CHECKSUM_SEQ,
 	MAX_AOD_SEQ,
 };
 
@@ -172,6 +170,8 @@ struct aod_ops {
 #ifdef SUPPORT_NORMAL_SELF_MOVE
 	int (*self_move_pattern_update)(struct aod_dev_info *aod_dev);
 #endif
+	int (*black_grid_on)(struct aod_dev_info *aod_dev);
+	int (*black_grid_off)(struct aod_dev_info *aod_dev);
 };
 
 int aod_drv_probe(struct panel_device *panel, struct aod_tune *aod_tune);

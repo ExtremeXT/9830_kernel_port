@@ -66,11 +66,6 @@
 
 #include "is-vender-specific.h"
 
-#if defined(CONFIG_LEDS_SM5714)
-#include <linux/sm5714.h>
-bool fled_prepared = false;
-#endif
-
 /* Default setting values */
 #define DEFAULT_PREVIEW_STILL_WIDTH		(1280) /* sensor margin : 16 */
 #define DEFAULT_PREVIEW_STILL_HEIGHT		(720) /* sensor margin : 12 */
@@ -1257,7 +1252,7 @@ int is_itf_stream_on(struct is_device_ischain *device)
 
 		/* try to find dynamic scenario to apply */
 		scenario_id = is_dvfs_sel_static(device);
-		if (scenario_id >= 0) {
+		if (scenario_id >= 0 && !is_dvfs_is_fast_ae(dvfs_ctrl)) {
 			struct is_dvfs_scenario_ctrl *static_ctrl = dvfs_ctrl->static_ctrl;
 			minfo("[ISC:D] tbl[%d] static scenario(%d)-[%s]\n", device,
 				dvfs_ctrl->dvfs_table_idx, scenario_id,
@@ -1831,16 +1826,6 @@ int is_ischain_power(struct is_device_ischain *device, int on)
 			merr("is_runtime_suspend_post is fail(%d)", device, ret);
 
 		set_bit(IS_ISCHAIN_LOADED, &device->state);
-
-#if defined(CONFIG_LEDS_SM5714)
-		if (core->current_position == SENSOR_POSITION_REAR
-			|| core->current_position == SENSOR_POSITION_REAR4) {
-			info("%s PREPARE_FLASH\n", __func__);
-			sm5714_fled_mode_ctrl(SM5714_FLED_MODE_PREPARE_FLASH, 0);
-			fled_prepared = true;
-		}
-#endif
-
 		set_bit(IS_ISCHAIN_POWER_ON, &device->state);
 	} else {
 		/* FIMC-IS local power down */
@@ -1858,15 +1843,6 @@ int is_ischain_power(struct is_device_ischain *device, int on)
 			merr("is_runtime_suspend is fail(%d)", device, ret);
 #endif
 
-#if defined(CONFIG_LEDS_SM5714)
-		if (core->current_position == SENSOR_POSITION_REAR
-			|| core->current_position == SENSOR_POSITION_REAR4 || fled_prepared) {
-			info("%s CLOSE_FLASH\n", __func__);
-			sm5714_fled_mode_ctrl(SM5714_FLED_MODE_CLOSE_FLASH, 0);
-			fled_prepared = false;
-		}
-#endif
-
 		clear_bit(IS_ISCHAIN_POWER_ON, &device->state);
 	}
 
@@ -1876,7 +1852,7 @@ p_err:
 	return ret;
 }
 
-int is_ischain_s_sensor_size(struct is_device_ischain *device,
+static int is_ischain_s_sensor_size(struct is_device_ischain *device,
 	struct is_frame *frame,
 	u32 *lindex,
 	u32 *hindex,
@@ -1884,43 +1860,21 @@ int is_ischain_s_sensor_size(struct is_device_ischain *device,
 {
 	int ret = 0;
 	struct param_sensor_config *sensor_config;
-	struct is_module_enum *module;
 	u32 binning, bns_binning;
 	u32 sensor_width, sensor_height;
 	u32 bns_width, bns_height;
 	u32 framerate;
 	u32 ex_mode;
-	u32 mono_mode = 0;
 
 	FIMC_BUG(!device->sensor);
 
-	ret = is_sensor_g_module(device->sensor, &module);
-	if (ret) {
-		merr("is_sensor_g_module is fail(%d)", device, ret);
-		goto p_sensor_config;
-	}
-
-	if (!module->pdata) {
-		merr("module pdata is NULL", device);
-		goto p_sensor_config;
-	}
-
-	if (module->pdata->sensor_module_type == SENSOR_TYPE_MONO)
-		mono_mode = 1;
-	minfo("[ISC:D] mono sensor(%d)\n", device, mono_mode);
-
-p_sensor_config:
-
+	binning = is_sensor_g_bratio(device->sensor);
 	sensor_width = is_sensor_g_width(device->sensor);
 	sensor_height = is_sensor_g_height(device->sensor);
 	bns_width = is_sensor_g_bns_width(device->sensor);
 	bns_height = is_sensor_g_bns_height(device->sensor);
 	framerate = is_sensor_g_framerate(device->sensor);
 	ex_mode = is_sensor_g_ex_mode(device->sensor);
-	if(ex_mode == EX_CROP_ZOOM)
-		binning = is_sensor_g_sensorcrop_bratio(device->sensor);
-	else
-		binning = is_sensor_g_bratio(device->sensor);
 
 	minfo("[ISC:D] binning(%d):%d\n", device, binning);
 
@@ -1957,10 +1911,6 @@ p_sensor_config:
 		sensor_config->early_config_lock = 1;
 	else
 		sensor_config->early_config_lock = 0;
-
-#ifdef USE_MONO_SENSOR
-	sensor_config->mono_mode = mono_mode;
-#endif
 
 	*lindex |= LOWBIT_OF(PARAM_SENSOR_CONFIG);
 	*hindex |= HIGHBIT_OF(PARAM_SENSOR_CONFIG);
@@ -3068,27 +3018,41 @@ static int is_ischain_init_wrap(struct is_device_ischain *device,
 			}
 
 			priv = core->vender.private_data;
-			if (module_id < SENSOR_POSITION_MAX) {
-				/* physical sensor postion */
-				sensor_id = priv->sensor_id[module_id];
-				if (!sensor_id) {
-					merr("invalid module position(P)(%d)", device, module->position);
-					ret = -EINVAL;
-					goto p_err;
-				}
-			} else {
-				/* virtual sensor postion */
-				switch (module_id) {
+
+			switch (module_id) {
+			case SENSOR_POSITION_REAR:
+				sensor_id = priv->rear_sensor_id;
+				break;
+			case SENSOR_POSITION_FRONT:
+				sensor_id = priv->front_sensor_id;
+				break;
+			case SENSOR_POSITION_REAR2:
+				sensor_id = priv->rear2_sensor_id;
+				break;
+			case SENSOR_POSITION_FRONT2:
+				sensor_id = priv->front2_sensor_id;
+				break;
+			case SENSOR_POSITION_REAR3:
+				sensor_id = priv->rear3_sensor_id;
+				break;
+			case SENSOR_POSITION_REAR4:
+				sensor_id = priv->rear4_sensor_id;
+				break;
+			case SENSOR_POSITION_REAR_TOF:
+				sensor_id = priv->rear_tof_sensor_id;
+				break;
+			case SENSOR_POSITION_FRONT_TOF:
+				sensor_id = priv->front_tof_sensor_id;
+				break;
 #ifdef CONFIG_SECURE_CAMERA_USE
-				case SENSOR_POSITION_SECURE:
-					sensor_id = priv->secure_sensor_id;
-					break;
+			case SENSOR_POSITION_SECURE:
+				sensor_id = priv->secure_sensor_id;
+				break;
 #endif
-				default:
-				merr("invalid module position(V)(%d)", device, module->position);
-					ret = -EINVAL;
-					goto p_err;
-				}
+			default:
+				merr("invalid module position(%d)", device, module->position);
+				ret = -EINVAL;
+				goto p_err;
 			}
 
 			if (module->sensor_id == sensor_id) {
@@ -5662,17 +5626,46 @@ static int is_ischain_paf_shot(struct is_device_ischain *device,
 		captureIntent = group->intent_ctl.captureIntent;
 
 		if (captureIntent != AA_CAPTURE_INTENT_CUSTOM) {
-			frame->shot->ctl.aa.captureIntent = captureIntent;
-			frame->shot->ctl.aa.vendor_captureCount = group->intent_ctl.vendor_captureCount;
-			frame->shot->ctl.aa.vendor_captureExposureTime = group->intent_ctl.vendor_captureExposureTime;
-			frame->shot->ctl.aa.vendor_captureEV = group->intent_ctl.vendor_captureEV;
 			if (group->remainIntentCount > 0) {
+				frame->shot->ctl.aa.captureIntent = captureIntent;
+				frame->shot->ctl.aa.vendor_captureCount = group->intent_ctl.vendor_captureCount;
+				frame->shot->ctl.aa.vendor_captureExposureTime = group->intent_ctl.vendor_captureExposureTime;
+				frame->shot->ctl.aa.vendor_captureEV = group->intent_ctl.vendor_captureEV;
+				if (group->intent_ctl.vendor_isoValue) {
+					frame->shot->ctl.aa.vendor_isoMode = AA_ISOMODE_MANUAL;
+					frame->shot->ctl.aa.vendor_isoValue = group->intent_ctl.vendor_isoValue;
+					frame->shot->ctl.sensor.sensitivity = frame->shot->ctl.aa.vendor_isoValue;
+				}
+				if (group->intent_ctl.vendor_aeExtraMode) {
+					frame->shot->ctl.aa.vendor_aeExtraMode = group->intent_ctl.vendor_aeExtraMode;
+				}
+				if (group->intent_ctl.aeMode) {
+					frame->shot->ctl.aa.aeMode = group->intent_ctl.aeMode;
+				}
+				memcpy(&(frame->shot->ctl.aa.vendor_multiFrameEvList),
+					&(group->intent_ctl.vendor_multiFrameEvList),
+					sizeof(group->intent_ctl.vendor_multiFrameEvList));
+				memcpy(&(frame->shot->ctl.aa.vendor_multiFrameIsoList),
+					&(group->intent_ctl.vendor_multiFrameIsoList),
+					sizeof(group->intent_ctl.vendor_multiFrameIsoList));
+				memcpy(&(frame->shot->ctl.aa.vendor_multiFrameExposureList),
+					&(group->intent_ctl.vendor_multiFrameExposureList),
+					sizeof(group->intent_ctl.vendor_multiFrameExposureList));
 				group->remainIntentCount--;
 			} else {
 				group->intent_ctl.captureIntent = AA_CAPTURE_INTENT_CUSTOM;
 				group->intent_ctl.vendor_captureCount = 0;
 				group->intent_ctl.vendor_captureExposureTime = 0;
 				group->intent_ctl.vendor_captureEV = 0;
+				memset(&(group->intent_ctl.vendor_multiFrameEvList), 0,
+					sizeof(group->intent_ctl.vendor_multiFrameEvList));
+				memset(&(group->intent_ctl.vendor_multiFrameIsoList), 0,
+					sizeof(group->intent_ctl.vendor_multiFrameIsoList));
+				memset(&(group->intent_ctl.vendor_multiFrameExposureList), 0,
+					sizeof(group->intent_ctl.vendor_multiFrameExposureList));
+				group->intent_ctl.vendor_isoValue = 0;
+				group->intent_ctl.vendor_aeExtraMode = AA_AE_EXTRA_MODE_AUTO;
+				group->intent_ctl.aeMode = 0;
 			}
 			minfo("frame count(%d), intent(%d), count(%d), EV(%d), captureExposureTime(%d) remainIntentCount(%d)\n",
 				device, frame->fcount,
@@ -5680,12 +5673,17 @@ static int is_ischain_paf_shot(struct is_device_ischain *device,
 				frame->shot->ctl.aa.vendor_captureEV, frame->shot->ctl.aa.vendor_captureExposureTime,
 				group->remainIntentCount);
 		}
-
-		/*
-		 * Adjust the shot timeout value based on sensor exposure time control.
-		 * Exposure Time >= (SHOT_TIMEOUT - 1sec): Increase shot timeout value.
-		 */
-		if (frame->shot->ctl.aa.vendor_captureExposureTime >= ((SHOT_TIMEOUT * 1000) - 1000000)) {
+	
+		if (frame->shot->ctl.aa.sceneMode == AA_SCENE_MODE_ASTRO) {
+			resourcemgr->shot_timeout = SHOT_TIMEOUT * 10; // 30s timeout
+		} else if (frame->shot->ctl.aa.sceneMode == AA_SCENE_MODE_HYPERLAPSE
+			&& frame->shot->ctl.aa.vendor_currentHyperlapseMode == 300) {
+			resourcemgr->shot_timeout = SHOT_TIMEOUT * 5; // 15s timeout
+		} else if (frame->shot->ctl.aa.vendor_captureExposureTime >= ((SHOT_TIMEOUT * 1000) - 1000000)) {
+			/*
+			* Adjust the shot timeout value based on sensor exposure time control.
+			* Exposure Time >= (SHOT_TIMEOUT - 1sec): Increase shot timeout value.
+			*/
 			resourcemgr->shot_timeout = (frame->shot->ctl.aa.vendor_captureExposureTime / 1000) + SHOT_TIMEOUT;
 			resourcemgr->shot_timeout_tick = KEEP_FRAME_TICK_DEFAULT;
 		} else if (resourcemgr->shot_timeout_tick > 0) {
@@ -5882,19 +5880,49 @@ static int is_ischain_3aa_shot(struct is_device_ischain *device,
 		captureIntent = group->intent_ctl.captureIntent;
 
 		if (captureIntent != AA_CAPTURE_INTENT_CUSTOM) {
-			frame->shot->ctl.aa.captureIntent = captureIntent;
-			frame->shot->ctl.aa.vendor_captureCount = group->intent_ctl.vendor_captureCount;
-			frame->shot->ctl.aa.vendor_captureExposureTime = group->intent_ctl.vendor_captureExposureTime;
-			frame->shot->ctl.aa.vendor_captureEV = group->intent_ctl.vendor_captureEV;
 			if (group->remainIntentCount > 0) {
+				frame->shot->ctl.aa.captureIntent = captureIntent;
+				frame->shot->ctl.aa.vendor_captureCount = group->intent_ctl.vendor_captureCount;
+				frame->shot->ctl.aa.vendor_captureExposureTime = group->intent_ctl.vendor_captureExposureTime;
+				frame->shot->ctl.aa.vendor_captureEV = group->intent_ctl.vendor_captureEV;
+				if (group->intent_ctl.vendor_isoValue) {
+					frame->shot->ctl.aa.vendor_isoMode = AA_ISOMODE_MANUAL;
+					frame->shot->ctl.aa.vendor_isoValue = group->intent_ctl.vendor_isoValue;
+					frame->shot->ctl.sensor.sensitivity = frame->shot->ctl.aa.vendor_isoValue;
+				}
+				if (group->intent_ctl.vendor_aeExtraMode) {
+					frame->shot->ctl.aa.vendor_aeExtraMode = group->intent_ctl.vendor_aeExtraMode;
+				}
+				if (group->intent_ctl.aeMode) {
+					frame->shot->ctl.aa.aeMode = group->intent_ctl.aeMode;
+				}
+				memcpy(&(frame->shot->ctl.aa.vendor_multiFrameEvList),
+					&(group->intent_ctl.vendor_multiFrameEvList),
+					sizeof(group->intent_ctl.vendor_multiFrameEvList));
+				memcpy(&(frame->shot->ctl.aa.vendor_multiFrameIsoList),
+					&(group->intent_ctl.vendor_multiFrameIsoList),
+					sizeof(group->intent_ctl.vendor_multiFrameIsoList));
+				memcpy(&(frame->shot->ctl.aa.vendor_multiFrameExposureList),
+					&(group->intent_ctl.vendor_multiFrameExposureList),
+					sizeof(group->intent_ctl.vendor_multiFrameExposureList));
 				group->remainIntentCount--;
 			} else {
 				group->intent_ctl.captureIntent = AA_CAPTURE_INTENT_CUSTOM;
 				group->intent_ctl.vendor_captureCount = 0;
 				group->intent_ctl.vendor_captureExposureTime = 0;
 				group->intent_ctl.vendor_captureEV = 0;
+				memset(&(group->intent_ctl.vendor_multiFrameEvList), 0,
+					sizeof(group->intent_ctl.vendor_multiFrameEvList));
+				memset(&(group->intent_ctl.vendor_multiFrameIsoList), 0,
+					sizeof(group->intent_ctl.vendor_multiFrameIsoList));
+				memset(&(group->intent_ctl.vendor_multiFrameExposureList), 0,
+					sizeof(group->intent_ctl.vendor_multiFrameExposureList));
+				group->intent_ctl.vendor_isoValue = 0;
+				group->intent_ctl.vendor_aeExtraMode = AA_AE_EXTRA_MODE_AUTO;
+				group->intent_ctl.aeMode = 0;
 			}
-			minfo("frame count(%d), intent(%d), count(%d), EV(%d), captureExposureTime(%d) remainIntentCount(%d)\n", device, frame->fcount,
+			minfo("frame count(%d), intent(%d), count(%d), EV(%d), captureExposureTime(%d) remainIntentCount(%d)\n",
+				device, frame->fcount,
 				frame->shot->ctl.aa.captureIntent, frame->shot->ctl.aa.vendor_captureCount,
 				frame->shot->ctl.aa.vendor_captureEV, frame->shot->ctl.aa.vendor_captureExposureTime,
 				group->remainIntentCount);
@@ -5905,11 +5933,16 @@ static int is_ischain_3aa_shot(struct is_device_ischain *device,
 			group->lens_ctl.aperture = 0;
 		}
 
-		/*
-		 * Adjust the shot timeout value based on sensor exposure time control.
-		 * Exposure Time >= (SHOT_TIMEOUT - 1sec): Increase shot timeout value.
-		 */
-		if (frame->shot->ctl.aa.vendor_captureExposureTime >= ((SHOT_TIMEOUT * 1000) - 1000000)) {
+		if (frame->shot->ctl.aa.sceneMode == AA_SCENE_MODE_ASTRO) {
+			resourcemgr->shot_timeout = SHOT_TIMEOUT * 10; // 30s timeout
+		} else if (frame->shot->ctl.aa.sceneMode == AA_SCENE_MODE_HYPERLAPSE
+			&& frame->shot->ctl.aa.vendor_currentHyperlapseMode == 300) {
+			resourcemgr->shot_timeout = SHOT_TIMEOUT * 5; // 15s timeout
+		} else if (frame->shot->ctl.aa.vendor_captureExposureTime >= ((SHOT_TIMEOUT * 1000) - 1000000)) {
+			/*
+			* Adjust the shot timeout value based on sensor exposure time control.
+			* Exposure Time >= (SHOT_TIMEOUT - 1sec): Increase shot timeout value.
+			*/
 			resourcemgr->shot_timeout = (frame->shot->ctl.aa.vendor_captureExposureTime / 1000) + SHOT_TIMEOUT;
 			resourcemgr->shot_timeout_tick = KEEP_FRAME_TICK_DEFAULT;
 		} else if (resourcemgr->shot_timeout_tick > 0) {

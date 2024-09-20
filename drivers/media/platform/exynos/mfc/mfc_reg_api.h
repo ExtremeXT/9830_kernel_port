@@ -259,6 +259,25 @@ static inline void mfc_clear_roi_enable(struct mfc_dev *dev)
 	MFC_WRITEL(reg, MFC_REG_E_RC_ROI_CTRL);
 }
 
+static inline void mfc_set_enc_src_sbwc(struct mfc_dev *dev, int onoff)
+{
+	unsigned int reg = 0;
+
+	reg = MFC_READL(MFC_REG_E_PARAM_CHANGE);
+	reg &= ~(0xf << 14);
+	reg |= (onoff << 14);
+	MFC_WRITEL(reg, MFC_REG_E_PARAM_CHANGE);
+}
+
+static inline void mfc_clear_enc_src_sbwc(struct mfc_dev *dev)
+{
+	unsigned int reg = 0;
+
+	reg = MFC_READL(MFC_REG_E_PARAM_CHANGE);
+	reg &= ~(0xf << 14);
+	MFC_WRITEL(reg, MFC_REG_E_PARAM_CHANGE);
+}
+
 void mfc_dbg_enable(struct mfc_dev *dev);
 void mfc_dbg_disable(struct mfc_dev *dev);
 void mfc_dbg_set_addr(struct mfc_dev *dev);

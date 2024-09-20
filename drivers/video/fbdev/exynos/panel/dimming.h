@@ -293,6 +293,18 @@ for ((i) = (r).from;		\
 #define DIM_LUT_INIT(l, bl, gma, rtbl, ctbl)		\
 	DIM_LUT_V0_INIT(l, bl, gma, rtbl, ctbl)
 
+/* GM2LUT_V0 : INSERT COLOR OFFSET */
+#define GM2_LUT_V0_INIT(ctbl)		\
+{													\
+	.rgb_color_offset = (s32 (*)[MAX_COLOR])(ctbl),	\
+}
+
+#define GM2_LUT_V0_INIT_SRC(ctbl, gamma_index)		\
+{													\
+	.rgb_color_offset = (s32 (*)[MAX_COLOR])(ctbl),	\
+	.source_gamma = gamma_index, \
+}
+
 struct dimming_lut_info {
 	int nrow;
 	int ncol;
@@ -355,7 +367,7 @@ struct dimming_info {
 	u32 v0_voltage[16];		/* v0 voltage table */
 	struct tp_lut_info tp_lut_info;
 	int nr_tp;				/* number of turning point */
-	struct tp *tp;			/* informations of panel's tuning point */
+	struct tp *tp;			/* information of panel's tuning point */
 
 	int nr_luminance;		/* number of luminance */
 	struct gray_scale gray_scale_lut[GRAY_SCALE_MAX];
@@ -371,7 +383,7 @@ struct dimming_info {
 struct dimming_init_info {
 	const char *name;
 	int nr_tp;				/* number of turning point */
-	struct tp *tp;			/* informations of panel's tuning point */
+	struct tp *tp;			/* information of panel's tuning point */
 	int nr_luminance;		/* number of luminance */
 	s64 vregout;			/* vregout * (1 << bitshift) */
 	s64 vref;				/* vref * (1 << bitshift) */
@@ -385,10 +397,25 @@ struct dimming_init_info {
 	s32 hbm_luminance;
 };
 
+/* gamma mode 2 */
+struct gm2_dimming_lut {
+	s32(*rgb_color_offset)[MAX_COLOR];
+	int source_gamma;
+};
+
+struct gm2_dimming_init_info {
+	const char *name;
+	int nr_tp;				/* number of turning point */
+	struct tp *tp;			/* information of panel's tuning point */
+	struct gm2_dimming_lut *dim_lut;
+	int nr_dim_lut;
+};
+
 #ifdef CONFIG_PANEL_AID_DIMMING
 int init_dimming_info(struct dimming_info *, struct dimming_init_info *);
 int init_dimming_mtp(struct dimming_info *, s32 (*)[MAX_COLOR]);
 int init_dimming_hbm_info(struct dimming_info *, s32 (*)[MAX_COLOR], u32);
+s64 interpolation_round(s64 from, s64 to, int cur_step, int total_step);
 s64 interpolation(s64 from, s64 to, int cur_step, int total_step);
 s64 disp_round(s64 num, u32 digits);
 s64 disp_div64(s64 num, s64 den);
@@ -409,6 +436,8 @@ int gamma_table_add_offset(s32 (*src)[MAX_COLOR], s32 (*ofs)[MAX_COLOR],
 		s32 (*out)[MAX_COLOR], struct tp *tp, int nr_tp);
 int gamma_table_interpolation(s32 (*from)[MAX_COLOR], s32 (*to)[MAX_COLOR],
 		s32 (*out)[MAX_COLOR], int nr_tp, int cur_step, int total_step);
+int gamma_table_interpolation_round(s32 (*from)[MAX_COLOR], s32 (*to)[MAX_COLOR],
+		s32 (*out)[MAX_COLOR], int nr_tp, int cur_step, int total_step);
 void get_dimming_gamma(struct dimming_info *dim_info, u32 luminance, u8 *output,
 		void (*copy)(u8 *output, u32 value, u32 index, u32 color));
 /* for debug */
@@ -417,6 +446,7 @@ void print_dimming_info(struct dimming_info *dim_info, int tag);
 static inline int init_dimming_info(struct dimming_info *dim_info, struct dimming_init_info *src) { return 0; }
 static inline int init_dimming_mtp(struct dimming_info *dim_info, s32 (*mtp)[MAX_COLOR]) { return 0; }
 static inline int init_dimming_hbm_info(struct dimming_info *dim_info, s32 (*hbm_gamma_tbl)[MAX_COLOR], u32 hbm_luminance) { return 0; }
+static inline s64 interpolation_round(s64 from, s64 to, int cur_step, int total_step) { return 0; }
 static inline s64 interpolation(s64 from, s64 to, int cur_step, int total_step) { return 0; }
 static inline s64 disp_round(s64 num, u32 digits) { return 0; }
 static inline s64 disp_div64(s64 num, s64 den) { return 0; }
@@ -426,8 +456,10 @@ static inline s64 disp_div64_round(s64 num, s64 den, u32 digits) { return 0; }
 static inline int process_dimming(struct dimming_info *dim_info) { return 0; }
 static inline int gamma_table_interpolation(s32 (*from)[MAX_COLOR], s32 (*to)[MAX_COLOR],
 		s32 (*out)[MAX_COLOR], int nr_tp, int cur_step, int total_step) { return 0; }
-//void get_dimming_gamma(struct dimming_info *dim_info, u32 luminance, u8 *output,
-//		void (*copy)(u8 *output, u32 value, u32 index, u32 color)) {}
+int gamma_table_interpolation_round(s32 (*from)[MAX_COLOR], s32 (*to)[MAX_COLOR],
+		s32 (*out)[MAX_COLOR], int nr_tp, int cur_step, int total_step) { return 0; }
+void get_dimming_gamma(struct dimming_info *dim_info, u32 luminance, u8 *output,
+		void (*copy)(u8 *output, u32 value, u32 index, u32 color)) {}
 /* for debug */
 static inline void print_dimming_info(struct dimming_info *dim_info, int tag) {}
 #endif	/* CONFIG_PANEL_AID_DIMMING */

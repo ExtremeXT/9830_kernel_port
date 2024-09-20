@@ -93,7 +93,6 @@
 #define IS_ONLINE_CPU_MIN	4
 #define ENABLE_3AA_LIC_OFFSET	1
 #define PDP_RDMA_LINE_GAP      (0x64)
-#define IS_MAX_HW_3AA_SRAM		(13696)
 /*
  * PDP0: RDMA
  * PDP1: RDMA

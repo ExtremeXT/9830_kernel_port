@@ -29,6 +29,14 @@
 #define VENDER_S_CTRL 0
 #define VENDER_G_CTRL 0
 
+#ifndef EV_LIST_SIZE
+#define EV_LIST_SIZE  24
+#endif
+
+#ifndef MANUAL_LIST_SIZE
+#define MANUAL_LIST_SIZE  5
+#endif
+
 struct is_vender {
 	char fw_path[IS_PATH_LEN];
 	char request_fw_path[IS_PATH_LEN];
@@ -67,11 +75,6 @@ enum is_rom_type {
 	ROM_TYPE_MAX,
 };
 
-struct is_rom_data {
-	u32 rom_type;
-	u32 rom_valid;
-	bool is_rom_read; 
-};
 enum is_rom_cal_index {
 	ROM_CAL_MASTER	= 0,
 	ROM_CAL_SLAVE0	= 1,
@@ -90,21 +93,38 @@ enum is_rom_dualcal_index {
 };
 
 #define AF_CAL_D_MAX 8
+
+#define TOF_AF_SIZE 1200
+
 struct tof_data_t {
 	u64 timestamp;
-	u16 *data;
 	u32 width;
 	u32 height;
+	u16 data[TOF_AF_SIZE];
+	int AIFCaptureNum;
+};
+
+struct tof_info_t {
+	u16 TOFExposure;
+	u16 TOFFps;
 };
 
 struct capture_intent_info_t {
 	u16 captureIntent;
 	u16 captureCount;
 	s16 captureEV;
+	u32 captureIso;
+	u16 captureAeExtraMode;
+	char captureMultiEVList[EV_LIST_SIZE];
+	uint32_t captureMultiIsoList[MANUAL_LIST_SIZE];
+	uint32_t CaptureMultiExposureList[MANUAL_LIST_SIZE];
+	u16 captureAeMode;
 };
 
 #define TOF_CAL_SIZE_MAX 10
 #define TOF_CAL_VALID_MAX 10
+
+#define CROSSTALK_CAL_MAX (3 * 13)
 
 #ifdef USE_CAMERA_HW_BIG_DATA
 #define CAM_HW_ERR_CNT_FILE_PATH "/data/vendor/camera/camera_hw_err_cnt.dat"
@@ -159,19 +179,21 @@ int is_vender_fw_sel(struct is_vender *vender);
 int is_vender_setfile_sel(struct is_vender *vender, char *setfile_name, int position);
 int is_vender_preprocessor_gpio_on_sel(struct is_vender *vender, u32 scenario, u32 *gpio_scenario);
 int is_vender_preprocessor_gpio_on(struct is_vender *vender, u32 scenario, u32 gpio_scenario);
-int is_vender_sensor_gpio_on_sel(struct is_vender *vender, u32 scenario, u32 *gpio_scenario);
+int is_vender_sensor_gpio_on_sel(struct is_vender *vender, u32 scenario, u32 *gpio_scenario, void *module_data);
 int is_vender_sensor_gpio_on(struct is_vender *vender, u32 scenario, u32 gpio_scenario);
 int is_vender_preprocessor_gpio_off_sel(struct is_vender *vender, u32 scenario, u32 *gpio_scenario,
 	void *module_data);
 int is_vender_preprocessor_gpio_off(struct is_vender *vender, u32 scenario, u32 gpio_scenario);
 int is_vender_sensor_gpio_off_sel(struct is_vender *vender, u32 scenario, u32 *gpio_scenario,
 	void *module_data);
-int is_vender_sensor_gpio_off(struct is_vender *vender, u32 scenario, u32 gpio_scenario);
+int is_vender_sensor_gpio_off(struct is_vender *vender, u32 scenario, u32 gpio_scenario, void *module_data);
+void is_vendor_sensor_suspend(void);
 #ifdef CONFIG_SENSOR_RETENTION_USE
 void is_vender_check_retention(struct is_vender *vender, void *module_data);
 #endif
 void is_vender_itf_open(struct is_vender *vender, struct sensor_open_extended *ext_info);
 int is_vender_set_torch(struct camera2_shot *shot);
+void is_vender_update_meta(struct is_vender *vender, struct camera2_shot *shot);
 int is_vender_video_s_ctrl(struct v4l2_control *ctrl, void *device_data);
 int is_vender_ssx_video_s_ctrl(struct v4l2_control *ctrl, void *device_data);
 int is_vender_ssx_video_g_ctrl(struct v4l2_control *ctrl, void *device_data);
@@ -194,8 +216,10 @@ int is_vendor_get_rom_id_from_position(int position);
 void is_vendor_get_rom_info_from_position(int position, int *rom_type, int *rom_id, int *rom_cal_index);
 void is_vendor_get_rom_dualcal_info_from_position(int position, int *rom_type, int *rom_dualcal_id, int *rom_dualcal_index);
 bool is_vendor_check_camera_running(int position);
-int is_vender_get_dualized_sensorid(int position);
 #ifdef USE_TOF_AF
 void is_vender_store_af(struct is_vender *vender, struct tof_data_t *data);
 #endif
+void is_vendor_store_tof_info(struct is_vender *vender, struct tof_info_t *info);
+int is_vendor_shaking_gpio_on(struct is_vender *vender);
+int is_vendor_shaking_gpio_off(struct is_vender *vender);
 #endif

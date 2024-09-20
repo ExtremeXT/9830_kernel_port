@@ -38,6 +38,8 @@
 #define PDP_GET_V(reg_val, F) \
 	is_hw_get_field_value(reg_val, &pdp_fields[F])
 
+#define PDP_RDMA_MO_TICK	10
+
 #define PDP_RDMA_MO_DEFAULT	3
 #define PDP_RDMA_MO_FPS60	5
 
@@ -116,7 +118,7 @@ static void _pdp_hw_s_corex_init(void __iomem *base, bool enable)
 	 */
 	_pdp_hw_wait_corex_idle(base);
 
-	info_hw("[PDP] %s done\n", __func__);
+	/* info_hw("[PDP] %s done\n", __func__); */
 }
 
 /*
@@ -145,7 +147,7 @@ static void _pdp_hw_s_corex_start(void __iomem *base, bool enable)
 
 	PDP_SET_F(base, PDP_R_COREX_UPDATE_MODE_0, PDP_F_COREX_UPDATE_MODE_0, HW_TRIGGER);
 
-	info_hw("[PDP] %s done\n", __func__);
+	/* info_hw("[PDP] %s done\n", __func__); */
 }
 
 /*
@@ -480,9 +482,9 @@ retry_lic_priority:
  * Context: O
  * CR type: Corex + No Corex
  */
-void pdp_hw_s_line_row(void __iomem *base, bool pd_enable, int sensor_mode)
+void pdp_hw_s_line_row(void __iomem *base, bool pd_enable, int sensor_mode, u32 binning)
 {
-	int tmp, line_row = 0, max_pos_end_y = 0;
+	int tmp, line_row_max, line_row = 0, max_pos_end_y = 0;
 	int i;
 	int margin = 100;
 	u32 val = 0;
@@ -490,6 +492,10 @@ void pdp_hw_s_line_row(void __iomem *base, bool pd_enable, int sensor_mode)
 	u32 density = 0, tail_density = 0;
 	u32 mpd_on;
 	u32 mpd_vbin;
+	u32 bayer_height, tail_height;
+
+	bayer_height = PDP_GET_F(base, PDP_R_LIC_INPUT_CONFIG2, PDP_F_LIC_INPUT_IMAGE_HEIGHT);
+	tail_height = PDP_GET_F(base, PDP_R_LIC_INPUT_CONFIG3, PDP_F_LIC_INPUT_PDPXL_HEIGHT);
 
 	/*
 	 * stat end interrupt can't use hw limitation
@@ -519,21 +525,55 @@ void pdp_hw_s_line_row(void __iomem *base, bool pd_enable, int sensor_mode)
 			break;
 		case VC_SENSOR_MODE_SUPER_PD_2_TAIL:
 		case VC_SENSOR_MODE_IMX_2X1OCL_2_TAIL:
-			density = tail_density = 2;
+			switch(binning) {
+			case 2000:
+				density = 2;
+				tail_density = 2;
+				break;
+			case 1000:
+				density = 4;
+				tail_density = 4;
+				break;
+			default:
+				break;
+			}
 			break;
 		case VC_SENSOR_MODE_2PD_MODE3:
-			density = tail_density = 4;
+			density = 4;
 			if (mpd_on)
 				max_pos_end_y = max_pos_end_y << mpd_vbin;
 			break;
 		case VC_SENSOR_MODE_ULTRA_PD_TAIL:
 		case VC_SENSOR_MODE_ULTRA_PD_2_TAIL:
+		case VC_SENSOR_MODE_ULTRA_PD_3_TAIL:
 			density = 8;
 			tail_density = density / 2;
 			break;
 		case VC_SENSOR_MODE_IMX_2X1OCL_1_TAIL:
 			density = 2;
 			tail_density = density / 2;
+			break;
+		case VC_SENSOR_MODE_SUPER_PD_3_TAIL:
+			density = 8;
+			tail_density = 4;
+			break;
+		case VC_SENSOR_MODE_SUPER_PD_4_TAIL:
+			switch(binning) {
+			case 1000:
+				density = 6;
+				tail_density = 6;
+				break;
+			case 3000:
+				density = 4;
+				tail_density = 4;
+				break;
+			case 6000:
+				density = 4;
+				tail_density = 4;
+				break;
+			default:
+				break;
+			}
 			break;
 		default:
 			err("check for sensor pd mode\n");
@@ -545,9 +585,17 @@ void pdp_hw_s_line_row(void __iomem *base, bool pd_enable, int sensor_mode)
 			line_row = max_pos_end_y * density;
 			line_row += (line_row + tail_density / 2) / tail_density;
 			line_row += margin;
+
+			line_row_max = bayer_height + tail_height - 10;
 		} else {
 			line_row = max_pos_end_y * density + margin;
-		}
+
+			line_row_max = bayer_height - 10;
+ 		}
+
+		if (line_row > line_row_max)
+			line_row = line_row_max;
+
 		info_hw("[PDP] LINE_IRQ for pd sensor mode(%d), density(%d, tail:%d), max_pos_end_y: %d, line_row: %d, num_sroi: %d",
 			sensor_mode, density, tail_density, max_pos_end_y, line_row, num_of_turn_on_sroi);
 	}
@@ -556,6 +604,7 @@ void pdp_hw_s_line_row(void __iomem *base, bool pd_enable, int sensor_mode)
 	val = PDP_SET_V(val, PDP_F_IP_INT_ROW_CORD, line_row);
 	PDP_SET_R(base, PDP_R_IP_INT_ON_COL_ROW_CORD, val);
 	PDP_SET_F(base, PDP_R_IP_COREX_HW_TRIGGER_GAP, PDP_F_IP_COREX_HW_TRIGGER_GAP, 0); /* TODO: @Long V-blank */
+	//pdp_hw_dump(base);
 }
 
 /*
@@ -903,12 +952,16 @@ int pdp_hw_s_one_shot_enable(struct is_pdp *pdp)
 		/* Increase RMO */
 		if (!try_cnt) {
 			rmo = PDP_GET_R(base, PDP_R_RDMA_BAYER_MO);
-			PDP_SET_R(base, PDP_R_RDMA_BAYER_MO, rmo + 1);
-			PDP_SET_R(base, PDP_R_RDMA_AF_MO, rmo + 1);
+			rmo = max(rmo, pdp->rmo) + pdp->rmo;
+			rmo = min(rmo, (u32)((1 << pdp_fields[PDP_F_RDMA_BAYER_MO].bit_width) - 1));
+
+			PDP_SET_R(base, PDP_R_RDMA_BAYER_MO, rmo);
+			PDP_SET_R(base, PDP_R_RDMA_AF_MO, rmo);
+			pdp->rmo_tick = PDP_RDMA_MO_TICK;
 		}
 
-		info_hw("[PDP%d] oneshot busy(RMO:%d->%d, total:%d, curr:%d,%d, try:%d)\n",
-			pdp->id, rmo, rmo + 1, total_line, curr_line, curr_col, try_cnt);
+		info_hw("[PDP%d] oneshot busy(RMO:%d, total:%d, curr:%d,%d, try:%d)\n",
+			pdp->id, rmo, total_line, curr_line, curr_col, try_cnt);
 
 		try_cnt++;
 		if (try_cnt >= 3) {
@@ -940,7 +993,7 @@ int pdp_hw_s_one_shot_enable(struct is_pdp *pdp)
 	spin_unlock_irqrestore(&pdp->slock_oneshot, flag);
 
 	/* Restore RMO */
-	if (!try_cnt) {
+	if (!try_cnt && (--pdp->rmo_tick <= 0)) {
 		rmo = PDP_GET_R(base, PDP_R_RDMA_BAYER_MO);
 		if (rmo != pdp->rmo) {
 			PDP_SET_R(base, PDP_R_RDMA_BAYER_MO, pdp->rmo);
@@ -1124,7 +1177,7 @@ void pdp_hw_s_core(struct is_pdp *pdp, bool pd_enable, struct is_sensor_cfg *sen
 	u32 img_hwformat, u32 img_pixelsize,
 	u32 pd_width, u32 pd_height, u32 pd_hwformat,
 	u32 sensor_type, u32 path, int sensor_mode, u32 fps, u32 en_sdc, u32 en_votf,
-	u32 num_buffers, ulong freq, u32 position)
+	u32 num_buffers, ulong freq, u32 binning, u32 position)
 {
 	u32 rmo = PDP_RDMA_MO_DEFAULT;
 	u32 en_dma, en_afdma;
@@ -1142,7 +1195,7 @@ void pdp_hw_s_core(struct is_pdp *pdp, bool pd_enable, struct is_sensor_cfg *sen
 	_pdp_hw_s_cout_fifo(base, path);
 	_pdp_hw_s_lic_context(base, img_pixelsize, sensor_type);
 	_pdp_hw_s_common(base);
-	pdp_hw_s_line_row(base, pd_enable, sensor_mode);
+	pdp_hw_s_line_row(base, pd_enable, sensor_mode, binning);
 	_pdp_hw_s_int_mask(base, sensor_type, path);
 
 	_pdp_hw_s_secure_id(base);

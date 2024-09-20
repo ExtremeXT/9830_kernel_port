@@ -668,6 +668,7 @@ static int is_3aa_video_s_ctrl(struct file *file, void *priv,
 		case AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD_FAST:
 		case AA_CAPTURE_INTENT_STILL_CAPTURE_SUPER_NIGHT_SHOT_TRIPOD_LE_FAST:
 		case AA_CAPTURE_INTENT_STILL_CAPTURE_CROPPED_REMOSAIC_DYNAMIC_SHOT:
+		case AA_CAPTURE_INTENT_STILL_CAPTURE_SHORT_REF_LLHDR_DYNAMIC_SHOT:
 			captureCount = value & 0x0000FFFF;
 			break;
 		default:
@@ -853,15 +854,37 @@ static int is_3aa_video_s_ext_ctrl(struct file *file, void *priv,
 			head->intent_ctl.captureIntent = info.captureIntent;
 			head->intent_ctl.vendor_captureCount = info.captureCount;
 			head->intent_ctl.vendor_captureEV = info.captureEV;
+			if (info.captureIso) {
+				head->intent_ctl.vendor_isoValue = info.captureIso;
+			}
+			if (info.captureAeExtraMode) {
+				head->intent_ctl.vendor_aeExtraMode = info.captureAeExtraMode;
+			}
+			if (info.captureAeMode) {
+				head->intent_ctl.aeMode = info.captureAeMode;
+			}
+			memcpy(&(head->intent_ctl.vendor_multiFrameEvList), &(info.captureMultiEVList),
+				sizeof(info.captureMultiEVList));
+			memcpy(&(head->intent_ctl.vendor_multiFrameIsoList), &(info.captureMultiIsoList),
+				sizeof(info.captureMultiIsoList));
+			memcpy(&(head->intent_ctl.vendor_multiFrameExposureList), &(info.CaptureMultiExposureList),
+				sizeof(info.CaptureMultiExposureList));
 
-			if (info.captureIntent == AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_MULTI) {
+			switch (info.captureIntent) {
+			case AA_CAPTURE_INTENT_STILL_CAPTURE_OIS_MULTI:
+			case AA_CAPTURE_INTENT_STILL_CAPTURE_GALAXY_RAW_DYNAMIC_SHOT:
+			case AA_CAPTURE_INTENT_STILL_CAPTURE_ASTRO_SHOT:
 				head->remainIntentCount = 2 + INTENT_RETRY_CNT;
-			} else {
+				break;
+			default:
 				head->remainIntentCount = 0 + INTENT_RETRY_CNT;
+				break;
 			}
 
-			info("s_ext_ctrl SET_CAPTURE_INTENT_INFO, intent(%d) count(%d) captureEV(%d) remainIntentCount(%d)\n",
-				info.captureIntent, info.captureCount, info.captureEV, head->remainIntentCount);
+			info("[%d]s_ext_ctrl SET_CAPTURE_INTENT_INFO, intent(%d) count(%d) captureEV(%d) captureIso(%d)"
+			    "captureAeExtraMode(%d) captureAeMode(%d) remainIntentCount(%d) captureMultiEVList[%d %d %d %d ...]\n",
+				head->instance, info.captureIntent, info.captureCount, info.captureEV, info.captureIso, info.captureAeExtraMode,
+				info.captureAeMode, head->remainIntentCount, info.captureMultiEVList[0], info.captureMultiEVList[1], info.captureMultiEVList[2], info.captureMultiEVList[3]);
 			break;
 		}
 		default:
@@ -1053,7 +1076,7 @@ static void is_3aa_buffer_queue(struct vb2_buffer *vb)
 
 static void is_3aa_buffer_finish(struct vb2_buffer *vb)
 {
-	int ret = 0;
+	int ret;
 	struct is_video_ctx *vctx;
 	struct is_device_ischain *device;
 
@@ -1067,13 +1090,11 @@ static void is_3aa_buffer_finish(struct vb2_buffer *vb)
 
 	mvdbgs(3, "%s(%d)\n", vctx, &vctx->queue, __func__, vb->index);
 
-	is_queue_buffer_finish(vb);
-
 	ret = is_ischain_3aa_buffer_finish(device, vb->index);
-	if (ret) {
+	if (ret)
 		merr("is_ischain_3aa_buffer_finish is fail(%d)", device, ret);
-		return;
-	}
+
+	is_queue_buffer_finish(vb);
 }
 
 const struct vb2_ops is_3aa_qops = {

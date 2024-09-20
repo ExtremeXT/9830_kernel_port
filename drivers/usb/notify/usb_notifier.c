@@ -30,7 +30,7 @@
 #include <linux/usb/typec/manager/usb_typec_manager_notifier.h>
 #endif
 #if defined(CONFIG_BATTERY_SAMSUNG)
-#include "../../battery/common/sec_charging_common.h"
+#include "../../battery_v2/include/sec_charging_common.h"
 #endif
 #include "usb_notifier.h"
 

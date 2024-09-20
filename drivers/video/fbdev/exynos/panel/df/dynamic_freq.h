@@ -1,6 +1,7 @@
-/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (c) Samsung Electronics Co., Ltd.
+ * linux/drivers/video/fbdev/exynos/panel/dynamic_freq.h
+ *
+ * Copyright (c) 2018 Samsung Electronics
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -12,11 +13,12 @@
 
 #define TBL_ARR_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
 
-#define DEFINE_FREQ_RANGE(_min, _max, _idx)	\
+#define DEFINE_FREQ_RANGE(_min, _max, _idx, _ddi_osc)	\
 {							\
 	.min = _min,			\
 	.max = _max,			\
 	.freq_idx = _idx,		\
+	.ddi_osc = _ddi_osc,	\
 }
 
 #define DEFINE_FREQ_SET(_array)	\
@@ -29,6 +31,7 @@ struct dynamic_freq_range {
 	int	min;
 	int max;
 	int freq_idx;
+	int ddi_osc;
 };
 
 struct df_freq_tbl_info {
@@ -93,7 +96,11 @@ enum {
 	FREQ_RANGE_LB48 = 138,
 	FREQ_RANGE_LB66 = 156,
 	FREQ_RANGE_LB71 = 161,
-	FREQ_RANGE_MAX = 162,
+	FREQ_RANGE_N005	= 260,
+	FREQ_RANGE_N008	= 263,
+	FREQ_RANGE_N028	= 283,
+	FREQ_RANGE_N071	= 326,
+	FREQ_RANGE_MAX = 327,
 };
 
 int dynamic_freq_probe(struct panel_device *panel, struct df_freq_tbl_info *freq_set);

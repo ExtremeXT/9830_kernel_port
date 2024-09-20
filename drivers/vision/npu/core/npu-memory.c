@@ -21,11 +21,10 @@
 #include "npu-log.h"
 #include "npu-binary.h"
 #include "npu-memory.h"
+#include "npu-config.h"
 
 int npu_memory_probe(struct npu_memory *memory, struct device *dev)
 {
-	u32 ret = 0;
-
 	BUG_ON(!memory);
 	BUG_ON(!dev);
 
@@ -53,9 +52,7 @@ int npu_memory_probe(struct npu_memory *memory, struct device *dev)
 	INIT_LIST_HEAD(&memory->alloc_list);
 	memory->alloc_count = 0;
 
-	goto p_err;
-p_err:
-	return ret;
+	return 0;
 }
 
 int npu_memory_open(struct npu_memory *memory)
@@ -135,7 +132,7 @@ int npu_memory_map(struct npu_memory *memory, struct npu_memory_buffer *buffer)
 	buffer->daddr = daddr;
 
 	vaddr = dma_buf_vmap(buffer->dma_buf);
-	if (IS_ERR(vaddr)) {
+	if (IS_ERR_OR_NULL(vaddr)) {
 		npu_err("Failed to get vaddr (err %pK)\n", vaddr);
 		ret = -EFAULT;
 		goto p_err;
@@ -155,9 +152,8 @@ p_err:
 	return ret;
 }
 
-int npu_memory_unmap(struct npu_memory *memory, struct npu_memory_buffer *buffer)
+void npu_memory_unmap(struct npu_memory *memory, struct npu_memory_buffer *buffer)
 {
-	int ret = 0;
 	unsigned long flags;
 
 	BUG_ON(!memory);
@@ -192,8 +188,6 @@ int npu_memory_unmap(struct npu_memory *memory, struct npu_memory_buffer *buffer
 		npu_info("buffer[%pK] is not linked to map_lock. Skipping remove.\n", buffer);
 
 	spin_unlock_irqrestore(&memory->map_lock, flags);
-
-	return ret;
 }
 
 int npu_memory_alloc(struct npu_memory *memory, struct npu_memory_buffer *buffer)
@@ -268,7 +262,7 @@ int npu_memory_alloc(struct npu_memory *memory, struct npu_memory_buffer *buffer
 	buffer->daddr = daddr;
 
 	vaddr = dma_buf_vmap(dma_buf);
-	if (IS_ERR(vaddr)) {
+	if (IS_ERR_OR_NULL(vaddr)) {
 		npu_err("fail(err %pK) in dma_buf_vmap\n", vaddr);
 		ret = -EFAULT;
 		goto p_err;
@@ -293,7 +287,6 @@ p_err:
 
 int npu_memory_free(struct npu_memory *memory, struct npu_memory_buffer *buffer)
 {
-	int ret = 0;
 	const struct vb2_mem_ops *mem_ops;
 	unsigned long flags;
 
@@ -334,6 +327,123 @@ int npu_memory_free(struct npu_memory *memory, struct npu_memory_buffer *buffer)
 
 	spin_unlock_irqrestore(&memory->alloc_lock, flags);
 
+	return 0;
+}
 
-	return ret;
+/**
+ * npu_memory_copy - Create a copy of NPU mem dmabuf.
+ * @memory: Session memory manager.
+ * @buffer: memory buffer.
+ * @offset: Start offset in source buffer.
+ * @size: Buffer size to copy.
+ */
+struct npu_memory_buffer *
+npu_memory_copy(struct npu_memory *memory, struct npu_memory_buffer *buffer, size_t offset, size_t size)
+{
+	struct npu_memory_buffer *copy_buffer;
+	void *vaddr;
+	int ret;
+
+	if (!buffer->dma_buf) {
+		npu_err("no dmabuf in source buffer\n");
+		return ERR_PTR(-EINVAL);
+	}
+
+	if (offset >= buffer->dma_buf->size || offset + size > buffer->dma_buf->size) {
+		npu_err("invalid size args. size=0x%lx, offset=0x%lx, src size=0x%lx\n",
+			size, offset, buffer->size);
+		return ERR_PTR(-EINVAL);
+	}
+
+	copy_buffer = kzalloc(sizeof(struct npu_memory_buffer), GFP_KERNEL);
+	if (!copy_buffer)
+		return ERR_PTR(-ENOMEM);
+
+	/* Copy source buffer properties. */
+	memcpy(copy_buffer, buffer, sizeof(*buffer));
+
+	copy_buffer->size = size;
+
+	/*
+	 * We do memcpy from user NCP header to copy_buffer.
+	 * Hence, allocate cached dma-buf heap.
+	 */
+	ret = npu_memory_alloc(memory, copy_buffer);
+	if (ret) {
+		npu_err("failed to allocate copy buffer(%d)\n", ret);
+		goto err_free_mem;
+	}
+
+	/* Create virtual mapping for CPU access. */
+	if (!buffer->vaddr) {
+		vaddr = dma_buf_vmap(buffer->dma_buf);
+		if (IS_ERR_OR_NULL(vaddr)) {
+			npu_err("failed to vmap original dmabuf(%ld)", PTR_ERR(vaddr));
+			goto err_free_copy_buffer;
+		}
+
+		buffer->vaddr = vaddr;
+	}
+
+	vaddr = buffer->vaddr + offset;
+
+	/* Begin CPU access. */
+	dma_buf_begin_cpu_access(buffer->dma_buf, DMA_BIDIRECTIONAL);
+	dma_buf_begin_cpu_access(copy_buffer->dma_buf, DMA_BIDIRECTIONAL);
+
+	memcpy(copy_buffer->vaddr, vaddr, size);
+
+	/* End CPU access.. */
+	dma_buf_end_cpu_access(copy_buffer->dma_buf, DMA_BIDIRECTIONAL);
+	dma_buf_end_cpu_access(buffer->dma_buf, DMA_BIDIRECTIONAL);
+
+	return copy_buffer;
+err_free_copy_buffer:
+	npu_memory_free(memory, copy_buffer);
+err_free_mem:
+	kfree(copy_buffer);
+	return ERR_PTR(ret);
+}
+
+int npu_memory_v_alloc(struct npu_memory *memory, struct npu_memory_v_buf *buffer)
+{
+	unsigned long flags = 0;
+
+	BUG_ON(!memory);
+	BUG_ON(!buffer);
+
+	buffer->v_buf = (char *)vmalloc((unsigned long)buffer->size);
+	if (!buffer->v_buf) {
+		npu_err("failed vmalloc\n");
+		return -ENOMEM;
+	}
+
+	spin_lock_irqsave(&memory->alloc_lock, flags);
+	list_add_tail(&buffer->list, &memory->alloc_list);
+	memory->alloc_count++;
+	spin_unlock_irqrestore(&memory->alloc_lock, flags);
+
+	return 0;
+}
+
+void npu_memory_v_free(struct npu_memory *memory, struct npu_memory_v_buf *buffer)
+{
+	unsigned long flags = 0;
+
+	BUG_ON(!memory);
+	BUG_ON(!buffer);
+
+	vfree((void *)buffer->v_buf);
+
+	spin_lock_irqsave(&memory->alloc_lock, flags);
+	if (likely(!list_empty(&buffer->list))) {
+		list_del(&buffer->list);
+		INIT_LIST_HEAD(&buffer->list);
+		memory->alloc_count--;
+	} else
+		npu_info("buffer[%pK] is not linked to alloc_lock. Skipping remove.\n", buffer);
+
+	spin_unlock_irqrestore(&memory->alloc_lock, flags);
+
+	return;
 }

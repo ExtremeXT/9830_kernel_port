@@ -236,7 +236,7 @@ p_err:
 	return ret;
 }
 
-int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 vc, struct is_frame_cfg *cfg, u32 hwformat, u32 dummy_pixel)
+int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 vc, struct is_frame_cfg *cfg, u32 hwformat)
 {
 	int ret = 0;
 	u32 val;
@@ -251,34 +251,37 @@ int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 vc, struct is_frame_cfg *cfg,
 		goto p_err;
 	}
 
+#ifdef CONFIG_USE_SENSOR_GROUP
 	if (!cfg->format) {
 		err("cfg->format is null");
 		ret = -EINVAL;
 		goto p_err;
 	}
 
+	if (cfg->format->pixelformat == V4L2_PIX_FMT_SBGGR10 ||
+		cfg->format->pixelformat == V4L2_PIX_FMT_SBGGR12 ||
+		cfg->format->pixelformat == V4L2_PIX_FMT_PRIV_MAGIC)
+#else
+	if (image->format.pixelformat == V4L2_PIX_FMT_SBGGR10 ||
+		image->format.pixelformat == V4L2_PIX_FMT_SBGGR12 ||
+		image->format.pixelformat == V4L2_PIX_FMT_PRIV_MAGIC)
+#endif
+		dma_pack12 = CSIS_REG_DMA_PACK;
+	else
+		dma_pack12 = CSIS_REG_DMA_NORMAL;
+
+#ifdef CONFIG_USE_SENSOR_GROUP
 	switch (cfg->format->pixelformat)
+#else
+	switch (image->format.pixelformat)
+#endif
 	{
 	case V4L2_PIX_FMT_SGRBG8:
 	case V4L2_PIX_FMT_SBGGR8:
 		dma_dim = CSIS_REG_DMA_1D_DMA;
-		dma_pack12 = CSIS_REG_DMA_PACK;
-		break;
-	case V4L2_PIX_FMT_SBGGR10:
-	case V4L2_PIX_FMT_SBGGR12:
-	case V4L2_PIX_FMT_SBGGR16:
-		dma_dim = CSIS_REG_DMA_2D_DMA;
-		dma_pack12 = CSIS_REG_DMA_NORMAL;
-		break;
-	case V4L2_PIX_FMT_SBGGR10P:
-	case V4L2_PIX_FMT_SBGGR12P:
-	case V4L2_PIX_FMT_PRIV_MAGIC:
-		dma_dim = CSIS_REG_DMA_2D_DMA;
-		dma_pack12 = CSIS_REG_DMA_PACK;
 		break;
 	default:
 		dma_dim = CSIS_REG_DMA_2D_DMA;
-		dma_pack12 = CSIS_REG_DMA_NORMAL;
 		break;
 	}
 
@@ -332,7 +335,11 @@ int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 vc, struct is_frame_cfg *cfg,
 		is_hw_set_reg(base_reg, &csi_vcdma_regs[CSIS_R_DMA0_FMT], val);
 
 		val = is_hw_get_reg(base_reg, &csi_vcdma_regs[CSIS_R_DMA0_RESOL]);
-		val = is_hw_set_field_value(val, &csi_vcdma_fields[CSIS_F_DMA_N_HRESOL], cfg->width + dummy_pixel);
+#ifdef CONFIG_USE_SENSOR_GROUP
+		val = is_hw_set_field_value(val, &csi_vcdma_fields[CSIS_F_DMA_N_HRESOL], cfg->width);
+#else
+		val = is_hw_set_field_value(val, &csi_vcdma_fields[CSIS_F_DMA_N_HRESOL], image->window.width);
+#endif
 		is_hw_set_reg(base_reg, &csi_vcdma_regs[CSIS_R_DMA0_RESOL], val);
 	} else if (dma_stg_mode == CSIS_REG_DMA_STG_PACKET_MODE) {
 		is_hw_set_reg(base_reg, &csi_vcdma_regs[CSIS_R_DMA0_FMT], val);
@@ -1025,7 +1032,6 @@ int csi_hw_g_dma_irq_src_vc(u32 __iomem *base_reg, struct csis_irq_src *src, u32
 
 	src->dma_start = is_hw_get_field_value(dma_src, &csi_vcdma_cmn_fields[CSIS_F_DMA_FRM_START]);
 	src->dma_end = is_hw_get_field_value(dma_src, &csi_vcdma_cmn_fields[CSIS_F_DMA_FRM_END]);
-	src->dma_abort = is_hw_get_field_value(dma_src, &csi_vcdma_cmn_fields[CSIS_F_DMA_ABORT_DONE]);
 
 	if (dma_src & (1 << (csi_vcdma_cmn_fields[CSIS_F_DMA_OTF_OVERLAP].bit_start + vc_phys)))
 		src->err_id[vc_phys] |= 1 << CSIS_ERR_DMA_OTF_OVERLAP_VC;

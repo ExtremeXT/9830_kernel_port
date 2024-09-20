@@ -19,6 +19,8 @@
 #include "is-param.h"
 
 
+#define SET_CPU_AFFINITY	/* enable @ Exynos3475 */
+
 #if !defined(DISABLE_LIB)
 /* #define LIB_MEM_TRACK */
 #endif
@@ -28,7 +30,7 @@
 #endif
 
 #define LIB_ISP_OFFSET		(0x00000080)
-#define LIB_ISP_CODE_SIZE	(0x00440000) //+ 1M
+#define LIB_ISP_CODE_SIZE	(0x00340000)
 
 #define LIB_VRA_OFFSET		(0x00000400)
 #define LIB_VRA_CODE_SIZE	(0x00080000)
@@ -134,7 +136,6 @@ enum memory_track_type {
 	MT_TYPE_MB_DMA_CLAHE,
 
 	MT_TYPE_MB_VRA	= 0x20,
-	MT_TYPE_MB_VRA_NETARR = 0x21,
 
 	/* etc */
 	MT_TYPE_DMA	= 0x30,
@@ -249,7 +250,6 @@ struct is_lib_support {
 	struct lib_mem_block			mb_dma_orbmch;
 	struct lib_mem_block			mb_dma_clahe;
 	struct lib_mem_block			mb_vra;
-	struct lib_mem_block			mb_vra_net_array;
 	/* non-memory block */
 	spinlock_t				slock_nmb;
 	struct list_head			list_of_nmb;
@@ -329,7 +329,6 @@ struct fd_info {
 int is_load_bin(void);
 void is_load_clear(void);
 int is_init_ddk_thread(void);
-void is_set_ddk_thread_affinity(void);
 void is_flush_ddk_thread(void);
 void check_lib_memory_leak(void);
 
@@ -351,11 +350,6 @@ void is_free_vra(void *buf);
 int is_dva_vra(ulong kva, u32 *dva);
 void is_inv_vra(ulong kva, u32 size);
 void is_clean_vra(ulong kva, u32 size);
-
-void *is_alloc_vra_net_array(u32 size);
-void is_free_vra_net_array(void *buf);
-void is_inv_vra_net_array(ulong kva, u32 size);
-int is_dva_vra_net_array(ulong kva, u32 *dva);
 
 bool is_lib_in_irq(void);
 

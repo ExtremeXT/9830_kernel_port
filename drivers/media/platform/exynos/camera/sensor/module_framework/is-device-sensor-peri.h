@@ -14,8 +14,8 @@
 
 #ifdef CONFIG_MUIC_NOTIFIER
 #include <linux/device.h>
-#include <linux/muic/common/muic.h>
-#include <linux/muic/common/muic_notifier.h>
+#include <linux/muic/muic.h>
+#include <linux/muic/muic_notifier.h>
 #endif
 
 #include <linux/interrupt.h>
@@ -32,12 +32,6 @@
 #define IS_CIS_REV_MAX_LIST		3
 #define VENDOR_SOFT_LANDING_STEP_MAX	2
 
-#ifdef USE_CAMERA_ACT_DRIVER_SOFT_LANDING
-enum HW_SOFTLANDING_STATE{
-	HW_SOFTLANDING_PASS = 0,
-	HW_SOFTLANDING_FAIL = -200,
-};
-#endif
 enum cis_dual_sync_mode {
 	DUAL_SYNC_NONE = 0,
 	DUAL_SYNC_MASTER,
@@ -83,6 +77,9 @@ struct is_cis {
 	/* expected dms */
 	camera2_lens_dm_t		expecting_lens_dm[EXPECT_DM_NUM];
 	camera2_sensor_dm_t		expecting_sensor_dm[EXPECT_DM_NUM];
+#ifdef USE_OIS_HALL_DATA_FOR_VDIS
+	camera2_aa_dm_t			expecting_aa_dm[EXPECT_DM_NUM];
+#endif
 
 	/* expected udm */
 	camera2_lens_udm_t		expecting_lens_udm[EXPECT_DM_NUM];
@@ -201,12 +198,17 @@ struct is_actuator {
 	struct is_device_sensor_peri	*sensor_peri;
 	struct is_actuator_ops		*actuator_ops;
 	struct mutex            *i2c_lock;
+	struct work_struct			actuator_active_on;
+	struct work_struct			actuator_active_off;
 
 	u32				vendor_product_id;
+	u32				vendor_sleep_to_standby_delay;
+	u32				vendor_active_to_standby_delay;
 	u32				vendor_first_pos;
 	u32				vendor_first_delay;
 	u32				vendor_soft_landing_list[VENDOR_SOFT_LANDING_STEP_MAX * 2];
 	u32				vendor_soft_landing_list_len;
+	u32				vendor_soft_landing_seqid;
 	bool				vendor_use_sleep_mode;
 	bool				vendor_use_standby_mode;
 
@@ -261,10 +263,10 @@ struct is_flash_data {
 	u32				intensity;
 	u32				firing_time_us;
 	bool				flash_fired;
+	bool				high_resolution_flash;
 	struct work_struct		flash_fire_work;
 	struct timer_list		flash_expire_timer;
 	struct work_struct		flash_expire_work;
-	struct work_struct		muic_ctrl_and_flash_fire_work;
 
 	/* used for LED calibration */
 	u32				cal_input_curr[FLASH_LED_CH_MAX];
@@ -317,7 +319,8 @@ struct is_ois {
 #ifdef CAMERA_2ND_OIS
 	int				ois_power_mode;
 #endif
-	struct work_struct		ois_set_init_work;
+	struct work_struct			ois_set_init_work;
+	struct work_struct			ois_set_deinit_work;
 	int				af_pos_wide;
 	int				af_pos_tele;
 #ifdef USE_OIS_INIT_WORK
@@ -352,20 +355,21 @@ struct is_mcu {
 };
 
 struct is_laser_af_data {
-	u32 distance;
-	u32 confidence;
+	void *data;
+	u32 size;
 };
 
 struct is_laser_af {
 	u32				id;
 	struct v4l2_subdev		*subdev; /*  connected module subdevice */
 	u32				device; /*  connected sensor device */
-	struct i2c_client		*client;
 
-	struct is_laser_af_data		laser_af_data;
 	struct is_laser_af_ops		*laser_af_ops;
+	enum camera2_range_sensor_mode	rs_mode;
 
 	struct is_device_sensor_peri	*sensor_peri;
+	struct mutex			*laser_lock;
+	bool				active;
 };
 
 struct paf_action {
@@ -514,13 +518,8 @@ struct is_device_sensor_peri {
 	int						reuse_3a_value;
 };
 
-void is_sensor_work_fn(struct kthread_work *work);
-void is_sensor_global_setting_work_fn(struct kthread_work *work);
-void is_sensor_mode_change_work_fn(struct kthread_work *work);
 int is_sensor_init_sensor_thread(struct is_device_sensor_peri *sensor_peri);
 void is_sensor_deinit_sensor_thread(struct is_device_sensor_peri *sensor_peri);
-int is_sensor_init_mode_change_thread(struct is_device_sensor_peri *sensor_peri);
-void is_sensor_deinit_mode_change_thread(struct is_device_sensor_peri *sensor_peri);
 
 struct is_device_sensor_peri *find_peri_by_cis_id(struct is_device_sensor *device,
 							u32 cis);
@@ -571,18 +570,14 @@ int is_sensor_peri_s_analog_gain(struct is_device_sensor *device,
 				struct ae_param again);
 int is_sensor_peri_s_digital_gain(struct is_device_sensor *device,
 				struct ae_param dgain);
-int is_sensor_peri_s_totalgain(struct is_device_sensor *device,
-				struct ae_param expo,
-				struct ae_param again,
-				struct ae_param dgain);
 int is_sensor_peri_s_wb_gains(struct is_device_sensor *device,
 				struct wb_gains wb_gains);
+int is_sensor_peri_s_test_pattern(struct is_device_sensor *device,
+				camera2_sensor_ctl_t *sensor_ctl);
 int is_sensor_peri_s_sensor_stats(struct is_device_sensor *device,
 				bool streaming,
 				struct is_sensor_ctl *module_ctl,
 				void *data);
-int is_sensor_peri_s_group_param_hold(struct is_device_sensor *device,
-				bool hold);
 int is_sensor_peri_adj_ctrl(struct is_device_sensor *device,
 				u32 input, struct v4l2_control *ctrl);
 

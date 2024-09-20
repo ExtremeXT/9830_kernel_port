@@ -40,12 +40,115 @@
 #endif
 #include <linux/usb/typec/maxim/max77705_usbc.h>
 #include <linux/usb/typec/maxim/max77705_alternate.h>
-#include <linux/battery/sec_charging_common.h>
+#include "../../../../battery_v2/include/sec_charging_common.h"
 #if defined(CONFIG_COMBO_REDRIVER_PTN36502)
 #include <linux/combo_redriver/ptn36502.h>
 #endif
 
 extern struct pdic_notifier_struct pd_noti;
+
+#if defined(CONFIG_CC_ATTACH_LOG)
+int prev_attach_log_index(struct max77705_cc_data *cc_data, int index)
+{
+	int ret = 0;
+	
+	if (index == 0)
+		ret = ABNORMAL_COUNT-1;
+	else
+		ret = --index;
+	return ret;
+}
+
+int next_attach_log_index(struct max77705_cc_data *cc_data, int index)
+{
+	int ret = 0;
+
+	if (index < ABNORMAL_COUNT-1)
+		ret = ++index;
+
+	return ret;
+}
+
+int check_continuous_time(struct max77705_cc_data *cc_data, u64 time)
+{
+	int ret = 0;
+	int index = next_attach_log_index(cc_data, cc_data->count_index);
+
+	if (cc_data->ccstat_attach_log[index].attach_time == 0)
+		goto skip;
+	
+	if (time_before64(time,
+		cc_data->ccstat_attach_log[index].attach_time + (ABNORMAL_MAXTIME*HZ))) {
+		msg_maxim("abnormal cc continuous attach");
+		ret = -EADV;
+	}
+skip:
+	return ret;
+}
+
+int check_clear_con_count(struct max77705_cc_data *cc_data, u64 time)
+{
+	int ret = 0;
+	int index = prev_attach_log_index(cc_data, cc_data->count_index);
+
+	if (time_after64(time,
+		cc_data->ccstat_attach_log[index].attach_time + (CLEAR_TIME*HZ))) {
+		ret = 1;
+	}
+	return ret;
+}
+
+void save_cc_attach_log(struct max77705_cc_data *cc_data, int power_role)
+{
+	u64 now = get_jiffies_64();
+	int index = cc_data->count_index;
+	int prev_index = prev_attach_log_index(cc_data, index);
+	int next_index = next_attach_log_index(cc_data, index);
+	int save_count = 0;
+
+	if (power_role != cc_SINK && power_role != cc_SOURCE) {
+		goto nosave;
+	}
+
+	if (cc_data->ccstat_attach_log[prev_index].power_role != power_role) {
+		cc_data->skip_check_ccattach = 0;
+		save_count = 1;
+		goto save;
+	}
+
+	if (check_clear_con_count(cc_data, now)) {
+		cc_data->skip_check_ccattach = 0;
+		save_count = 1;
+		goto save;
+	}
+
+	if (cc_data->ccstat_attach_log[prev_index]
+				.continuous_count >= (MAX_CON_COUNT-1)) {
+		save_count = MAX_CON_COUNT;
+		if (cc_data->skip_check_ccattach)
+			goto save;
+		else {
+			if (check_continuous_time(cc_data, now)) {
+				cc_data->skip_check_ccattach = 1;
+				send_usb_itracker_uevent(NOTIFY_USB_CC_REPEAT);				
+			}
+		}					
+	} else
+		save_count = cc_data->ccstat_attach_log[prev_index]
+				.continuous_count + 1;
+save:
+	cc_data->ccstat_attach_log[index].attach_time = now;
+	cc_data->ccstat_attach_log[index].power_role = power_role;
+	cc_data->ccstat_attach_log[index].continuous_count = save_count;
+	cc_data->count_index = next_index;
+
+	msg_maxim("power_role=%s count=%d",
+		(power_role == cc_SOURCE) ? "source" : "sink", save_count);
+
+nosave:
+	return;
+}
+#endif
 
 #if defined(CONFIG_CCIC_NOTIFIER)
 static void max77705_ccic_event_notifier(struct work_struct *data)
@@ -89,13 +192,17 @@ void max77705_ccic_event_work(void *data, int dest, int id, int attach, int even
 {
 	struct max77705_usbc_platform_data *usbpd_data = data;
 	struct ccic_state_work *event_work;
-#if defined(CONFIG_TYPEC) && !defined(CONFIG_DUAL_ROLE_USB_INTF)
+#if defined(CONFIG_TYPEC)
 	struct typec_partner_desc desc;
 	enum typec_pwr_opmode mode = TYPEC_PWR_MODE_USB;
 #endif
 
 	msg_maxim("usb: DIAES %d-%d-%d-%d-%d", dest, id, attach, event, sub);
-	event_work = kmalloc(sizeof(struct ccic_state_work), GFP_ATOMIC);
+	event_work = kmalloc(sizeof(struct ccic_state_work), GFP_KERNEL);
+	if (!event_work) {
+		msg_maxim("failed to allocate event_work");
+		return;
+	}
 	INIT_WORK(&event_work->ccic_work, max77705_ccic_event_notifier);
 
 	event_work->dest = dest;
@@ -235,6 +342,9 @@ void max77705_notify_dr_status(struct max77705_usbc_platform_data *usbpd_data, u
 			}
 			if (usbpd_data->is_host == HOST_OFF) {
 				usbpd_data->is_host = HOST_ON;
+#if defined(CONFIG_USB_AUDIO_ENHANCED_DETECT_TIME)
+				max77705_clk_booster_set(usbpd_data, 1);
+#endif
 				/* muic */
 				max77705_ccic_event_work(usbpd_data,
 					CCIC_NOTIFY_DEV_MUIC,
@@ -262,6 +372,9 @@ void max77705_notify_dr_status(struct max77705_usbc_platform_data *usbpd_data, u
 				schedule_delayed_work(&usbpd_data->acc_detach_work,
 					msecs_to_jiffies(0));
 		}
+#if defined(CONFIG_USB_AUDIO_ENHANCED_DETECT_TIME)
+		max77705_clk_booster_set(usbpd_data, 0);
+#endif
 		usbpd_data->mdm_block = 0;
 		usbpd_data->is_host = HOST_OFF;
 		usbpd_data->is_client = CLIENT_OFF;
@@ -321,10 +434,11 @@ static irqreturn_t max77705_vconnsc_irq(int irq, void *data)
 {
 	struct max77705_usbc_platform_data *usbc_data = data;
 	struct max77705_cc_data *cc_data = usbc_data->cc_data;
-	u8 connstat = 0;
+	u8 connstat = 0, usbc_status2 = 0;
 
 	pr_debug("%s: IRQ(%d)_IN\n", __func__, irq);
 	max77705_read_reg(usbc_data->muic, REG_CC_STATUS1, &cc_data->cc_status1);
+	max77705_read_reg(usbc_data->muic, REG_USBC_STATUS2, &usbc_status2);
 	connstat = (cc_data->cc_status1 & BIT_ConnStat)
 				>> FFS(BIT_ConnStat);
 
@@ -345,7 +459,7 @@ static irqreturn_t max77705_vconnsc_irq(int irq, void *data)
 		break;
 
 	case WATER:
-		msg_maxim("== WATER DETECT ==");
+		msg_maxim("== WATER DETECT == sysmsg[0x%x]", usbc_status2);
 
 		if (usbc_data->current_connstat != WATER) {
 			usbc_data->prev_connstat = usbc_data->current_connstat;
@@ -429,6 +543,7 @@ static irqreturn_t max77705_ccistat_irq(int irq, void *data)
 #if defined(CONFIG_TYPEC)
 	enum typec_pwr_opmode mode = TYPEC_PWR_MODE_USB;
 #endif
+	usbc_cmd_data value;
 
 	max77705_read_reg(usbc_data->muic, REG_CC_STATUS0, &cc_data->cc_status0);
 	pr_debug("%s: IRQ(%d)_IN\n", __func__, irq);
@@ -454,6 +569,19 @@ static irqreturn_t max77705_ccistat_irq(int irq, void *data)
 #if defined(CONFIG_TYPEC)
 		mode = TYPEC_PWR_MODE_3_0A;
 #endif
+		if (usbc_data->srcccap_request_retry) {
+			usbc_data->pn_flag = false;
+			usbc_data->srcccap_request_retry = false;
+			init_usbc_cmd_data(&value);
+			value.opcode = OPCODE_SRCCAP_REQUEST;
+			value.write_data[0] = pd_noti.sink_status.selected_pdo_num;
+			value.write_length = 1;
+			value.read_length = 1;
+			max77705_usbc_opcode_write(usbc_data, &value);
+			pr_info("%s : OPCODE(0x%02x) W_LENGTH(%d) R_LENGTH(%d) NUM(%d)\n",
+				__func__, value.opcode, value.write_length, value.read_length,
+				pd_noti.sink_status.selected_pdo_num);
+		}
 		break;
 
 	default:
@@ -532,6 +660,9 @@ static void max77705_ccstat_irq_handler(void *data, int irq)
 #if defined(CONFIG_USB_HOST_NOTIFY)
 	struct otg_notify *o_notify = get_otg_notify();
 #endif
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+	int event;
+#endif
 
 	max77705_read_reg(usbc_data->muic, REG_CC_STATUS0, &cc_data->cc_status0);
 	ccstat =  (cc_data->cc_status0 & BIT_CCStat) >> FFS(BIT_CCStat);
@@ -587,6 +718,9 @@ static void max77705_ccstat_irq_handler(void *data, int irq)
 		if (!usbc_data->plug_attach_done) {
 			msg_maxim("PLUG_ATTACHED +++");
 			usbc_data->plug_attach_done = 1;
+#if defined(CONFIG_CC_ATTACH_LOG)
+			save_cc_attach_log(cc_data, ccstat);
+#endif
 		}
 	}
 
@@ -597,6 +731,7 @@ static void max77705_ccstat_irq_handler(void *data, int irq)
 			usbc_data->is_samsung_accessory_enter_mode = 0;
 			usbc_data->pn_flag = false;
 			usbc_data->pd_support = false;
+			usbc_data->srcccap_request_retry = false;
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)
 			if (!usbc_data->try_state_change)
 #elif defined(CONFIG_TYPEC)
@@ -617,6 +752,7 @@ static void max77705_ccstat_irq_handler(void *data, int irq)
 #if defined(CONFIG_SEC_FACTORY)
 			factory_execute_monitor(FAC_ABNORMAL_REPEAT_STATE);
 #endif
+			cancel_delayed_work(&usbc_data->vbus_hard_reset_work);
 			break;
 	case cc_SINK:
 			msg_maxim("ccstat : cc_SINK");
@@ -660,6 +796,7 @@ static void max77705_ccstat_irq_handler(void *data, int irq)
 			msg_maxim("ccstat : cc_SOURCE");
 			usbc_data->pd_data->cc_status = CC_SRC;
 			usbc_data->pn_flag = false;
+			usbc_data->srcccap_request_retry = false;
 #if defined(CONFIG_DUAL_ROLE_USB_INTF)
 			usbc_data->power_role = DUAL_ROLE_PROP_PR_SRC;
 			if (usbc_data->dual_role != NULL &&
@@ -691,6 +828,10 @@ static void max77705_ccstat_irq_handler(void *data, int irq)
 			msg_maxim("ccstat : cc_Audio_Accessory");
 			usbc_data->acc_type = CCIC_DOCK_UNSUPPORTED_AUDIO;
 			max77705_process_check_accessory(usbc_data);
+#ifdef CONFIG_USB_NOTIFY_PROC_LOG
+			event = NOTIFY_EXTRA_USB_ANALOGAUDIO;
+			store_usblog_notify(NOTIFY_EXTRA, (void *)&event, NULL);
+#endif
 			break;
 	case cc_Debug_Accessory:
 			msg_maxim("ccstat : cc_Debug_Accessory");

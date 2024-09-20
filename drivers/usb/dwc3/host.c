@@ -153,7 +153,7 @@ int dwc3_host_init(struct dwc3 *dwc)
 			  dev_name(dwc->dev));
 
 	if (phycon_base_addr == NULL)
-		phycon_base_addr = ioremap(0x131f0000, SZ_1K);
+		phycon_base_addr = ioremap(0x10c00000, SZ_1K);
 
 #ifdef CONFIG_SND_EXYNOS_USB_AUDIO
 	usb_audio = kmalloc(sizeof(struct exynos_usb_audio), GFP_KERNEL);

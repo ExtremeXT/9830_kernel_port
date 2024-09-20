@@ -168,6 +168,18 @@ u32 acpm_get_mifdn_count(void)
 }
 EXPORT_SYMBOL_GPL(acpm_get_mifdn_count);
 
+u32 acpm_get_apsocdn_total_count(void)
+{
+        return __raw_readl(flexpmu_dbg_base + (DATA_LINE * DID_SOC_COUNT) + DATA_IDX + 4);
+}
+EXPORT_SYMBOL_GPL(acpm_get_apsocdn_total_count);
+
+u32 acpm_get_apsocdn_sicd_count(void)
+{
+        return __raw_readl(flexpmu_dbg_base + (DATA_LINE * DID_AP_COUNT_SICD) + DATA_IDX + 4);
+}
+EXPORT_SYMBOL_GPL(acpm_get_apsocdn_sicd_count);
+
 u32 acpm_get_apsocdn_count(void)
 {
 	return __raw_readl(flexpmu_dbg_base + (DATA_LINE * DID_AP_COUNT_SLEEP) + DATA_IDX + 4);

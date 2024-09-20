@@ -387,7 +387,8 @@ static int __is_hw_3aa_change_sram_offset(struct is_hw_ip *hw_ip, int instance, 
 			if (target_w > offset[LIC_OFFSET_0])
 				offset[LIC_OFFSET_0] = target_w;
 		} else if (hw_ip->id == DEV_HW_3AA1) {
-			offset[LIC_OFFSET_0] = IS_MAX_HW_3AA_SRAM - target_w;
+			if (target_w > (IS_MAX_HW_3AA_SRAM - offset[LIC_OFFSET_0]))
+				offset[LIC_OFFSET_0] = IS_MAX_HW_3AA_SRAM - target_w;
 		}
 		break;
 	case SRAM_CFG_R:

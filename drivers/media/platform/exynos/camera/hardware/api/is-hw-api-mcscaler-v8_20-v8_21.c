@@ -1318,14 +1318,14 @@ void is_scaler_set_wdma_format(void __iomem *base_addr, u32 hw_id, u32 output_id
 		break;
 	}
 
-	if (out_fmt == MCSC_MONO_Y8) {
-		is_scaler_set_wdma_mono_ctrl(base_addr, output_id, out_fmt, true);
-		/* 1 plane : mono ctrl should be disabled */
-		is_scaler_set_wdma_yuv_format(base_addr, output_id, MCSC_YUV422_2P_UFIRST);
-	} else {
+	/* 1 plane : mono ctrl should be disabled */
+	if (plane == 1)
 		is_scaler_set_wdma_mono_ctrl(base_addr, output_id, out_fmt, false);
-		is_scaler_set_wdma_yuv_format(base_addr, output_id, out_fmt);
-	}
+	else if (out_fmt == MCSC_MONO_Y8)
+		is_scaler_set_wdma_mono_ctrl(base_addr, output_id, out_fmt, true);
+
+	is_scaler_set_wdma_yuv_format(base_addr, output_id, out_fmt);
+
 }
 
 void is_scaler_set_wdma_dither(void __iomem *base_addr, u32 output_id,
@@ -2061,7 +2061,6 @@ u32 is_scaler_get_lfro_mode_status(void __iomem *base_addr, u32 hw_id)
 u32 is_scaler_get_djag_strip_enable(void __iomem *base_addr, u32 output_id)
 {
 	/* not support */
-	return 0;
 }
 
 void is_scaler_set_djag_strip_enable(void __iomem *base_addr, u32 output_id, u32 enable)
@@ -2072,7 +2071,6 @@ void is_scaler_set_djag_strip_enable(void __iomem *base_addr, u32 output_id, u32
 u32 is_scaler_get_djag_out_crop_enable(void __iomem *base_addr, u32 output_id)
 {
 	/* not support */
-	return 0;
 }
 
 void is_scaler_set_djag_out_crop_enable(void __iomem *base_addr, u32 output_id, u32 enable, u32 pre_dst_h, u32 start_pos_h)
@@ -2099,7 +2097,6 @@ void is_scaler_set_djag_strip_config(void __iomem *base_addr, u32 output_id, u32
 u32 is_scaler_get_poly_strip_enable(void __iomem *base_addr, u32 output_id)
 {
 	/* not support */
-	return 0;
 }
 
 void is_scaler_set_poly_strip_enable(void __iomem *base_addr, u32 output_id, u32 enable)
@@ -2120,7 +2117,6 @@ void is_scaler_set_poly_strip_config(void __iomem *base_addr, u32 output_id, u32
 u32 is_scaler_get_poly_out_crop_enable(void __iomem *base_addr, u32 output_id)
 {
 	/* not support */
-	return 0;
 }
 
 void is_scaler_set_poly_out_crop_enable(void __iomem *base_addr, u32 output_id, u32 enable)
@@ -2142,7 +2138,6 @@ void is_scaler_set_poly_out_crop_size(void __iomem *base_addr, u32 output_id,
 u32 is_scaler_get_post_strip_enable(void __iomem *base_addr, u32 output_id)
 {
 	/* not support */
-	return 0;
 }
 
 void is_scaler_set_post_strip_enable(void __iomem *base_addr, u32 output_id, u32 enable)
@@ -2163,7 +2158,6 @@ void is_scaler_set_post_strip_config(void __iomem *base_addr, u32 output_id, u32
 u32 is_scaler_get_post_out_crop_enable(void __iomem *base_addr, u32 output_id)
 {
 	/* not support */
-	return 0;
 }
 
 void is_scaler_set_post_out_crop_enable(void __iomem *base_addr, u32 output_id, u32 enable)

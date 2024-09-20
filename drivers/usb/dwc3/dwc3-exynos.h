@@ -28,6 +28,13 @@ extern int dwc3_exynos_id_event(struct device *dev, int state);
 extern int dwc3_exynos_vbus_event(struct device *dev, bool vbus_active);
 extern int dwc3_exynos_start_ldo(struct device *dev, bool on);
 extern int dwc3_exynos_phy_enable(int owner, bool on);
+extern int dwc3_exynos_get_idle_ip_index(struct device *dev);
+extern int dwc3_exynos_set_bus_clock(struct device *dev, int clk_level);
 
+enum dwc3_phy_owner {
+	DWC3_PHY_OWNER_SELF =  0,
+	DWC3_PHY_OWNER_DP = 1,
+	DWC3_PHY_OWNER_EMEG = 8,
+};
 #endif /* __LINUX_USB_DWC3_EXYNOS_H */
 

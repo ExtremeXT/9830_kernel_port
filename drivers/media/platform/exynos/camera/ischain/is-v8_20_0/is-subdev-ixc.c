@@ -30,7 +30,6 @@ void is_ischain_ixc_stripe_cfg(struct is_subdev *subdev,
 	unsigned long flags;
 	u32 region_id = ldr_frame->stripe_info.region_id;
 	u32 stripe_w = 0, dma_offset = 0;
-	u32 scn_check_remosaic = 0;
 
 	framemgr = GET_SUBDEV_FRAMEMGR(subdev);
 	if (!framemgr)
@@ -45,9 +44,6 @@ void is_ischain_ixc_stripe_cfg(struct is_subdev *subdev,
 			framemgr_x_barrier_irqr(framemgr, FMGR_IDX_24, flags);
 			return;
 		}
-
-		scn_check_remosaic = CHK_MODECHANGE_SCN(ldr_frame->shot->ctl.aa.captureIntent);
-
 		/* Output crop & WDMA offset configuration */
 		if (!region_id) {
 			/* Left region */
@@ -58,31 +54,20 @@ void is_ischain_ixc_stripe_cfg(struct is_subdev *subdev,
 			/* Middle region */
 			stripe_w = ldr_frame->stripe_info.in.h_pix_num - frame->stripe_info.out.h_pix_num;
 			dma_offset = frame->stripe_info.out.h_pix_num;
-			if (scn_check_remosaic) {
-				dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE;
-				frame->stripe_info.out.h_pix_num += stripe_w;
-			} else {
-				dma_offset += STRIPE_MARGIN_WIDTH * ((2 * (region_id - 1)) + 1);
-				dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE * otcrop->h;
-				frame->stripe_info.out.h_pix_num += stripe_w;
-				stripe_w += STRIPE_MARGIN_WIDTH;
-			}
+			dma_offset += STRIPE_MARGIN_WIDTH * ((2 * (region_id - 1)) + 1);
+			dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE * otcrop->h;
+			frame->stripe_info.out.h_pix_num += stripe_w;
+			stripe_w += STRIPE_MARGIN_WIDTH;
 		} else {
 			/* Right region */
 			stripe_w = otcrop->w - frame->stripe_info.out.h_pix_num;
 			dma_offset = frame->stripe_info.out.h_pix_num;
-			if (scn_check_remosaic) {
-				dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE;
-				frame->stripe_info.out.h_pix_num += stripe_w;
-			} else {
-				dma_offset += STRIPE_MARGIN_WIDTH * ((2 * (region_id - 1)) + 1);
-				dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE * otcrop->h;
-				frame->stripe_info.out.h_pix_num += stripe_w;
-			}
+			dma_offset += STRIPE_MARGIN_WIDTH * ((2 * (region_id - 1)) + 1);
+			dma_offset *= fmt->bitsperpixel[0] / BITS_PER_BYTE * otcrop->h;
+			frame->stripe_info.out.h_pix_num += stripe_w;
 		}
 
-		if (!scn_check_remosaic)
-			stripe_w += STRIPE_MARGIN_WIDTH;
+		stripe_w += STRIPE_MARGIN_WIDTH;
 		otcrop->w = stripe_w;
 
 		frame->dvaddr_buffer[0] = frame->stripe_info.region_base_addr[0] + dma_offset;

@@ -15,6 +15,7 @@
 #include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
+#include <soc/samsung/exynos-devfreq.h>
 
 #include "npu-vs4l.h"
 #include "npu-device.h"
@@ -22,399 +23,167 @@
 #include "npu-system.h"
 #include "npu-qos.h"
 
-
-#ifdef CONFIG_ARCH_EXYNOS
-#if defined(CONFIG_SOC_EXYNOS9630)
-#define NPU_PM_QOS_NPU		(PM_QOS_NPU_THROUGHPUT)
-#define NPU_PM_QOS_DEFAULT_FREQ (533000)
-#define NPU_PM_NPU_MIN		(133000)
-#define NPU_PM_NPU_MAX		(800000)
-
-#define NPU_PM_QOS_DNC		(PM_QOS_DNC_THROUGHPUT)
-#define NPU_PM_QOS_DEFAULT_DNC_FREQ (533000)
-#define NPU_PM_DNC_MIN		(133000)
-#define NPU_PM_DNC_MAX		(800000)
-
-#define NPU_PM_QOS_MIF		(PM_QOS_BUS_THROUGHPUT)
-#define NPU_PM_MIF_MIN		(421000)
-#define NPU_PM_MIF_REQ		(1352000)
-#define NPU_PM_MIF_MAX		(2093000)
-
-#define NPU_PM_QOS_INT		(PM_QOS_DEVICE_THROUGHPUT)
-#define NPU_PM_INT_MIN		(133000)
-#define NPU_PM_INT_MAX		(666000)
-
-#define NPU_PM_CPU_CL0		(PM_QOS_CLUSTER0_FREQ_MIN)
-#define NPU_PM_CPU_CL0_MIN	(208000)
-#define NPU_PM_CPU_CL0_MAX	(1794000)
-
-#define NPU_PM_CPU_CL1		(PM_QOS_CLUSTER1_FREQ_MIN)
-#define NPU_PM_CPU_CL1_MIN	(377000)
-#define NPU_PM_CPU_CL1_MAX	(2210000)
-
-/* Not available for Neus */
-#if 0
-#define NPU_PM_CPU_CL2		(PM_QOS_CLUSTER2_FREQ_MIN)
-#define NPU_PM_CPU_CL2_MIN	(520000)
-#define NPU_PM_CPU_CL2_MAX	(2470000)
-#endif
-
-#define NPU_PM_CPU_ONLINE_MIN	0
-#define NPU_PM_CPU_ONLINE_MAX	7
-
-
-#else
-#undef NPU_PM_QOS_NPU
-#define NPU_PM_NPU_MIN		(133000)
-
-#undef NPU_PM_QOS_DNC
-#define NPU_PM_DNC_MIN		(133000)
-#endif
-#endif
-
-#define TEMP_BUF_SIZE	256
-
 static struct npu_qos_setting *qos_setting;
 static LIST_HEAD(qos_list);
-static int npu_sysfs_print(char *buf, size_t buf_sz, const char *fmt, ...)
+
+static struct npu_qos_freq_lock qos_lock;
+
+static ssize_t npu_show_attrs_qos_sysfs(struct device *dev,
+		struct device_attribute *attr, char *buf);
+static ssize_t npu_store_attrs_qos_sysfs(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count);
+static int npu_qos_sysfs_create(struct npu_system *system);
+
+static int npu_qos_max_notifier(struct notifier_block *nb,
+		unsigned long action, void *nb_data)
 {
-	int	strlen;
-	va_list	ap;
+	/* activate/deactivate peripheral DVFS */
+	npu_scheduler_activate_peripheral_dvfs(action);
 
-	va_start(ap, fmt);
-	strlen = vsnprintf(buf, buf_sz, fmt, ap);
-	va_end(ap);
+	/* reset all peripheral DVFS minlock */
+	pm_qos_update_request(&qos_setting->npu_qos_req_mif, 0);
+	pm_qos_update_request(&qos_setting->npu_qos_req_int, 0);
+	pm_qos_update_request(&qos_setting->npu_qos_req_cpu_cl0, 0);
+	pm_qos_update_request(&qos_setting->npu_qos_req_cpu_cl1, 0);
+	pm_qos_update_request(&qos_setting->npu_qos_req_cpu_cl2, 0);
 
-	return strlen;
+	qos_setting->req_mif_freq = 0;
+	qos_setting->req_int_freq = 0;
+	qos_setting->req_cl0_freq = 0;
+	qos_setting->req_cl1_freq = 0;
+	qos_setting->req_cl2_freq = 0;
+
+	return NOTIFY_DONE;
 }
 
-#define NPU_SYSFS_PRINT(buf, buf_size, tmp_buf, tmp_size, format, ...)	\
-	do {									\
-		tmp_size = npu_sysfs_print(tmp_buf, sizeof(tmp_buf),		\
-						format, ## __VA_ARGS__);	\
-		if ((buf_size + tmp_size + 1) > PAGE_SIZE)			\
-			goto exit;	/* no space */				\
-		strncat(buf, tmp_buf, tmp_size);				\
-		buf_size += tmp_size;						\
-	} while (0)
-
-
-static ssize_t npu_sysfs_show_qos(struct device *dev,
-		struct device_attribute *dev_attr, char *buf)
+static int npu_check_qos_dsp_min(void)
 {
-	struct device *dvfs_dev;
-	struct dev_pm_opp *opp;
-	ssize_t		buf_size = 0;
-	char		tmp_buf[256];
-	int		tmp_size;
-	unsigned long	freq = 0;
+	unsigned long dsp_freq;
 
-	buf[0] = 0;
-
-	if (!qos_setting) {
-		dev_warn(dev, "No qos_setting in device.\n");
-		goto exit;
+	/* use L0 even with DSP for typical mode */
+	if (qos_setting->info->mode == NPU_PERF_MODE_NPU_BOOST ||
+			qos_setting->info->mode == NPU_PERF_MODE_NPU_DN) {
+		npu_info("use L0 even with DSP L0 : mode %d\n", qos_setting->info->mode);
+		return NOTIFY_DONE;
 	}
 
-	dvfs_dev = &qos_setting->dvfs_npu_dev->dev;
+	/* check DSP minlock level */
+	if (!qos_setting->dsp_type ||
+			!qos_setting->dsp_max_freq ||
+			!qos_setting->npu_max_freq) {
+		npu_info("not correlated to DSP : type %d max_freq (dsp %d, npu %d)\n",
+				qos_setting->dsp_type,
+				qos_setting->dsp_max_freq,
+				qos_setting->npu_max_freq);
+		return NOTIFY_DONE;
+	}
 
-	NPU_SYSFS_PRINT(buf, buf_size, tmp_buf, tmp_size,
-			"# DVFS table:\n  ");
-	do {
-		opp = dev_pm_opp_find_freq_ceil(dvfs_dev, &freq);
-		if (IS_ERR(opp))
-			break;
+	dsp_freq = exynos_devfreq_get_domain_freq(qos_setting->dsp_type);
 
-		NPU_SYSFS_PRINT(buf, buf_size, tmp_buf, tmp_size,
-				"%lu%s%s ", freq,
-				(freq == qos_setting->current_freq_npu) ?
-				"(*)" : "",
-				(freq == qos_setting->request_freq_npu) ?
-				"(R)" : "");
-		freq++;
-		dev_pm_opp_put(opp);
-	} while (1);
-
-	NPU_SYSFS_PRINT(buf, buf_size, tmp_buf, tmp_size,
-			"\n\n# default: %d KHz / request: %d KHz / current: %d KHz\n\n",
-			qos_setting->default_freq_npu,
-			qos_setting->request_freq_npu, qos_setting->current_freq_npu);
-
-exit:
-	return buf_size;
+	if (dsp_freq >= qos_setting->dsp_max_freq) {
+		/* set NPU maxlock with DSP minlock */
+		pm_qos_update_request(&qos_setting->npu_qos_req_npu_max,
+				qos_setting->npu_max_freq);
+	} else {
+		/* release NPU maxlock with DSP minlock */
+		pm_qos_update_request(&qos_setting->npu_qos_req_npu_max,
+				PM_QOS_NPU_THROUGHPUT_MAX_DEFAULT_VALUE);
+	}
+	return NOTIFY_DONE;
 }
 
-static ssize_t npu_sysfs_set_qos(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+static int npu_qos_dsp_min_notifier(struct notifier_block *nb,
+		unsigned long action, void *nb_data)
 {
-	struct device *dvfs_dev;
-	struct dev_pm_opp *opp;
-	unsigned long freq = 0;
-	bool hit = false;
-	int  value, err;
-
-	err = kstrtoint(buf, 10, &value);
-	if (err) {
-		dev_err(dev, "only decimal value allowed (input: %s)\n", buf);
-		return count;
-	}
-
-	if (!qos_setting->dvfs_npu_dev) {
-		dev_warn(dev, "npu drivers does not connect with dvfs table\n");
-		return count;
-	}
-
-	dvfs_dev = &qos_setting->dvfs_npu_dev->dev;
-
-	do {
-		opp = dev_pm_opp_find_freq_ceil(dvfs_dev, &freq);
-		if (IS_ERR(opp))
-			break;
-
-		if (freq == (int)value) {
-			hit = true;
-			dev_pm_opp_put(opp);
-			break;
-		}
-		dev_pm_opp_put(opp);
-		freq++;
-
-	} while (1);
-
-	if (hit)
-		qos_setting->request_freq_npu = (s32)value;
-	else
-		dev_warn(dev, "fail to set qos_rate (req %d KHz) and (current %d KHz)\n",
-			value, qos_setting->current_freq_npu);
-
-	return count;
+	return npu_check_qos_dsp_min();
 }
-
-static DEVICE_ATTR(npu_qos_rate, 0644, npu_sysfs_show_qos, npu_sysfs_set_qos);
-static struct attribute *npu_qos_attributes[] = {
-	&dev_attr_npu_qos_rate.attr,
-	NULL,
-};
-
-static struct attribute_group npu_attr_group = {
-	.attrs = npu_qos_attributes,
-};
-
-static ssize_t dnc_sysfs_show_qos(struct device *dev,
-		struct device_attribute *dev_attr, char *buf)
-{
-	struct device *dvfs_dev;
-	struct dev_pm_opp *opp;
-	ssize_t		buf_size = 0;
-	char		tmp_buf[256];
-	int		tmp_size;
-	unsigned long	freq = 0;
-
-	buf[0] = 0;
-
-	if (!qos_setting) {
-		dev_warn(dev, "No qos_setting in device.\n");
-		goto exit;
-	}
-
-	dvfs_dev = &qos_setting->dvfs_dnc_dev->dev;
-
-	NPU_SYSFS_PRINT(buf, buf_size, tmp_buf, tmp_size,
-			"# DVFS table:\n  ");
-	do {
-		opp = dev_pm_opp_find_freq_ceil(dvfs_dev, &freq);
-		if (IS_ERR(opp))
-			break;
-
-		NPU_SYSFS_PRINT(buf, buf_size, tmp_buf, tmp_size,
-				"%lu%s%s ", freq,
-				(freq == qos_setting->current_freq_dnc) ?
-				"(*)" : "",
-				(freq == qos_setting->request_freq_dnc) ?
-				"(R)" : "");
-		freq++;
-		dev_pm_opp_put(opp);
-	} while (1);
-
-	NPU_SYSFS_PRINT(buf, buf_size, tmp_buf, tmp_size,
-			"\n\n# default: %d KHz / request: %d KHz / current: %d KHz\n\n",
-			qos_setting->default_freq_dnc,
-			qos_setting->request_freq_dnc, qos_setting->current_freq_dnc);
-
-exit:
-	return buf_size;
-}
-
-static ssize_t dnc_sysfs_set_qos(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct device *dvfs_dev;
-	struct dev_pm_opp *opp;
-	unsigned long freq = 0;
-	bool hit = false;
-	int  value, err;
-
-	err = kstrtoint(buf, 10, &value);
-	if (err) {
-		dev_err(dev, "only decimal value allowed (input: %s)\n", buf);
-		return count;
-	}
-
-	if (!qos_setting->dvfs_dnc_dev) {
-		dev_warn(dev, "dnc drivers does not connect with dvfs table\n");
-		return count;
-	}
-
-	dvfs_dev = &qos_setting->dvfs_dnc_dev->dev;
-
-	do {
-		opp = dev_pm_opp_find_freq_ceil(dvfs_dev, &freq);
-		if (IS_ERR(opp))
-			break;
-
-		if (freq == (int)value) {
-			hit = true;
-			dev_pm_opp_put(opp);
-			break;
-		}
-		dev_pm_opp_put(opp);
-		freq++;
-
-	} while (1);
-
-	if (hit)
-		qos_setting->request_freq_dnc = (s32)value;
-	else
-		dev_warn(dev, "fail to set qos_rate (req %d KHz) and (current %d KHz)\n",
-			value, qos_setting->current_freq_dnc);
-
-	return count;
-}
-
-static DEVICE_ATTR(dnc_qos_rate, 0644, dnc_sysfs_show_qos, dnc_sysfs_set_qos);
-static struct attribute *dnc_qos_attributes[] = {
-	&dev_attr_dnc_qos_rate.attr,
-	NULL,
-};
-
-static struct attribute_group dnc_attr_group = {
-	.attrs = dnc_qos_attributes,
-};
 
 int npu_qos_probe(struct npu_system *system)
 {
-	struct device *dev = &system->pdev->dev;
-	struct device_node *of_node = dev->of_node;
-	struct device_node *child_node;
-
 	qos_setting = &(system->qos_setting);
 
 	mutex_init(&qos_setting->npu_qos_lock);
 
-	/* parse dts and fill data */
-	child_node = of_parse_phandle(of_node, "dvfs-dev", 0);
-	qos_setting->dvfs_npu_dev = of_find_device_by_node(child_node);
-	if (!qos_setting->dvfs_npu_dev)
-		dev_warn(dev, "fail to get npu dvfs_dev\n");
-
-	child_node = of_parse_phandle(of_node, "dvfs-dev-dnc", 0);
-	qos_setting->dvfs_dnc_dev = of_find_device_by_node(child_node);
-	if (!qos_setting->dvfs_dnc_dev)
-		dev_warn(dev, "fail to get dnc dvfs_dev\n");
-
-
-	if (of_property_read_s32(of_node, "npu_default_qos_rate",
-				&qos_setting->default_freq_npu))
-		qos_setting->default_freq_npu = NPU_PM_NPU_MIN;
-
-	qos_setting->request_freq_npu = qos_setting->default_freq_npu;
-
-	if (of_property_read_s32(of_node, "dnc_default_qos_rate",
-				&qos_setting->default_freq_dnc))
-		qos_setting->default_freq_dnc = NPU_PM_DNC_MIN;
-
-	qos_setting->request_freq_dnc = qos_setting->default_freq_dnc;
-
 	/* qos add request(default_freq) */
-#ifdef NPU_PM_QOS_NPU
-	pm_qos_add_request(&qos_setting->npu_qos_req_dnc, NPU_PM_QOS_DNC, 0);
-	pm_qos_add_request(&qos_setting->npu_qos_req_npu, NPU_PM_QOS_NPU, 0);
-	pm_qos_add_request(&qos_setting->npu_qos_req_mif, NPU_PM_QOS_MIF, 0);
-	pm_qos_add_request(&qos_setting->npu_qos_req_int, NPU_PM_QOS_INT, 0);
+	pm_qos_add_request(&qos_setting->npu_qos_req_dnc, PM_QOS_DNC_THROUGHPUT, 0);
+	pm_qos_add_request(&qos_setting->npu_qos_req_npu, PM_QOS_NPU_THROUGHPUT, 0);
+	pm_qos_add_request(&qos_setting->npu_qos_req_mif, PM_QOS_BUS_THROUGHPUT, 0);
+	pm_qos_add_request(&qos_setting->npu_qos_req_int, PM_QOS_DEVICE_THROUGHPUT, 0);
 
-	pm_qos_add_request(&qos_setting->npu_qos_req_cpu_cl0, NPU_PM_CPU_CL0, 0);
-	pm_qos_add_request(&qos_setting->npu_qos_req_cpu_cl1, NPU_PM_CPU_CL1, 0);
-	//pm_qos_add_request(&qos_setting->npu_qos_req_cpu_cl2, NPU_PM_CPU_CL2, 0);
+	/* qos add request(max_freq) */
+	pm_qos_add_request(&qos_setting->npu_qos_req_dnc_max, PM_QOS_DNC_THROUGHPUT_MAX,
+						PM_QOS_DNC_THROUGHPUT_MAX_DEFAULT_VALUE);
+	pm_qos_add_request(&qos_setting->npu_qos_req_npu_max, PM_QOS_NPU_THROUGHPUT_MAX,
+						PM_QOS_NPU_THROUGHPUT_MAX_DEFAULT_VALUE);
+	pm_qos_add_request(&qos_setting->npu_qos_req_mif_max, PM_QOS_BUS_THROUGHPUT_MAX,
+						PM_QOS_BUS_THROUGHPUT_MAX_DEFAULT_VALUE);
+	pm_qos_add_request(&qos_setting->npu_qos_req_int_max, PM_QOS_DEVICE_THROUGHPUT_MAX,
+						PM_QOS_DEVICE_THROUGHPUT_MAX_DEFAULT_VALUE);
 
-	qos_setting->current_freq_dnc = qos_setting->default_freq_dnc;
-	qos_setting->current_freq_npu = qos_setting->default_freq_npu;
+	pm_qos_add_request(&qos_setting->npu_qos_req_cpu_cl0, PM_QOS_CLUSTER0_FREQ_MIN, 0);
+	pm_qos_add_request(&qos_setting->npu_qos_req_cpu_cl1, PM_QOS_CLUSTER1_FREQ_MIN, 0);
+	pm_qos_add_request(&qos_setting->npu_qos_req_cpu_cl2, PM_QOS_CLUSTER2_FREQ_MIN, 0);
 
-#else
-	qos_setting->default_freq_npu = NPU_PM_NPU_MIN;
-	qos_setting->current_freq_npu = NPU_PM_NPU_MIN;
-	qos_setting->default_freq_dnc = NPU_PM_DNC_MIN;
-	qos_setting->current_freq_dnc = NPU_PM_DNC_MIN;
-#endif
+	mutex_lock(&qos_setting->npu_qos_lock);
+	qos_setting->req_npu_freq = 0;
+	qos_setting->req_dnc_freq = 0;
+	qos_setting->req_int_freq = 0;
+	qos_setting->req_mif_freq = 0;
 	qos_setting->req_cl0_freq = 0;
 	qos_setting->req_cl1_freq = 0;
-//	qos_setting->req_cl2_freq = 0;
+	qos_setting->req_cl2_freq = 0;
+	qos_setting->req_mo_scen = 0;
+	qos_setting->req_cpu_aff = 0;
+	mutex_unlock(&qos_setting->npu_qos_lock);
 
-	sysfs_create_group(&dev->kobj, &dnc_attr_group);
-	sysfs_create_group(&dev->kobj, &npu_attr_group);
+	qos_lock.npu_freq_maxlock = PM_QOS_NPU_THROUGHPUT_MAX_DEFAULT_VALUE;
+	qos_lock.dnc_freq_maxlock = PM_QOS_DNC_THROUGHPUT_MAX_DEFAULT_VALUE;
+
+	qos_setting->npu_qos_max_nb.notifier_call = npu_qos_max_notifier;
+	pm_qos_add_notifier(PM_QOS_NPU_THROUGHPUT_MAX, &qos_setting->npu_qos_max_nb);
+
+	qos_setting->npu_qos_dsp_min_nb.notifier_call = npu_qos_dsp_min_notifier;
+	pm_qos_add_notifier(PM_QOS_DSP_THROUGHPUT, &qos_setting->npu_qos_dsp_min_nb);
+
+	if (npu_qos_sysfs_create(system)) {
+		npu_info("npu_qos_sysfs create failed\n");
+		return -1;
+	}
 
 	return 0;
 }
 
 int npu_qos_release(struct npu_system *system)
 {
-	struct device *dev = &system->pdev->dev;
-
-	sysfs_remove_group(&dev->kobj, &npu_attr_group);
-
 	return 0;
 }
 
-int npu_qos_start(struct npu_system *system)
+int npu_qos_open(struct npu_system *system)
 {
-	int cur_value;
-
 	BUG_ON(!system);
 
 	mutex_lock(&qos_setting->npu_qos_lock);
 
-	if (qos_setting->current_freq_npu != qos_setting->request_freq_npu)
-		qos_setting->current_freq_npu = qos_setting->request_freq_npu;
-#ifdef NPU_PM_QOS_NPU
-	if (qos_setting->req_npu_freq <= qos_setting->current_freq_npu)
-		pm_qos_update_request(&qos_setting->npu_qos_req_npu, qos_setting->current_freq_npu);
-#endif
-
-	if (qos_setting->current_freq_dnc != qos_setting->request_freq_dnc)
-		qos_setting->current_freq_dnc = qos_setting->request_freq_dnc;
-#ifdef NPU_PM_QOS_DNC
-	if (qos_setting->req_dnc_freq <= qos_setting->current_freq_dnc)
-		pm_qos_update_request(&qos_setting->npu_qos_req_dnc, qos_setting->current_freq_dnc);
-#endif
-
-	mutex_unlock(&qos_setting->npu_qos_lock);
-	cur_value = (s32)pm_qos_read_req_value(qos_setting->npu_qos_req_npu.pm_qos_class,
-		&qos_setting->npu_qos_req_npu);
-	npu_info("%s() npu_qos_rate_npu(%d)\n", __func__, cur_value);
-
-	cur_value = (s32)pm_qos_read_req_value(qos_setting->npu_qos_req_dnc.pm_qos_class,
-		&qos_setting->npu_qos_req_dnc);
-	npu_info("%s() npu_qos_rate_dnc(%d)\n", __func__, cur_value);
+	qos_setting->req_npu_freq = 0;
+	qos_setting->req_dnc_freq = 0;
+	qos_setting->req_int_freq = 0;
+	qos_setting->req_mif_freq = 0;
 	qos_setting->req_cl0_freq = 0;
 	qos_setting->req_cl1_freq = 0;
-//	qos_setting->req_cl2_freq = 0;
+	qos_setting->req_cl2_freq = 0;
+
+	// check for dsp even without any minlock request
+	npu_check_qos_dsp_min();
+
+	mutex_unlock(&qos_setting->npu_qos_lock);
+
 	return 0;
 }
 
-int npu_qos_stop(struct npu_system *system)
+int npu_qos_close(struct npu_system *system)
 {
 	struct list_head *pos, *q;
 	struct npu_session_qos_req *qr;
-	int cur_value;
 
 	BUG_ON(!system);
 
@@ -423,30 +192,41 @@ int npu_qos_stop(struct npu_system *system)
 	list_for_each_safe(pos, q, &qos_list) {
 		qr = list_entry(pos, struct npu_session_qos_req, list);
 		list_del(pos);
-		kfree(qr);
+		if (qr)
+			kfree(qr);
 	}
 	list_del_init(&qos_list);
 
-#ifdef NPU_PM_QOS_NPU
-	pm_qos_update_request(&qos_setting->npu_qos_req_dnc, NPU_PM_DNC_MIN);
-	pm_qos_update_request(&qos_setting->npu_qos_req_npu, NPU_PM_NPU_MIN);
+	pm_qos_update_request(&qos_setting->npu_qos_req_dnc, 0);
+	pm_qos_update_request(&qos_setting->npu_qos_req_npu, 0);
 	pm_qos_update_request(&qos_setting->npu_qos_req_mif, 0);
 	pm_qos_update_request(&qos_setting->npu_qos_req_int, 0);
 
+	pm_qos_update_request(&qos_setting->npu_qos_req_dnc_max,
+				PM_QOS_DNC_THROUGHPUT_MAX_DEFAULT_VALUE);
+	pm_qos_update_request(&qos_setting->npu_qos_req_npu_max,
+				PM_QOS_NPU_THROUGHPUT_MAX_DEFAULT_VALUE);
+	pm_qos_update_request(&qos_setting->npu_qos_req_mif_max,
+				PM_QOS_BUS_THROUGHPUT_MAX_DEFAULT_VALUE);
+	pm_qos_update_request(&qos_setting->npu_qos_req_int_max,
+				PM_QOS_DEVICE_THROUGHPUT_MAX_DEFAULT_VALUE);
+
 	pm_qos_update_request(&qos_setting->npu_qos_req_cpu_cl0, 0);
 	pm_qos_update_request(&qos_setting->npu_qos_req_cpu_cl1, 0);
-#endif
+	pm_qos_update_request(&qos_setting->npu_qos_req_cpu_cl2, 0);
+
 	qos_setting->req_npu_freq = 0;
-	mutex_unlock(&qos_setting->npu_qos_lock);
-	cur_value = (s32)pm_qos_read_req_value(qos_setting->npu_qos_req_npu.pm_qos_class,
-		&qos_setting->npu_qos_req_npu);
-	npu_info("%s() npu_qos_rate_npu(%d)\n", __func__, cur_value);
-
 	qos_setting->req_dnc_freq = 0;
-	cur_value = (s32)pm_qos_read_req_value(qos_setting->npu_qos_req_dnc.pm_qos_class,
-		&qos_setting->npu_qos_req_dnc);
-	npu_info("%s() npu_qos_rate_dnc(%d)\n", __func__, cur_value);
+	qos_setting->req_int_freq = 0;
+	qos_setting->req_mif_freq = 0;
+	qos_setting->req_cl0_freq = 0;
+	qos_setting->req_cl1_freq = 0;
+	qos_setting->req_cl2_freq = 0;
 
+	qos_lock.npu_freq_maxlock = PM_QOS_NPU_THROUGHPUT_MAX_DEFAULT_VALUE;
+	qos_lock.dnc_freq_maxlock = PM_QOS_DNC_THROUGHPUT_MAX_DEFAULT_VALUE;
+
+	mutex_unlock(&qos_setting->npu_qos_lock);
 
 	return 0;
 }
@@ -477,53 +257,129 @@ int __req_param_qos(int uid, __u32 nCategory, struct pm_qos_request *req, s32 ne
 	struct list_head *pos, *q;
 	struct npu_session_qos_req *qr;
 
+	//return 0;
 	//Check that same uid, and category whether already registered.
 	list_for_each_safe(pos, q, &qos_list) {
 		qr = list_entry(pos, struct npu_session_qos_req, list);
 		if ((qr->sessionUID == uid) && (qr->eCategory == nCategory)) {
-			cur_value = qr->req_freq;
-			npu_dbg("[U%u]Change Req Freq. category : %u, from freq : %d to %d\n",
-					uid, nCategory, cur_value, new_value);
-			list_del(pos);
-			qr->sessionUID = uid;
-			qr->req_freq = new_value;
-			qr->eCategory = nCategory;
-			list_add_tail(&qr->list, &qos_list);
-			rec_value = __update_freq_from_showcase(nCategory);
+			switch (nCategory) {
+			case NPU_S_PARAM_QOS_MO_SCEN_PRESET:
+				cur_value = qr->req_mo_scen;
+				npu_dbg("[U%u]Change Req MO scen. category : %u, from mo scen : %d to %d\n",
+						uid, nCategory, cur_value, new_value);
+				list_del(pos);
 
-			if (new_value > rec_value) {
-				pm_qos_update_request(req, new_value);
-				npu_dbg("[U%u]Changed Freq. category : %u, from freq : %d to %d\n",
-					uid, nCategory, cur_value, new_value);
-			} else {
-				pm_qos_update_request(req, rec_value);
-				npu_dbg("[U%u]Recovered Freq. category : %u, from freq : %d to %d\n",
-					uid, nCategory, cur_value, rec_value);
+				qr->sessionUID = uid;
+				qr->req_mo_scen = new_value;
+				qr->eCategory = nCategory;
+				list_add_tail(&qr->list, &qos_list);
+				bts_del_scenario(cur_value);
+				bts_add_scenario(qr->req_mo_scen);
+				return ret;
+			default:
+				cur_value = qr->req_freq;
+				npu_dbg("[U%u]Change Req Freq. category : %u, from freq : %d to %d\n",
+						uid, nCategory, cur_value, new_value);
+				list_del(pos);
+				qr->sessionUID = uid;
+				qr->req_freq = new_value;
+				qr->eCategory = nCategory;
+				list_add_tail(&qr->list, &qos_list);
+
+				rec_value = __update_freq_from_showcase(nCategory);
+
+				if (new_value > rec_value) {
+					pm_qos_update_request(req, new_value);
+					npu_dbg("[U%u]Changed Freq. category : %u, from freq : %d to %d\n",
+							uid, nCategory, cur_value, new_value);
+				} else {
+					pm_qos_update_request(req, rec_value);
+					npu_dbg("[U%u]Recovered Freq. category : %u, from freq : %d to %d\n",
+							uid, nCategory, cur_value, rec_value);
+				}
+				return ret;
 			}
-			return ret;
 		}
 	}
+
 	//No Same uid, and category. Add new item
 	qr = kmalloc(sizeof(struct npu_session_qos_req), GFP_KERNEL);
-	if (!qr) {
-		npu_err("memory alloc fail.\n");
+	if (!qr)
 		return -ENOMEM;
-	}
-	qr->sessionUID = uid;
-	qr->req_freq = new_value;
-	qr->eCategory = nCategory;
-	list_add_tail(&qr->list, &qos_list);
 
-	//If new_value is lager than current value, update the freq
-	cur_value = (s32)pm_qos_read_req_value(req->pm_qos_class, req);
-	npu_dbg("[U%u]New Freq. category : %u freq : %u\n",
-		qr->sessionUID, qr->eCategory, qr->req_freq);
-	if (cur_value < new_value) {
-		npu_dbg("[U%u]Update Freq. category : %u freq : %u\n",
-			qr->sessionUID, qr->eCategory, qr->req_freq);
-		pm_qos_update_request(req, new_value);
+	switch (nCategory) {
+	case NPU_S_PARAM_QOS_MO_SCEN_PRESET:
+		qr->sessionUID = uid;
+		qr->req_mo_scen = new_value;
+		qr->eCategory = nCategory;
+		list_add_tail(&qr->list, &qos_list);
+		bts_add_scenario(qr->req_mo_scen);
+		return ret;
+	default:
+		qr->sessionUID = uid;
+		qr->req_freq = new_value;
+		qr->eCategory = nCategory;
+		list_add_tail(&qr->list, &qos_list);
+
+		//If new_value is lager than current value, update the freq
+		cur_value = (s32)pm_qos_read_req_value(req->pm_qos_class, req);
+		npu_dbg("[U%u]New Freq. category : %u freq : %u\n",
+				qr->sessionUID, qr->eCategory, qr->req_freq);
+		if (cur_value < new_value) {
+			npu_dbg("[U%u]Update Freq. category : %u freq : %u\n",
+					qr->sessionUID, qr->eCategory, qr->req_freq);
+			pm_qos_update_request(req, new_value);
+		}
+		return ret;
 	}
-	return ret;
+}
+
+
+static s32 __is_preset_from_showcase(void)
+{
+	struct list_head *pos, *q;
+	struct npu_session_qos_req *qr;
+
+	list_for_each_safe(pos, q, &qos_list) {
+		qr = list_entry(pos, struct npu_session_qos_req, list);
+		switch (qr->eCategory) {
+		case NPU_S_PARAM_QOS_NPU_PRESET:
+		case NPU_S_PARAM_QOS_DNC_PRESET:
+		case NPU_S_PARAM_QOS_MIF_PRESET:
+		case NPU_S_PARAM_QOS_INT_PRESET:
+		case NPU_S_PARAM_QOS_CL0_PRESET:
+		case NPU_S_PARAM_QOS_CL1_PRESET:
+		case NPU_S_PARAM_QOS_CL2_PRESET:
+		case NPU_S_PARAM_QOS_MO_SCEN_PRESET:
+		case NPU_S_PARAM_QOS_CPU_AFF_PRESET:
+			if (qr->req_freq > 0)
+				return 1;
+			break;
+		default:
+			break;
+		}
+	}
+
+	return 0;
+}
+
+static bool npu_qos_preset_is_valid_value(int value)
+{
+	if (value >= 0)
+		return true;
+
+	if (value == NPU_QOS_DEFAULT_VALUE)
+		return true;
+
+	return false;
+}
+
+static s32 npu_qos_preset_get_req_value(int value)
+{
+	if (value == NPU_QOS_DEFAULT_VALUE)
+		return 0;
+	else
+		return value;
 }
 
 npu_s_param_ret npu_qos_param_handler(struct npu_session *sess, struct vs4l_param *param, int *retval)
@@ -531,65 +387,272 @@ npu_s_param_ret npu_qos_param_handler(struct npu_session *sess, struct vs4l_para
 	BUG_ON(!sess);
 	BUG_ON(!param);
 
+	npu_info("uid:%u category:%u offset:%u\n", sess->uid, param->target, param->offset);
+
 	mutex_lock(&qos_setting->npu_qos_lock);
 
 	switch (param->target) {
 	case NPU_S_PARAM_QOS_DNC:
 		qos_setting->req_dnc_freq = param->offset;
-		//Set minimum safe clock as default  to avoid NDONE
-		if (qos_setting->req_dnc_freq < qos_setting->default_freq_dnc)
-			qos_setting->req_dnc_freq = qos_setting->default_freq_dnc;
 		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_dnc,
 					qos_setting->req_dnc_freq);
-
-		mutex_unlock(&qos_setting->npu_qos_lock);
-		return S_PARAM_HANDLED;
+		goto ok_exit;
 
 	case NPU_S_PARAM_QOS_NPU:
 		qos_setting->req_npu_freq = param->offset;
-		//Set minimum safe clock as default  to avoid NDONE
-		if (qos_setting->req_npu_freq < qos_setting->default_freq_npu)
-			qos_setting->req_npu_freq = qos_setting->default_freq_npu;
-		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_npu, qos_setting->req_npu_freq);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_npu,
+				qos_setting->req_npu_freq);
+		goto ok_exit;
 
-		mutex_unlock(&qos_setting->npu_qos_lock);
-		return S_PARAM_HANDLED;
 	case NPU_S_PARAM_QOS_MIF:
 		qos_setting->req_mif_freq = param->offset;
-		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_mif, qos_setting->req_mif_freq);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_mif,
+				qos_setting->req_mif_freq);
+		goto ok_exit;
 
-		mutex_unlock(&qos_setting->npu_qos_lock);
-		return S_PARAM_HANDLED;
 	case NPU_S_PARAM_QOS_INT:
 		qos_setting->req_int_freq = param->offset;
-		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_int, qos_setting->req_int_freq);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_int,
+				qos_setting->req_int_freq);
+		goto ok_exit;
 
-		mutex_unlock(&qos_setting->npu_qos_lock);
-		return S_PARAM_HANDLED;
+	case NPU_S_PARAM_QOS_DNC_MAX:
+		qos_setting->req_dnc_freq = param->offset;
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_dnc_max,
+					qos_setting->req_dnc_freq);
+		goto ok_exit;
+
+	case NPU_S_PARAM_QOS_NPU_MAX:
+		qos_setting->req_npu_freq = param->offset;
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_npu_max,
+				qos_setting->req_npu_freq);
+		goto ok_exit;
+
+	case NPU_S_PARAM_QOS_MIF_MAX:
+		qos_setting->req_mif_freq = param->offset;
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_mif_max,
+				qos_setting->req_mif_freq);
+		goto ok_exit;
+
+	case NPU_S_PARAM_QOS_INT_MAX:
+		qos_setting->req_int_freq = param->offset;
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_int_max,
+				qos_setting->req_int_freq);
+		goto ok_exit;
+
 	case NPU_S_PARAM_QOS_CL0:
 		qos_setting->req_cl0_freq = param->offset;
-		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_cpu_cl0, qos_setting->req_cl0_freq);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_cpu_cl0,
+				qos_setting->req_cl0_freq);
+		goto ok_exit;
 
-		mutex_unlock(&qos_setting->npu_qos_lock);
-		return S_PARAM_HANDLED;
 	case NPU_S_PARAM_QOS_CL1:
 		qos_setting->req_cl1_freq = param->offset;
-		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_cpu_cl1, qos_setting->req_cl1_freq);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_cpu_cl1,
+				qos_setting->req_cl1_freq);
+		goto ok_exit;
 
-		mutex_unlock(&qos_setting->npu_qos_lock);
-		return S_PARAM_HANDLED;
-/*
- *	case NPU_S_PARAM_QOS_CL2:
- *		qos_setting->req_cl2_freq = param->offset;
- *		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_cpu_cl2, qos_setting->req_cl2_freq);
- *
- *		mutex_unlock(&qos_setting->npu_qos_lock);
- *		return S_PARAM_HANDLED;
-*/
+	case NPU_S_PARAM_QOS_CL2:
+		qos_setting->req_cl2_freq = param->offset;
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_cpu_cl2,
+				qos_setting->req_cl2_freq);
+		goto ok_exit;
+
+	case NPU_S_PARAM_QOS_NPU_PRESET:
+		if (!npu_qos_preset_is_valid_value(param->offset))
+			goto ok_preset_exit;
+
+		qos_setting->req_npu_freq =
+			npu_qos_preset_get_req_value(param->offset);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_npu,
+				qos_setting->req_npu_freq);
+		goto ok_preset_exit;
+
+	case NPU_S_PARAM_QOS_DNC_PRESET:
+		if (!npu_qos_preset_is_valid_value(param->offset))
+			goto ok_preset_exit;
+
+		qos_setting->req_dnc_freq =
+			npu_qos_preset_get_req_value(param->offset);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_dnc,
+				qos_setting->req_dnc_freq);
+		goto ok_preset_exit;
+
+	case NPU_S_PARAM_QOS_MIF_PRESET:
+		if (!npu_qos_preset_is_valid_value(param->offset))
+			goto ok_preset_exit;
+
+		qos_setting->req_mif_freq =
+			npu_qos_preset_get_req_value(param->offset);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_mif,
+				qos_setting->req_mif_freq);
+		goto ok_preset_exit;
+
+	case NPU_S_PARAM_QOS_INT_PRESET:
+		if (!npu_qos_preset_is_valid_value(param->offset))
+			goto ok_preset_exit;
+
+		qos_setting->req_int_freq =
+			npu_qos_preset_get_req_value(param->offset);
+		__req_param_qos(sess->uid, param->target,
+				&qos_setting->npu_qos_req_int,
+				qos_setting->req_int_freq);
+		goto ok_preset_exit;
+
+	case NPU_S_PARAM_QOS_CL0_PRESET:
+		if (!npu_qos_preset_is_valid_value(param->offset))
+			goto ok_preset_exit;
+
+		qos_setting->req_cl0_freq = npu_qos_preset_get_req_value(param->offset);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_cpu_cl0,
+				qos_setting->req_cl0_freq);
+		goto ok_preset_exit;
+
+	case NPU_S_PARAM_QOS_CL1_PRESET:
+		if (!npu_qos_preset_is_valid_value(param->offset))
+			goto ok_preset_exit;
+
+		qos_setting->req_cl1_freq = npu_qos_preset_get_req_value(param->offset);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_cpu_cl1,
+				qos_setting->req_cl1_freq);
+		goto ok_preset_exit;
+
+	case NPU_S_PARAM_QOS_CL2_PRESET:
+		if (!npu_qos_preset_is_valid_value(param->offset))
+			goto ok_preset_exit;
+
+		qos_setting->req_cl2_freq = npu_qos_preset_get_req_value(param->offset);
+		__req_param_qos(sess->uid, param->target, &qos_setting->npu_qos_req_cpu_cl2,
+				qos_setting->req_cl2_freq);
+		goto ok_preset_exit;
+
+	case NPU_S_PARAM_QOS_MO_SCEN_PRESET:
+		if (!npu_qos_preset_is_valid_value(param->offset))
+			goto ok_preset_exit;
+
+		qos_setting->req_mo_scen = npu_qos_preset_get_req_value(param->offset);
+		__req_param_qos(sess->uid, param->target, NULL, qos_setting->req_mo_scen);
+		goto ok_preset_exit;
+
+	case NPU_S_PARAM_QOS_CPU_AFF_PRESET:
+		if (!npu_qos_preset_is_valid_value(param->offset))
+			goto ok_preset_exit;
+
+		qos_setting->req_cpu_aff = param->offset;
+		/* To be implemented */
+		goto ok_preset_exit;
+
 	case NPU_S_PARAM_CPU_AFF:
 	case NPU_S_PARAM_QOS_RST:
 	default:
 		mutex_unlock(&qos_setting->npu_qos_lock);
 		return S_PARAM_NOMB;
 	}
+
+ok_preset_exit:
+	if (__is_preset_from_showcase())
+		npu_scheduler_disable(qos_setting->info);
+	else
+		npu_scheduler_enable(qos_setting->info);
+ok_exit:
+	mutex_unlock(&qos_setting->npu_qos_lock);
+	return S_PARAM_HANDLED;
+}
+
+static struct device_attribute npu_qos_sysfs_attr[] = {
+	__ATTR(npu_freq_maxlock, 0664,
+		npu_show_attrs_qos_sysfs,
+		npu_store_attrs_qos_sysfs),
+	__ATTR(dnc_freq_maxlock, 0664,
+		npu_show_attrs_qos_sysfs,
+		npu_store_attrs_qos_sysfs),
+};
+
+static struct attribute *npu_qos_sysfs_entries[] = {
+	&npu_qos_sysfs_attr[0].attr,
+	&npu_qos_sysfs_attr[1].attr,
+	NULL,
+};
+
+static struct attribute_group npu_qos_attr_group = {
+	.name = "qos_freq",
+	.attrs = npu_qos_sysfs_entries,
+};
+enum {
+	NPU_QOS_NPU_FREQ_MAXLOCK = 0,
+	NPU_QOS_DNC_FREQ_MAXLOCK,
+	NPU_QOS_MIF_FREQ_ATTR_NUM,
+};
+
+static ssize_t npu_show_attrs_qos_sysfs(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int i = 0;
+	const ptrdiff_t offset = attr - npu_qos_sysfs_attr;
+
+	switch (offset) {
+	case NPU_QOS_NPU_FREQ_MAXLOCK:
+		i += scnprintf(buf + i, PAGE_SIZE - i, "%u\n",
+				qos_lock.npu_freq_maxlock);
+		break;
+	case NPU_QOS_DNC_FREQ_MAXLOCK:
+		i += scnprintf(buf + i, PAGE_SIZE - i, "%u\n",
+				qos_lock.dnc_freq_maxlock);
+		break;
+
+	default:
+		break;
+	}
+
+	return i;
+}
+
+static ssize_t npu_store_attrs_qos_sysfs(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	int ret = 0, value = 0;
+	const ptrdiff_t offset = attr - npu_qos_sysfs_attr;
+
+	ret = sscanf(buf, "%d", &value);
+	if (ret > 0) {
+		switch (offset) {
+		case NPU_QOS_NPU_FREQ_MAXLOCK:
+			qos_lock.npu_freq_maxlock = (u32)value;
+			pm_qos_update_request(&qos_setting->npu_qos_req_npu_max,
+									value);
+			ret = count;
+			break;
+		case NPU_QOS_DNC_FREQ_MAXLOCK:
+			qos_lock.dnc_freq_maxlock = (u32)value;
+			pm_qos_update_request(&qos_setting->npu_qos_req_dnc_max,
+									value);
+			ret = count;
+			break;
+		default:
+			break;
+		}
+	}
+
+	return ret;
+}
+
+static int npu_qos_sysfs_create(struct npu_system *system)
+{
+	int ret = 0;
+	struct npu_device *device;
+
+	BUG_ON(!system);
+
+	device = container_of(system, struct npu_device, system);
+
+	probe_info("npu qos-sysfs create\n");
+	probe_info("creating sysfs group %s\n", npu_qos_attr_group.name);
+
+	ret = sysfs_create_group(&device->dev->kobj, &npu_qos_attr_group);
+	if (ret) {
+		probe_err("failed to create sysfs for %s\n",
+						npu_qos_attr_group.name);
+	}
+
+	return ret;
 }

@@ -38,8 +38,9 @@
 #include "is-dt.h"
 #include "is-cis-3m5.h"
 #include "is-cis-3m5-setA.h"
+#if 0
 #include "is-cis-3m5-setB.h"
-
+#endif
 #include "is-helper-i2c.h"
 #ifdef CAMERA_REAR2_SENSOR_SHIFT_CROP
 #include "is-sec-define.h"
@@ -57,15 +58,61 @@ static const u32 *sensor_3m5_setfile_sizes;
 static const struct sensor_pll_info_compact **sensor_3m5_pllinfos;
 static u32 sensor_3m5_max_setfile_num;
 
-static const u32 *sensor_3m5_dualsync_master;
-static u32 sensor_3m5_dualsync_master_size;
 static const u32 *sensor_3m5_dualsync_slave;
 static u32 sensor_3m5_dualsync_slave_size;
 
 #ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+static const struct cam_mipi_sensor_mode *sensor_3m5_mipi_sensor_mode;
+static u32 sensor_3m5_mipi_sensor_mode_size;
+static const int *sensor_3m5_verify_sensor_mode;
+static int sensor_3m5_verify_sensor_mode_size;
+#ifdef CAMERA_REAR2_SENSOR_SHIFT_CROP
+static struct is_efs_info efs_info;
+#endif
+
 static int sensor_3m5_cis_set_mipi_clock(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
+	struct is_cis *cis = NULL;
+	const struct cam_mipi_sensor_mode *cur_mipi_sensor_mode;
+	int mode = 0;
+
+	FIMC_BUG(!subdev);
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+
+	FIMC_BUG(!cis);
+	FIMC_BUG(!cis->cis_data);
+
+	mode = cis->cis_data->sens_config_index_cur;
+
+	dbg_sensor(1, "%s : mipi_clock_index_cur(%d), new(%d)\n", __func__,
+		cis->mipi_clock_index_cur, cis->mipi_clock_index_new);
+
+	if (mode >= sensor_3m5_mipi_sensor_mode_size) {
+		err("sensor mode is out of bound");
+		return -1;
+	}
+
+	if (cis->mipi_clock_index_cur != cis->mipi_clock_index_new
+		&& cis->mipi_clock_index_new >= 0) {
+		cur_mipi_sensor_mode = &sensor_3m5_mipi_sensor_mode[mode];
+
+		if (cur_mipi_sensor_mode->sensor_setting == NULL) {
+			dbg_sensor(1, "no mipi setting for current sensor mode\n");
+		} else if (cis->mipi_clock_index_new < cur_mipi_sensor_mode->sensor_setting_size) {
+			info("%s: change mipi clock [%d %d]\n", __func__, mode, cis->mipi_clock_index_new);
+			sensor_cis_set_registers(subdev,
+				cur_mipi_sensor_mode->sensor_setting[cis->mipi_clock_index_new].setting,
+				cur_mipi_sensor_mode->sensor_setting[cis->mipi_clock_index_new].setting_size);
+
+			cis->mipi_clock_index_cur = cis->mipi_clock_index_new;
+		} else {
+			err("sensor setting index is out of bound %d %d",
+				cis->mipi_clock_index_new, cur_mipi_sensor_mode->sensor_setting_size);
+		}
+	}
+
 	return ret;
 }
 #endif
@@ -75,16 +122,12 @@ static void sensor_3m5_set_integration_max_margin(u32 mode, cis_shared_data *cis
 	FIMC_BUG_VOID(!cis_data);
 
 	switch (mode) {
-		case SENSOR_3M5_4032X3024_30FPS:
-		case SENSOR_3M5_4032X2268_30FPS:
-		case SENSOR_3M5_3024X3024_30FPS:
-		case SENSOR_3M5_4032X1960_30FPS:
-		case SENSOR_3M5_4032X1908_30FPS:
-		case SENSOR_3M5_1920X1080_60FPS:
+		case SENSOR_3M5_4000X3000_30FPS:
+		case SENSOR_3M5_4000X2252_30FPS:
+		case SENSOR_3M5_2000x1128_30FPS:
+		case SENSOR_3M5_2000x1500_30FPS:
+		case SENSOR_3M5_1504x1504_30FPS:
 		case SENSOR_3M5_1344X756_120FPS:
-		case SENSOR_3M5_2016X1512_30FPS:
-		case SENSOR_3M5_1504X1504_30FPS:
-		case SENSOR_3M5_2016X1134_30FPS:
 			cis_data->max_margin_coarse_integration_time = SENSOR_3M5_COARSE_INTEGRATION_TIME_MAX_MARGIN;
 			dbg_sensor(1, "max_margin_coarse_integration_time(%d)\n",
 				cis_data->max_margin_coarse_integration_time);
@@ -240,10 +283,13 @@ int sensor_3m5_cis_init(struct v4l2_subdev *subdev)
 	cis->cis_data->cur_height = SENSOR_3M5_MAX_HEIGHT;
 	cis->cis_data->low_expo_start = 33000;
 	cis->need_mode_change = false;
+	cis->cis_data->cur_pattern_mode = SENSOR_TEST_PATTERN_MODE_OFF;
 #ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
 	cis->mipi_clock_index_cur = CAM_MIPI_NOT_INITIALIZED;
 	cis->mipi_clock_index_new = CAM_MIPI_NOT_INITIALIZED;
 #endif
+	cis->long_term_mode.sen_strm_off_on_step = 0;
+	cis->long_term_mode.sen_strm_off_on_enable = false;
 
 	sensor_3m5_cis_data_calculation(sensor_3m5_pllinfos[setfile_index], cis->cis_data);
 	sensor_3m5_set_integration_max_margin(setfile_index, cis->cis_data);
@@ -303,33 +349,74 @@ int sensor_3m5_cis_log_status(struct v4l2_subdev *subdev)
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 
 	pr_info("[%s] *******************************\n", __func__);
+	/* 4000 page */
 	ret = is_sensor_read16(client, 0x0000, &data16);
-	if (unlikely(!ret)) pr_info("model_id(0x%x)\n", data16);
-	else goto i2c_err;
+	if (unlikely(!ret)) pr_info("model_id(0x%x)\n", data16); else goto i2c_err;
 	ret = is_sensor_read8(client, 0x0002, &data8);
-	if (unlikely(!ret)) pr_info("revision_number(0x%x)\n", data8);
-	else goto i2c_err;
+	if (unlikely(!ret)) pr_info("revision_number(0x%x)\n", data8); else goto i2c_err;
 	ret = is_sensor_read8(client, 0x0005, &data8);
-	if (unlikely(!ret)) pr_info("frame_count(0x%x)\n", data8);
-	else goto i2c_err;
+	if (unlikely(!ret)) pr_info("frame_count(0x%x)\n", data8); else goto i2c_err;
 	ret = is_sensor_read8(client, 0x0100, &data8);
-	if (unlikely(!ret)) pr_info("0x0100(0x%x)\n", data8);
-	else goto i2c_err;
+	if (unlikely(!ret)) pr_info("0x0100(0x%x)\n", data8); else goto i2c_err;
 	ret = is_sensor_read16(client, 0x0136, &data16);
-	if (unlikely(!ret)) pr_info("0x0136(0x%x)\n", data16);
-	else goto i2c_err;
+	if (unlikely(!ret)) pr_info("0x0136(0x%x)\n", data16); else goto i2c_err;
 	ret = is_sensor_read16(client, 0x0202, &data16);
-	if (unlikely(!ret)) pr_info("0x0202(0x%x)\n", data16);
-	else goto i2c_err;
+	if (unlikely(!ret)) pr_info("0x0202(0x%x)\n", data16); else goto i2c_err;
 	ret = is_sensor_read16(client, 0x0204, &data16);
-	if (unlikely(!ret)) pr_info("0x0204(0x%x)\n", data16);
-	else goto i2c_err;
+	if (unlikely(!ret)) pr_info("0x0204(0x%x)\n", data16); else goto i2c_err;
 	ret = is_sensor_read16(client, 0x0340, &data16);
-	if (unlikely(!ret)) pr_info("0x0340(0x%x)\n", data16);
-	else goto i2c_err;
+	if (unlikely(!ret)) pr_info("0x0340(0x%x)\n", data16); else goto i2c_err;
 	ret = is_sensor_read8(client, 0x3000, &data8);
-	if (unlikely(!ret)) pr_info("0x3000(0x%x)\n", data8);
-	else goto i2c_err;
+	if (unlikely(!ret)) pr_info("0x3000(0x%x)\n", data8); else goto i2c_err;
+	ret = is_sensor_read16(client, 0x0700, &data16);
+	if (unlikely(!ret)) pr_info("0x0700(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_read16(client, 0x0702, &data16);
+	if (unlikely(!ret)) pr_info("0x0702(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_read16(client, 0x0704, &data16);
+	if (unlikely(!ret)) pr_info("0x0704(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_read16(client, 0x0806, &data16);
+	if (unlikely(!ret)) pr_info("0x0806(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_read16(client, 0x0808, &data16);
+	if (unlikely(!ret)) pr_info("0x0808(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_read16(client, 0x080A, &data16);
+	if (unlikely(!ret)) pr_info("0x080A(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_read16(client, 0x0B30, &data16);
+	if (unlikely(!ret)) pr_info("0x0B30(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_read16(client, 0x0B36, &data16);
+	if (unlikely(!ret)) pr_info("0x0B36(0x%x)\n", data16); else goto i2c_err;
+	/* 2000 page */
+	ret = is_sensor_write16(client, 0x602C, 0x2000);
+	if (unlikely(!ret)) pr_info("0x2000 page\n"); else goto i2c_err;
+	ret = is_sensor_write16(client, 0x602E, 0x3510);
+	ret |= is_sensor_read16(client, 0x6F12, &data16);
+	if (unlikely(!ret)) pr_info("0x3510(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_write16(client, 0x602E, 0x3512);
+	ret |= is_sensor_read16(client, 0x6F12, &data16);
+	if (unlikely(!ret)) pr_info("0x3512(0x%x)\n", data16);	else goto i2c_err;
+	ret = is_sensor_write16(client, 0x602E, 0x3514);
+	ret |= is_sensor_read16(client, 0x6F12, &data16);
+	if (unlikely(!ret)) pr_info("0x3514(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_write16(client, 0x602E, 0x3516);
+	ret |= is_sensor_read16(client, 0x6F12, &data16);
+	if (unlikely(!ret)) pr_info("0x3516(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_write16(client, 0x602E, 0x3518);
+	ret |= is_sensor_read16(client, 0x6F12, &data16);
+	if (unlikely(!ret)) pr_info("0x3518(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_write16(client, 0x602E, 0x351A);
+	ret |= is_sensor_read16(client, 0x6F12, &data16);
+	if (unlikely(!ret)) pr_info("0x351A(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_write16(client, 0x602E, 0x351C);
+	ret |= is_sensor_read16(client, 0x6F12, &data16);
+	if (unlikely(!ret)) pr_info("0x351C(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_write16(client, 0x602E, 0x351E);
+	ret |= is_sensor_read16(client, 0x6F12, &data16);
+	if (unlikely(!ret)) pr_info("0x351E(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_write16(client, 0x602E, 0x3520);
+	ret |= is_sensor_read16(client, 0x6F12, &data16);
+	if (unlikely(!ret)) pr_info("0x3520(0x%x)\n", data16); else goto i2c_err;
+	ret = is_sensor_write16(client, 0x602E, 0x2BC0);
+	ret |= is_sensor_read16(client, 0x6F12, &data16);
+	if (unlikely(!ret)) pr_info("0x2BC0(0x%x)\n", data16); else goto i2c_err;
 	pr_info("[%s] *******************************\n", __func__);
 
 i2c_err:
@@ -433,12 +520,6 @@ p_err:
 }
 
 #ifdef CAMERA_REAR2_SENSOR_SHIFT_CROP
-/* #define TEST_SHIFT_CROP */
-
-#ifdef TEST_SHIFT_CROP
-int test_crop_num = 1;
-#endif
-
 int sensor_3m5_cis_update_crop_region(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
@@ -446,18 +527,16 @@ int sensor_3m5_cis_update_crop_region(struct v4l2_subdev *subdev)
 	u16 y_start = 0;
 	u16 x_end = 0;
 	u16 y_end = 0;
-	u8 dummy_flag = 0;
-	u8 crop_num = 0;
 	char *cal_buf;
 	struct is_cis *cis = NULL;
 	struct i2c_client *client;
 	struct is_device_sensor *device;
-	int16_t crop[10][2] = {
-		{  0, -16},
-		{-64, -48}, { 0, -48}, {64, -48},
-		{-64, -16}, { 0, -16}, {64, -16},
-		{-64,  48}, { 0,  48}, {64,  48},
-	};
+	s16 delta_x, delta_y;
+	struct is_rom_info *finfo = NULL;
+	u8 *buf = NULL;
+	long efs_size = 0;
+	int rom_id = 0;
+	s16 temp_delta = 0;
 
 	device = (struct is_device_sensor *)v4l2_get_subdev_hostdata(subdev);
 	if (device == NULL) {
@@ -475,50 +554,133 @@ int sensor_3m5_cis_update_crop_region(struct v4l2_subdev *subdev)
 		return -1;
 	}
 
-	if (device->cfg->mode == SENSOR_3M5_1344X756_120FPS) {
-		warn("skip tele shift in fast ae sensor mode");
+	if (device->cfg->mode == SENSOR_3M5_1344X756_120FPS
+		|| device->cfg->mode == SENSOR_3M5_2000x1128_30FPS
+		|| device->cfg->mode == SENSOR_3M5_2000x1500_30FPS
+		|| device->cfg->mode == SENSOR_3M5_1504x1504_30FPS) {
+		warn("skip crop shift in fast ae sensor or binning mode");
 		return 0;
 	}
 
-	is_sec_get_cal_buf(&cal_buf, ROM_ID_REAR);
+	rom_id = is_vendor_get_rom_id_from_position(device->position);
+	is_sec_get_cal_buf(&cal_buf, rom_id);
+	is_sec_get_sysfs_finfo(&finfo, rom_id);
 
-	dummy_flag = cal_buf[ROM_REAR3_FLAG_DUMMY_ADDR];
-	crop_num = cal_buf[ROM_REAR3_IMAGE_CROP_NUM_ADDR];
-
-	info("[%s] dummy_flag[%x], crop_num[%x]", __func__, dummy_flag, crop_num);
-
-	if (dummy_flag == 7 && (crop_num >= 1 && crop_num <= 9)) { /* Get a crop shift num from cal data */
-		cis->cis_data->sensor_shifted_num = crop_num;
-	} else if (dummy_flag == 4)  { /* Map to a fixed crop shiift num */
-		crop_num = FIXED_SENSOR_CROP_SHIFT_NUM;
-		cis->cis_data->sensor_shifted_num = crop_num;
-	} else { /* Invalid cal data. Contrast AF only */
-		cis->cis_data->sensor_shifted_num = 0;
-	}
-
-	if (cis->cis_data->sensor_shifted_num == 0) {
+	buf = vmalloc(MAX_EFS_DATA_LENGTH);
+	if (!buf) {
+		err("memory alloc failed.");
 		return 0;
 	}
+
+	efs_size = is_vender_read_efs(CROP_SHIFT_VALUE_FROM_EFS, buf, MAX_EFS_DATA_LENGTH);
+	if (efs_size) {
+		efs_info.crop_shift_delta_x = *((s16 *)&buf[CROP_SHIFT_ADDR_X]);
+		efs_info.crop_shift_delta_y = *((s16 *)&buf[CROP_SHIFT_ADDR_Y]);
+		set_bit(IS_EFS_STATE_READ, &efs_info.efs_state);
+	} else {
+		clear_bit(IS_EFS_STATE_READ, &efs_info.efs_state);
+	}
+
+	if (buf)
+		vfree(buf);
+
+	if (!test_bit(IS_EFS_STATE_READ, &efs_info.efs_state)) {
+		delta_x = *((s16 *)&cal_buf[finfo->rom_dualcal_slave1_cropshift_x_addr]);
+		delta_y = *((s16 *)&cal_buf[finfo->rom_dualcal_slave1_cropshift_y_addr]);
+		info("[%s] Read from eeprom. delta_x[%d], delta_y[%d]", __func__, delta_x, delta_y);
+	} else {
+		delta_x = efs_info.crop_shift_delta_x;
+		delta_y = efs_info.crop_shift_delta_y;
+		info("[%s] Read from efs. delta_x[%d], delta_y[%d]", __func__, delta_x, delta_y);
+	}
+
+	if (delta_x > CROP_SHIFT_DELTA_MAX_X)
+		delta_x = CROP_SHIFT_DELTA_MAX_X;
+	else if (delta_x < CROP_SHIFT_DELTA_MIN_X)
+		delta_x = CROP_SHIFT_DELTA_MIN_X;
+
+	if (delta_y > CROP_SHIFT_DELTA_MAX_Y)
+		delta_y = CROP_SHIFT_DELTA_MAX_Y;
+	else if (delta_y < CROP_SHIFT_DELTA_MIN_Y)
+		delta_y = CROP_SHIFT_DELTA_MIN_Y;
+
+	if (delta_x % CROP_SHIFT_DELTA_ALIGN) {
+		temp_delta = delta_x / CROP_SHIFT_DELTA_ALIGN;
+		delta_x = temp_delta * CROP_SHIFT_DELTA_ALIGN;
+		info("[%s] temp_delta = %d, delta_x = %d", __func__, temp_delta, delta_x);
+	}
+
+	if (delta_y % CROP_SHIFT_DELTA_ALIGN) {
+		temp_delta = delta_y / CROP_SHIFT_DELTA_ALIGN;
+		delta_y = temp_delta * CROP_SHIFT_DELTA_ALIGN;
+		info("[%s] temp_delta = %d, delta_y = %d", __func__, temp_delta, delta_y);
+	}
+
+	info("[%s] Applied delta_x[%d], delta_y[%d]", __func__, delta_x, delta_y);
 
 	ret = is_sensor_read16(client, 0x0344, &x_start);
 	ret = is_sensor_read16(client, 0x0346, &y_start);
 	ret = is_sensor_read16(client, 0x0348, &x_end);
 	ret = is_sensor_read16(client, 0x034A, &y_end);
 
-	x_start += crop[crop_num][0];
-	y_start += crop[crop_num][1];
-	x_end += crop[crop_num][0];
-	y_end += crop[crop_num][1];
+	x_start += delta_x;
+	y_start += delta_y;
+	x_end += delta_x;
+	y_end += delta_y;
 
 	ret = is_sensor_write16(client, 0x0344, x_start);
 	ret = is_sensor_write16(client, 0x0346, y_start);
 	ret = is_sensor_write16(client, 0x0348, x_end);
 	ret = is_sensor_write16(client, 0x034A, y_end);
 
-	info("[%s] crop_num = %x, x_start(%x), y_start(%x), x_end(%x), y_end(%x)\n",
-		__func__, crop_num, x_start, y_start, x_end, y_end);
+	info("[%s] x_start(%d), y_start(%d), x_end(%d), y_end(%d)\n",
+		__func__, x_start, y_start, x_end, y_end);
 
 	return ret;
+}
+
+static int sensor_3m5_cis_update_pdaf_tail_size(struct v4l2_subdev *subdev, struct is_sensor_cfg *select)
+{
+	u16 crop_num = 0;
+	u32 width = 0, height = 0;
+
+	if (select->mode == SENSOR_3M5_1344X756_120FPS) {
+		warn("skip crop shift in fast ae sensor mode");
+		return 0;
+	}
+
+	switch (select->mode) {
+	case SENSOR_3M5_4000X3000_30FPS:
+		width = 496;
+		height = 744;
+		break;
+	case SENSOR_3M5_4000X2252_30FPS:
+	case SENSOR_3M5_2000x1128_30FPS:
+		width = 496;
+		height = 552;
+		break;
+	case SENSOR_3M5_2000x1500_30FPS:
+		width = 496;
+		height = 744;
+		break;
+	case SENSOR_3M5_1504x1504_30FPS:
+		width = 376;
+		height = 744;
+		break;
+	default:
+		warn("[%s] Don't change pdaf tail size\n", __func__);
+		break;
+	}
+
+	select->input[CSI_VIRTUAL_CH_1].width = width;
+	select->input[CSI_VIRTUAL_CH_1].height = height;
+	select->output[CSI_VIRTUAL_CH_1].width = width;
+	select->output[CSI_VIRTUAL_CH_1].height = height;
+
+	info("[%s] PDAF tail size (%d x %d), crop_num = %x\n",
+		__func__, width, height, crop_num);
+
+	return 0;
 }
 #endif
 
@@ -527,15 +689,11 @@ static void sensor_3m5_cis_set_paf_stat_enable(u32 mode, cis_shared_data *cis_da
 	WARN_ON(!cis_data);
 
 	switch (mode) {
-	case SENSOR_3M5_4032X3024_30FPS:
-	case SENSOR_3M5_4032X2268_30FPS:
-	case SENSOR_3M5_3024X3024_30FPS:
-	case SENSOR_3M5_4032X1960_30FPS:
-	case SENSOR_3M5_4032X1908_30FPS:
-	case SENSOR_3M5_1920X1080_60FPS:
-	case SENSOR_3M5_2016X1512_30FPS:
-	case SENSOR_3M5_1504X1504_30FPS:
-	case SENSOR_3M5_2016X1134_30FPS:
+	case SENSOR_3M5_4000X3000_30FPS:
+	case SENSOR_3M5_4000X2252_30FPS:
+	case SENSOR_3M5_2000x1128_30FPS:
+	case SENSOR_3M5_2000x1500_30FPS:
+	case SENSOR_3M5_1504x1504_30FPS:
 		cis_data->is_data.paf_stat_enable = true;
 		break;
 	case SENSOR_3M5_1344X756_120FPS:
@@ -784,6 +942,68 @@ p_err:
 	return ret;
 }
 
+int sensor_3m5_cis_long_term_exposure(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+	struct is_cis *cis;
+	struct is_long_term_expo_mode *lte_mode;
+	unsigned char cit_lshift_val = 0;
+	unsigned char shift_count = 0;
+#ifdef USE_SENSOR_LONG_EXPOSURE_SHOT
+	u32 lte_expousre = 0;
+#endif
+
+	WARN_ON(!subdev);
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+	lte_mode = &cis->long_term_mode;
+
+	I2C_MUTEX_LOCK(cis->i2c_lock);
+	/* LTE mode or normal mode set */
+	if (lte_mode->sen_strm_off_on_enable) {
+		if (lte_mode->expo[0] > 250000) {
+#ifdef USE_SENSOR_LONG_EXPOSURE_SHOT
+			lte_expousre = lte_mode->expo[0];
+			cit_lshift_val = (unsigned char)(lte_mode->expo[0] / 250000);
+			while (cit_lshift_val) {
+				cit_lshift_val = cit_lshift_val / 2;
+				lte_expousre = lte_expousre / 2;
+				shift_count++;
+			}
+			lte_mode->expo[0] = lte_expousre;
+#else
+			cit_lshift_val = (unsigned char)(lte_mode->expo[0] / 250000);
+			while (cit_lshift_val) {
+				cit_lshift_val = cit_lshift_val / 2;
+				if (cit_lshift_val > 0)
+					shift_count++;
+			}
+			lte_mode->expo[0] = 250000;
+#endif
+			ret |= is_sensor_write16(cis->client, 0xFCFC, 0x4000);
+			ret |= is_sensor_write8(cis->client, 0x0702, shift_count);
+			ret |= is_sensor_write8(cis->client, 0x0704, shift_count);
+		}
+	} else {
+		cit_lshift_val = 0;
+		ret |= is_sensor_write16(cis->client, 0xFCFC, 0x4000);
+		ret |= is_sensor_write8(cis->client, 0x0702, cit_lshift_val);
+		ret |= is_sensor_write8(cis->client, 0x0704, cit_lshift_val);
+	}
+
+	I2C_MUTEX_UNLOCK(cis->i2c_lock);
+
+	info("%s enable(%d) shift_count(%d) exp(%d)",
+		__func__, lte_mode->sen_strm_off_on_enable, shift_count, lte_mode->expo[0]);
+
+	if (ret < 0) {
+		pr_err("ERR[%s]: LTE register setting fail\n", __func__);
+		return ret;
+	}
+
+	return ret;
+}
+
 int sensor_3m5_cis_stream_on(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
@@ -853,7 +1073,11 @@ int sensor_3m5_cis_stream_on(struct v4l2_subdev *subdev)
 #endif
 
 	/* Sensor stream on */
+#ifdef CAMERA_USE_TELE_VFLIP
+	is_sensor_write16(client, 0x0100, 0x0102);
+#else
 	is_sensor_write16(client, 0x0100, 0x0100);
+#endif
 
 	info("%s\n", __func__);
 
@@ -877,7 +1101,7 @@ int sensor_3m5_cis_stream_on(struct v4l2_subdev *subdev)
 			addr = 0x0005; /* smiaRegs_rd_general_frame_count */
 			is_sensor_read16(client, addr, &value);
 			info("%s - 0x%x(0x%x)\n", __func__, addr, value);
-			msleep(5);
+			usleep_range(5000, 5100);
 			timeout++;
 		}
 	}
@@ -892,11 +1116,11 @@ int sensor_3m5_cis_stream_on(struct v4l2_subdev *subdev)
 	dbg_sensor(1, "[%s] sens_config_index_cur=%d\n", __func__, mode);
 
 	switch (mode) {
-	case SENSOR_3M5_4032X3024_30FPS:
-	case SENSOR_3M5_4032X2268_30FPS:
-	case SENSOR_3M5_4032X1960_30FPS:
-	case SENSOR_3M5_4032X1908_30FPS:
-	case SENSOR_3M5_3024X3024_30FPS:
+	case SENSOR_3M5_4000X3000_30FPS:
+	case SENSOR_3M5_4000X2252_30FPS:
+	case SENSOR_3M5_2000x1128_30FPS:
+	case SENSOR_3M5_2000x1500_30FPS:
+	case SENSOR_3M5_1504x1504_30FPS:
 		cis->cis_data->min_sync_frame_us_time = cis->cis_data->min_frame_us_time = 33333;
 		break;
 	default:
@@ -947,7 +1171,7 @@ int sensor_3m5_cis_stream_off(struct v4l2_subdev *subdev)
 		err("group_param_hold_func failed at stream off");
 
 	/* Sensor stream off */
-	is_sensor_write16(client, 0x0100, 0x00);
+	is_sensor_write8(client, 0x0100, 0x00);
 
 	info("%s\n", __func__);
 
@@ -978,6 +1202,12 @@ int sensor_3m5_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param
 	u32 line_length_pck = 0;
 	u32 min_fine_int = 0;
 
+	u16 coarse_integration_time_shifter = 0;
+	u16 cit_shifter_array[17] = {0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5};
+	u16 cit_shifter_val = 0;
+	int cit_shifter_idx = 0;
+	u8 cit_denom_array[6] = {1, 2, 4, 8, 16, 32};
+
 #ifdef DEBUG_SENSOR_TIME
 	struct timeval st, end;
 	do_gettimeofday(&st);
@@ -1006,6 +1236,18 @@ int sensor_3m5_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param
 	}
 
 	cis_data = cis->cis_data;
+
+	if (cis->long_term_mode.sen_strm_off_on_enable == false) {
+		if (MAX(target_exposure->long_val, target_exposure->short_val) > 250000) {
+			cit_shifter_idx = MIN(MAX(MAX(target_exposure->long_val, target_exposure->short_val) / 250000, 0), 16);
+			cit_shifter_val = MAX(cit_shifter_array[cit_shifter_idx], cis_data->frame_length_lines_shifter);
+		} else {
+			cit_shifter_val = (u16)(cis_data->frame_length_lines_shifter);
+		}
+		target_exposure->long_val = target_exposure->long_val / cit_denom_array[cit_shifter_val];
+		target_exposure->short_val = target_exposure->short_val / cit_denom_array[cit_shifter_val];
+		coarse_integration_time_shifter = ((cit_shifter_val<<8) & 0xFF00) + (cit_shifter_val & 0x00FF);
+	}
 
 	dbg_sensor(1, "[MOD:D:%d] %s, vsync_cnt(%d), target long(%d), short(%d)\n", cis->id, __func__,
 			cis_data->sen_vsync_count, target_exposure->long_val, target_exposure->short_val);
@@ -1061,6 +1303,13 @@ int sensor_3m5_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param
 	if (ret < 0)
 		goto p_err;
 
+	/* CIT shifter */
+	if (cis->long_term_mode.sen_strm_off_on_enable == false) {
+		ret = is_sensor_write16(client, 0x0704, coarse_integration_time_shifter);
+		if (ret < 0)
+			goto p_err;
+	}
+
 	/* Long exposure */
 	if (is_vender_wdr_mode_on(cis_data)) {
 		ret = is_sensor_write16(client, 0x0226, long_coarse_int);
@@ -1072,8 +1321,9 @@ int sensor_3m5_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_param
 		KERN_CONT "line_length_pck(%d), min_fine_int (%d)\n", cis->id, __func__,
 		cis_data->sen_vsync_count, vt_pic_clk_freq_mhz, line_length_pck, min_fine_int);
 	dbg_sensor(1, "[MOD:D:%d] %s, vsync_cnt(%d), frame_length_lines(%#x),"
-		KERN_CONT "long_coarse_int %#x, short_coarse_int %#x\n", cis->id, __func__,
-		cis_data->sen_vsync_count, cis_data->frame_length_lines, long_coarse_int, short_coarse_int);
+		KERN_CONT "long_coarse_int %#x, short_coarse_int %#x coarse_integration_time_shifter %#x\n",
+		cis->id, __func__, cis_data->sen_vsync_count, cis_data->frame_length_lines,
+		long_coarse_int, short_coarse_int, coarse_integration_time_shifter);
 
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
@@ -1245,7 +1495,11 @@ int sensor_3m5_cis_adjust_frame_duration(struct v4l2_subdev *subdev,
 	dbg_sensor(1, "[%s](vsync cnt = %d) adj duration, frame duraion(%d), min_frame_us(%d)\n",
 			__func__, cis_data->sen_vsync_count, frame_duration, cis_data->min_frame_us_time);
 
-	*target_duration = MAX(frame_duration, cis_data->min_frame_us_time);
+	if (cis->long_term_mode.sen_strm_off_on_enable == false) {
+		*target_duration = MAX(frame_duration, cis_data->min_frame_us_time);
+	} else {
+		*target_duration = frame_duration;
+	}
 
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
@@ -1266,6 +1520,11 @@ int sensor_3m5_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 frame_dura
 	u32 vt_pic_clk_freq_mhz = 0;
 	u32 line_length_pck = 0;
 	u16 frame_length_lines = 0;
+
+	u8 frame_length_lines_shifter = 0;
+	u8 fll_shifter_array[17] = {0, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5};
+	int fll_shifter_idx = 0;
+	u8 fll_denom_array[6] = {1, 2, 4, 8, 16, 32};
 
 #ifdef DEBUG_SENSOR_TIME
 	struct timeval st, end;
@@ -1288,9 +1547,19 @@ int sensor_3m5_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 frame_dura
 
 	cis_data = cis->cis_data;
 
-	if (frame_duration < cis_data->min_frame_us_time) {
-		dbg_sensor(1, "frame duration is less than min(%d)\n", frame_duration);
-		frame_duration = cis_data->min_frame_us_time;
+	if (cis->long_term_mode.sen_strm_off_on_enable == false) {
+		if (frame_duration < cis_data->min_frame_us_time) {
+			dbg_sensor(1, "frame duration is less than min(%d)\n", frame_duration);
+			frame_duration = cis_data->min_frame_us_time;
+		}
+
+		if (frame_duration > 250000) {
+			fll_shifter_idx = MIN(MAX(frame_duration / 250000, 0), 16);
+			frame_length_lines_shifter = fll_shifter_array[fll_shifter_idx];
+			frame_duration = frame_duration / fll_denom_array[frame_length_lines_shifter];
+		} else {
+			frame_length_lines_shifter = 0x0;
+		}
 	}
 
 	vt_pic_clk_freq_mhz = cis_data->pclk / (1000 * 1000);
@@ -1299,8 +1568,9 @@ int sensor_3m5_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 frame_dura
 	frame_length_lines = (u16)((vt_pic_clk_freq_mhz * frame_duration) / line_length_pck);
 
 	dbg_sensor(1, "[MOD:D:%d] %s, vt_pic_clk_freq_mhz(%#x) frame_duration = %d us,"
-		KERN_CONT "(line_length_pck%#x), frame_length_lines(%#x)\n",
-		cis->id, __func__, vt_pic_clk_freq_mhz, frame_duration, line_length_pck, frame_length_lines);
+			KERN_CONT "(line_length_pck%#x), frame_length_lines(%#x), frame_length_lines_shifter(%#x)\n",
+			cis->id, __func__, vt_pic_clk_freq_mhz, frame_duration,
+			line_length_pck, frame_length_lines, frame_length_lines_shifter);
 
 	I2C_MUTEX_LOCK(cis->i2c_lock);
 
@@ -1314,9 +1584,17 @@ int sensor_3m5_cis_set_frame_duration(struct v4l2_subdev *subdev, u32 frame_dura
 	if (ret < 0)
 		goto p_err;
 
+	/* frame duration shifter */
+	if (cis->long_term_mode.sen_strm_off_on_enable == false) {
+		ret = is_sensor_write16(client, 0x0702, frame_length_lines_shifter);
+		if (ret < 0)
+			goto p_err;
+	}
+
 	cis_data->cur_frame_us_time = frame_duration;
 	cis_data->frame_length_lines = frame_length_lines;
 	cis_data->max_coarse_integration_time = cis_data->frame_length_lines - cis_data->max_margin_coarse_integration_time;
+	cis_data->frame_length_lines_shifter = frame_length_lines_shifter;
 
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
@@ -1921,19 +2199,16 @@ int sensor_3m5_cis_get_max_digital_gain(struct v4l2_subdev *subdev, u32 *max_dga
 #ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
 static int sensor_3m5_cis_update_mipi_info(struct v4l2_subdev *subdev)
 {
-	return 0;
-}
-#endif
-
-#ifdef CAMERA_REAR2_SENSOR_SHIFT_CROP
-static int sensor_3m5_cis_update_pdaf_tail_size(struct v4l2_subdev *subdev, struct is_sensor_cfg *select)
-{
 	struct is_cis *cis = NULL;
-	struct i2c_client *client;
-	char *cal_buf;
-	u16 dummy_flag = 0;
-	u16 crop_num = 0;
-	u32 width = 0, height = 0;
+	struct is_device_sensor *device;
+	const struct cam_mipi_sensor_mode *cur_mipi_sensor_mode;
+	int found = -1;
+
+	device = (struct is_device_sensor *)v4l2_get_subdev_hostdata(subdev);
+	if (device == NULL) {
+		err("device is NULL");
+		return -1;
+	}
 
 	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
 	if (cis == NULL) {
@@ -1941,87 +2216,30 @@ static int sensor_3m5_cis_update_pdaf_tail_size(struct v4l2_subdev *subdev, stru
 		return -1;
 	}
 
-	client = cis->client;
-	if (unlikely(!client)) {
-		err("client is NULL");
+	if (device->cfg->mode >= sensor_3m5_mipi_sensor_mode_size) {
+		err("sensor mode is out of bound");
 		return -1;
 	}
 
-	if (select->mode == SENSOR_3M5_1344X756_120FPS) {
-		info("skip tele shift in fast ae sensor mode\n");
-		return 0;
+	cur_mipi_sensor_mode = &sensor_3m5_mipi_sensor_mode[device->cfg->mode];
+
+	if (cur_mipi_sensor_mode->mipi_channel_size == 0 ||
+		cur_mipi_sensor_mode->mipi_channel == NULL) {
+		dbg_sensor(1, "skip select mipi channel\n");
+		return -1;
 	}
 
-	is_sec_get_cal_buf(&cal_buf, ROM_ID_REAR);
-
-#ifdef TEST_SHIFT_CROP
-	cal_buf[ROM_REAR3_FLAG_DUMMY_ADDR] = 7;
-	cal_buf[ROM_REAR3_IMAGE_CROP_NUM_ADDR] = test_crop_num;
-
-	if (test_crop_num == 9)
-		test_crop_num = 1;
-	else
-		test_crop_num++;
-#endif
-
-	dummy_flag = cal_buf[ROM_REAR3_FLAG_DUMMY_ADDR];
-	crop_num = cal_buf[ROM_REAR3_IMAGE_CROP_NUM_ADDR];
-
-	info("[%s] dummy_flag[%x], crop_num[%x]", __func__, dummy_flag, crop_num);
-
-	if (dummy_flag == 7 && (crop_num >= 1 && crop_num <= 9)) { /* Get a crop shift num from cal data */
-		cis->cis_data->sensor_shifted_num = crop_num;
-	} else if (dummy_flag == 4)  { /* Map to a fixed crop shiift num */
-		crop_num = FIXED_SENSOR_CROP_SHIFT_NUM;
-		cis->cis_data->sensor_shifted_num = crop_num;
-	} else { /* Invalid cal data. Contrast AF only */
-		cis->cis_data->sensor_shifted_num = 0;
+	found = is_vendor_select_mipi_by_rf_channel(cur_mipi_sensor_mode->mipi_channel,
+				cur_mipi_sensor_mode->mipi_channel_size);
+	if (found != -1) {
+		if (found < cur_mipi_sensor_mode->sensor_setting_size) {
+			device->cfg->mipi_speed = cur_mipi_sensor_mode->sensor_setting[found].mipi_rate;
+			cis->mipi_clock_index_new = found;
+			info("%s - update mipi rate : %d\n", __func__, device->cfg->mipi_speed);
+		} else {
+			err("sensor setting size is out of bound");
+		}
 	}
-
-	if (cis->cis_data->sensor_shifted_num == 0) {
-		return 0;
-	}
-
-	switch (select->mode) {
-	case SENSOR_3M5_4032X3024_30FPS:
-	case SENSOR_3M5_2016X1512_30FPS:
-		width = 504;
-		height = 744;
-		break;
-	case SENSOR_3M5_4032X1960_30FPS:
-		width = 504;
-		height = 488;
-		break;
-	case SENSOR_3M5_3024X3024_30FPS:
-	case SENSOR_3M5_1504X1504_30FPS:
-		width = 376;
-		height = 744;
-		break;
-	case SENSOR_3M5_4032X2268_30FPS:
-	case SENSOR_3M5_2016X1134_30FPS:
-		width = 504;
-		height = 560;
-		break;
-	case SENSOR_3M5_4032X1908_30FPS:
-		width = 504;
-		height = 472;
-		break;
-	case SENSOR_3M5_1920X1080_60FPS:
-		width = 240;
-		height = 264;
-		break;
-	default:
-		warn("[%s] Don't change pdaf tail size\n", __func__);
-		break;
-	}
-
-	select->input[CSI_VIRTUAL_CH_1].width = width;
-	select->input[CSI_VIRTUAL_CH_1].height = height;
-	select->output[CSI_VIRTUAL_CH_1].width = width;
-	select->output[CSI_VIRTUAL_CH_1].height = height;
-
-	info("[%s] PDAF tail size (%d x %d), crop_num = %x\n",
-		__func__, width, height, crop_num);
 
 	return 0;
 }
@@ -2047,6 +2265,29 @@ int sensor_3m5_cis_recover_stream_on(struct v4l2_subdev *subdev)
 	ret = sensor_3m5_cis_stream_on(subdev);
 	if (ret < 0) goto p_err;
 	ret = sensor_cis_wait_streamon(subdev);
+	if (ret < 0) goto p_err;
+
+	info("%s end\n", __func__);
+p_err:
+	return ret;
+}
+
+int sensor_3m5_cis_recover_stream_off(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+	struct is_cis *cis = NULL;
+
+	FIMC_BUG(!subdev);
+
+	cis = (struct is_cis *)v4l2_get_subdevdata(subdev);
+	FIMC_BUG(!cis);
+	FIMC_BUG(!cis->cis_data);
+
+	info("%s start\n", __func__);
+
+	ret = sensor_3m5_cis_stream_off(subdev);
+	if (ret < 0) goto p_err;
+	ret = sensor_cis_wait_streamoff(subdev);
 	if (ret < 0) goto p_err;
 
 	info("%s end\n", __func__);
@@ -2083,6 +2324,7 @@ static struct is_cis_ops cis_ops = {
 	.cis_wait_streamon = sensor_cis_wait_streamon,
 	.cis_data_calculation = sensor_3m5_cis_data_calc,
 	.cis_set_adjust_sync = sensor_3m5_cis_set_adjust_sync,
+	.cis_set_test_pattern = sensor_cis_set_test_pattern,
 #ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
 	.cis_update_mipi_info = sensor_3m5_cis_update_mipi_info,
 #endif
@@ -2092,6 +2334,8 @@ static struct is_cis_ops cis_ops = {
 	.cis_check_rev_on_init = sensor_cis_check_rev_on_init,
 	.cis_set_initial_exposure = sensor_cis_set_initial_exposure,
 	.cis_recover_stream_on = sensor_3m5_cis_recover_stream_on,
+	.cis_recover_stream_off = sensor_3m5_cis_recover_stream_off,
+	.cis_set_long_term_exposure = sensor_3m5_cis_long_term_exposure,
 };
 
 static int cis_3m5_probe(struct i2c_client *client,
@@ -2107,6 +2351,9 @@ static int cis_3m5_probe(struct i2c_client *client,
 	char const *setfile;
 	struct device *dev;
 	struct device_node *dnode;
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+	int i, index;
+#endif
 
 	FIMC_BUG(!client);
 	FIMC_BUG(!is_dev);
@@ -2182,10 +2429,14 @@ static int cis_3m5_probe(struct i2c_client *client,
 		sensor_3m5_setfile_sizes = sensor_3m5_setfile_A_sizes;
 		sensor_3m5_pllinfos = sensor_3m5_pllinfos_A;
 		sensor_3m5_max_setfile_num = ARRAY_SIZE(sensor_3m5_setfiles_A);
-		sensor_3m5_dualsync_master = sensor_3m5_setfile_A_dualsync_Master;
-		sensor_3m5_dualsync_master_size = sizeof(sensor_3m5_setfile_A_dualsync_Master) / sizeof(sensor_3m5_setfile_A_dualsync_Master[0]);
-		sensor_3m5_dualsync_slave = sensor_3m5_setfile_A_dualsync_Slave;
-		sensor_3m5_dualsync_slave_size = sizeof(sensor_3m5_setfile_A_dualsync_Slave) / sizeof(sensor_3m5_setfile_A_dualsync_Slave[0]);
+		sensor_3m5_dualsync_slave = sensor_3m5_dual_slave_A_settings;
+		sensor_3m5_dualsync_slave_size = ARRAY_SIZE(sensor_3m5_dual_slave_A_settings);
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+		sensor_3m5_mipi_sensor_mode = sensor_3m5_setfile_A_mipi_sensor_mode;
+		sensor_3m5_mipi_sensor_mode_size = ARRAY_SIZE(sensor_3m5_setfile_A_mipi_sensor_mode);
+		sensor_3m5_verify_sensor_mode = sensor_3m5_setfile_A_verify_sensor_mode;
+		sensor_3m5_verify_sensor_mode_size = ARRAY_SIZE(sensor_3m5_setfile_A_verify_sensor_mode);
+#endif
 	}
 #if 0
 	else if (strcmp(setfile, "setB") == 0) {
@@ -2196,10 +2447,8 @@ static int cis_3m5_probe(struct i2c_client *client,
 		sensor_3m5_setfile_sizes = sensor_3m5_setfile_B_sizes;
 		sensor_3m5_pllinfos = sensor_3m5_pllinfos_B;
 		sensor_3m5_max_setfile_num = ARRAY_SIZE(sensor_3m5_setfiles_B);
-		sensor_3m5_dualsync_master = sensor_3m5_setfile_B_dualsync_Master;
-		sensor_3m5_dualsync_master_size = sizeof(sensor_3m5_setfile_B_dualsync_Master) / sizeof(sensor_3m5_setfile_B_dualsync_Master[0]);
-		sensor_3m5_dualsync_slave = sensor_3m5_setfile_B_dualsync_Slave;
-		sensor_3m5_dualsync_slave_size = sizeof(sensor_3m5_setfile_B_dualsync_Slave) / sizeof(sensor_3m5_setfile_B_dualsync_Slave[0]);
+		sensor_3m5_dualsync_slave = sensor_3m5_dual_slave_B_settings;
+		sensor_3m5_dualsync_slave_size = ARRAY_SIZE(sensor_3m5_dual_slave_B_settings);
 	}
 #endif
 	else {
@@ -2210,14 +2459,22 @@ static int cis_3m5_probe(struct i2c_client *client,
 		sensor_3m5_setfile_sizes = sensor_3m5_setfile_A_sizes;
 		sensor_3m5_pllinfos = sensor_3m5_pllinfos_A;
 		sensor_3m5_max_setfile_num = ARRAY_SIZE(sensor_3m5_setfiles_A);
-		sensor_3m5_dualsync_master = sensor_3m5_setfile_A_dualsync_Master;
-		sensor_3m5_dualsync_master_size = sizeof(sensor_3m5_setfile_A_dualsync_Master) / sizeof(sensor_3m5_setfile_A_dualsync_Master[0]);
-		sensor_3m5_dualsync_slave = sensor_3m5_setfile_A_dualsync_Slave;
-		sensor_3m5_dualsync_slave_size = sizeof(sensor_3m5_setfile_A_dualsync_Slave) / sizeof(sensor_3m5_setfile_A_dualsync_Slave[0]);
+		sensor_3m5_dualsync_slave = sensor_3m5_dual_slave_A_settings;
+		sensor_3m5_dualsync_slave_size = ARRAY_SIZE(sensor_3m5_dual_slave_A_settings);
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+		sensor_3m5_mipi_sensor_mode = sensor_3m5_setfile_A_mipi_sensor_mode;
+		sensor_3m5_mipi_sensor_mode_size = ARRAY_SIZE(sensor_3m5_setfile_A_mipi_sensor_mode);
+		sensor_3m5_verify_sensor_mode = sensor_3m5_setfile_A_verify_sensor_mode;
+		sensor_3m5_verify_sensor_mode_size = ARRAY_SIZE(sensor_3m5_setfile_A_verify_sensor_mode);
+#endif
 	}
 
 	/* belows are depend on sensor cis. MUST check sensor spec */
+#ifdef CAMERA_USE_TELE_VFLIP
+	cis->bayer_order = OTF_INPUT_ORDER_BAYER_BG_GR;
+#else
 	cis->bayer_order = OTF_INPUT_ORDER_BAYER_GR_BG;
+#endif
 
 	if (of_property_read_bool(dnode, "sensor_f_number")) {
 		ret = of_property_read_u32(dnode, "sensor_f_number", &cis->aperture_num);
@@ -2248,7 +2505,17 @@ static int cis_3m5_probe(struct i2c_client *client,
 	snprintf(subdev_cis->name, V4L2_SUBDEV_NAME_SIZE, "cis-subdev.%d", cis->id);
 
 	sensor_cis_parse_dt(dev, cis->subdev);
+#ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
+	for (i = 0; i < sensor_3m5_verify_sensor_mode_size; i++) {
+		index = sensor_3m5_verify_sensor_mode[i];
 
+		if (is_vendor_verify_mipi_channel(sensor_3m5_mipi_sensor_mode[index].mipi_channel,
+					sensor_3m5_mipi_sensor_mode[index].mipi_channel_size)) {
+			panic("wrong mipi channel");
+			break;
+		}
+	}
+#endif
 	probe_info("%s done\n", __func__);
 
 p_err:

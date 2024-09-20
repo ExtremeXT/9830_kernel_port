@@ -12,6 +12,8 @@
 #ifndef IS_CIS_H
 #define IS_CIS_H
 
+#include "is-metadata.h"
+
 /* if you need color-bar, change a below macro to 2 */
 #define CIS_TEST_PATTERN_MODE 0
 #define CIS_STREAM_OFF_WAIT_TIME 2000	/* 2ms */
@@ -68,7 +70,7 @@ u32 sensor_cis_calc_again_permile(u32 code);
 
 u32 sensor_cis_calc_dgain_code(u32 permile);
 u32 sensor_cis_calc_dgain_permile(u32 code);
-
+u8 sensor_cis_get_duration_shifter(struct is_cis *cis, u32 input_duration);
 int sensor_cis_compensate_gain_for_extremely_br(struct v4l2_subdev *subdev, u32 expo, u32 *again, u32 *dgain);
 
 int sensor_cis_dump_registers(struct v4l2_subdev *subdev, const u32 *regs, const u32 size);
@@ -83,5 +85,6 @@ int sensor_cis_wait_streamon(struct v4l2_subdev *subdev);
 
 int sensor_cis_set_initial_exposure(struct v4l2_subdev *subdev);
 int sensor_cis_active_test(struct v4l2_subdev *subdev);
+int sensor_cis_set_test_pattern(struct v4l2_subdev *subdev, camera2_sensor_ctl_t *sensor_ctl);
 
 #endif

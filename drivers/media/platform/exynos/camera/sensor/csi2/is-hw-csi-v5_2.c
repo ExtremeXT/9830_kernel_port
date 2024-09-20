@@ -206,9 +206,9 @@ p_err:
 }
 
 #ifdef CONFIG_USE_SENSOR_GROUP
-int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 vc, struct is_frame_cfg *cfg, u32 hwformat, u32 dummy_pixel)
+int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 vc, struct is_frame_cfg *cfg, u32 hwformat)
 #else
-int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 vc, struct is_image *image, u32 hwformat, u32 dummy_pixel)
+int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 vc, struct is_image *image, u32 hwformat)
 #endif
 {
 	int ret = 0;

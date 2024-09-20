@@ -2576,9 +2576,6 @@ int is_hw_mcsc_adjust_output_img_fmt(u32 bitwidth, u32 format, u32 plane, u32 or
 				break;
 			}
 			break;
-		case DMA_OUTPUT_FORMAT_Y:
-			*img_format = MCSC_MONO_Y8;
-			break;
 		default:
 			err_hw("output format error - (%d/%d/%d)", format, order, plane);
 			ret = -EINVAL;
@@ -2749,6 +2746,9 @@ int is_hw_mcsc_adjust_output_img_fmt(u32 bitwidth, u32 format, u32 plane, u32 or
 			break;
 		}
 			break;
+	case DMA_OUTPUT_FORMAT_Y:
+		*img_format = MCSC_MONO_Y8;
+		break;
 	default:
 		err_hw("output bitwidth error - (%d/%d/%d)", format, order, plane);
 		ret = -EINVAL;

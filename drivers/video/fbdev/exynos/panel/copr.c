@@ -12,6 +12,11 @@
 #include "panel_drv.h"
 #include "copr.h"
 
+#ifdef PANEL_PR_TAG
+#undef PANEL_PR_TAG
+#define PANEL_PR_TAG	"copr"
+#endif
+
 static struct copr_reg_info copr_reg_v0_list[] = {
 	{ .name = "copr_gamma=", .offset = offsetof(struct copr_reg_v0, copr_gamma) },
 	{ .name = "copr_en=", .offset = offsetof(struct copr_reg_v0, copr_en) },
@@ -285,41 +290,34 @@ static int panel_do_copr_seqtbl_by_index(struct copr_info *copr, int index)
 	int ret;
 
 	if (panel == NULL) {
-		panel_err("ERR:PANEL:%s:panel is null\n", __func__);
+		panel_err("panel is null\n");
 		return -EINVAL;
 	}
 
 	if (!IS_PANEL_ACTIVE(panel)) {
-		panel_warn("WARN:PANEL:%s:panel inactive state\n", __func__);
+		panel_warn("panel inactive state\n");
 		return -EINVAL;
 	}
 
 	tbl = panel->copr.seqtbl;
 	mutex_lock(&panel->op_lock);
 	if (unlikely(index < 0 || index >= MAX_COPR_SEQ)) {
-		panel_err("%s, invalid paramter (panel %p, index %d)\n",
-				__func__, panel, index);
+		panel_err("invalid parameter (panel %p, index %d)\n", panel, index);
 		ret = -EINVAL;
 		goto do_exit;
 	}
 
-#ifdef DEBUG_PANEL
-	pr_info("%s, %s start\n", __func__, tbl[index].name);
-#endif
-
+	panel_dbg("%s:start\n", tbl[index].name);
 	ret = panel_do_seqtbl(panel, &tbl[index]);
 	if (unlikely(ret < 0)) {
-		pr_err("%s, failed to excute seqtbl %s\n",
-				__func__, tbl->name);
+		panel_err("failed to excute seqtbl:%s\n", tbl->name);
 		ret = -EIO;
 		goto do_exit;
 	}
 
 do_exit:
 	mutex_unlock(&panel->op_lock);
-#ifdef DEBUG_PANEL
-	pr_info("%s, %s end\n", __func__, tbl[index].name);
-#endif
+	panel_dbg("%s:end\n", tbl[index].name);
 	return 0;
 }
 
@@ -332,7 +330,7 @@ static int panel_set_copr(struct copr_info *copr)
 
 	ret = panel_do_copr_seqtbl_by_index(copr, COPR_SET_SEQ);
 	if (unlikely(ret < 0)) {
-		pr_err("%s, failed to do seqtbl\n", __func__);
+		panel_err("failed to do seqtbl\n");
 		return -EIO;
 	}
 
@@ -352,17 +350,17 @@ static int panel_clear_copr(struct copr_info *copr)
 
 	ret = panel_do_copr_seqtbl_by_index(copr, COPR_CLR_CNT_ON_SEQ);
 	if (unlikely(ret < 0))
-		pr_err("%s, failed to do seqtbl\n", __func__);
+		panel_err("failed to do seqtbl\n");
 
 	msleep(34);
 
 	ret = panel_do_copr_seqtbl_by_index(copr, COPR_CLR_CNT_OFF_SEQ);
 	if (unlikely(ret < 0))
-		pr_err("%s, failed to do seqtbl\n", __func__);
+		panel_err("failed to do seqtbl\n");
 
 	msleep(34);
 
-	pr_debug("%s copr clear seq\n", __func__);
+	panel_dbg("copr clear seq\n");
 
 	return ret;
 }
@@ -378,21 +376,21 @@ static int panel_read_copr_spi(struct copr_info *copr)
 	struct copr_properties *props = &copr->props;
 
 	if (unlikely(!panel)) {
-		panel_err("PANEL:ERR:%s:panel is null\n", __func__);
+		panel_err("panel is null\n");
 		return -ENODEV;
 	}
 	panel_data = &panel->panel_data;
 
 	ret = panel_do_copr_seqtbl_by_index(copr, COPR_SPI_GET_SEQ);
 	if (unlikely(ret < 0)) {
-		pr_err("%s, failed to do seqtbl\n", __func__);
+		panel_err("failed to do seqtbl\n");
 		ret = -EIO;
 		goto get_copr_error;
 	}
 
 	size = get_resource_size_by_name(panel_data, "copr_spi");
 	if (size < 0) {
-		pr_err("%s, failed to get copr size (ret %d)\n", __func__, size);
+		panel_err("failed to get copr size (ret %d)\n", size);
 		ret = -EINVAL;
 		goto get_copr_error;
 	}
@@ -405,7 +403,7 @@ static int panel_read_copr_spi(struct copr_info *copr)
 
 	ret = resource_copy_by_name(panel_data, (u8 *)buf, "copr_spi");
 	if (ret < 0) {
-		pr_err("%s, failed to get copr (ret %d)\n", __func__, ret);
+		panel_err("failed to get copr (ret %d)\n", ret);
 		ret = -EIO;
 		goto get_copr_error;
 	}
@@ -423,12 +421,12 @@ static int panel_read_copr_spi(struct copr_info *copr)
 				index = 11 + i * 6 + c * 2;
 				props->copr_roi_r[i][c] = (buf[index] << 8) | buf[index + 1];
 			}
-			pr_debug("copr_spi: copr_roi_r[%d] %d %d %d\n",
+			panel_dbg("copr_spi: copr_roi_r[%d] %d %d %d\n",
 					i, props->copr_roi_r[i][RED],
 					props->copr_roi_r[i][GREEN],
 					props->copr_roi_r[i][BLUE]);
 		}
-		pr_debug("copr_spi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d, comp_copr %d\n",
+		panel_dbg("copr_spi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d, comp_copr %d\n",
 				props->cur_cnt, props->cur_copr, props->avg_copr,
 				props->s_cur_cnt, props->s_avg_copr, props->copr_ready, props->comp_copr);
 	} else if (props->version == COPR_VER_2) {
@@ -441,7 +439,7 @@ static int panel_read_copr_spi(struct copr_info *copr)
 			(buf[5] << 3) | ((buf[6] & 0xE0) >> 5);
 		props->s_avg_copr = ((buf[6] & 0x1F) << 4) | ((buf[7] & 0xF0) >> 4);
 		props->comp_copr = ((buf[7] & 0x0F) << 5) | ((buf[8] & 0xF8) >> 3);
-		pr_debug("copr_spi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d, comp_copr %d\n",
+		panel_dbg("copr_spi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d, comp_copr %d\n",
 				props->cur_cnt, props->cur_copr, props->avg_copr,
 				props->s_cur_cnt, props->s_avg_copr, props->copr_ready, props->comp_copr);
 	} else if (props->version == COPR_VER_1) {
@@ -453,7 +451,7 @@ static int panel_read_copr_spi(struct copr_info *copr)
 		props->s_cur_cnt = ((buf[4] & 0x1F) << 11) |
 			(buf[5] << 3) | ((buf[6] & 0xE0) >> 5);
 		props->s_avg_copr = ((buf[6] & 0x1F) << 4) | ((buf[7] & 0xF0) >> 4);
-		pr_debug("copr_spi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d\n",
+		panel_dbg("copr_spi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d\n",
 				props->cur_cnt, props->cur_copr, props->avg_copr,
 				props->s_cur_cnt, props->s_avg_copr, props->copr_ready);
 	} else if (props->version == COPR_VER_0) {
@@ -475,21 +473,21 @@ static int panel_read_copr_dsi(struct copr_info *copr)
 	struct copr_properties *props = &copr->props;
 
 	if (unlikely(!panel)) {
-		panel_err("PANEL:ERR:%s:panel is null\n", __func__);
+		panel_err("panel is null\n");
 		return -ENODEV;
 	}
 	panel_data = &panel->panel_data;
 
 	ret = panel_do_copr_seqtbl_by_index(copr, COPR_DSI_GET_SEQ);
 	if (unlikely(ret < 0)) {
-		pr_err("%s, failed to do seqtbl\n", __func__);
+		panel_err("failed to do seqtbl\n");
 		ret = -EIO;
 		goto get_copr_error;
 	}
 
 	size = get_resource_size_by_name(panel_data, "copr_dsi");
 	if (size < 0) {
-		pr_err("%s, failed to get copr size (ret %d)\n", __func__, size);
+		panel_err("failed to get copr size (ret %d)\n", size);
 		ret = -EINVAL;
 		goto get_copr_error;
 	}
@@ -502,7 +500,7 @@ static int panel_read_copr_dsi(struct copr_info *copr)
 
 	ret = resource_copy_by_name(panel_data, (u8 *)buf, "copr_dsi");
 	if (ret < 0) {
-		pr_err("%s, failed to get copr (ret %d)\n", __func__, ret);
+		panel_err("failed to get copr (ret %d)\n", ret);
 		ret = -EIO;
 		goto get_copr_error;
 	}
@@ -520,12 +518,12 @@ static int panel_read_copr_dsi(struct copr_info *copr)
 				index = 11 + i * (MAX_COLOR * 2) + c * 2;
 				props->copr_roi_r[i][c] = (buf[index] << 8) | buf[index + 1];
 			}
-			pr_debug("copr_dsi: copr_roi_r[%d] %d %d %d\n",
+			panel_dbg("copr_dsi: copr_roi_r[%d] %d %d %d\n",
 					i, props->copr_roi_r[i][RED],
 					props->copr_roi_r[i][GREEN],
 					props->copr_roi_r[i][BLUE]);
 		}
-		pr_debug("copr_dsi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d\n",
+		panel_dbg("copr_dsi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d\n",
 				props->cur_cnt, props->cur_copr, props->avg_copr,
 				props->s_cur_cnt, props->s_avg_copr, props->copr_ready);
 	} else if (props->version == COPR_VER_2) {
@@ -536,7 +534,7 @@ static int panel_read_copr_dsi(struct copr_info *copr)
 		props->s_cur_cnt = (buf[6] << 8) | buf[7];
 		props->s_avg_copr = (buf[8] << 8) | buf[9];
 		props->comp_copr = (((buf[10] & 0x01) ? 1 : 0) << 8) | buf[11];
-		pr_debug("copr_dsi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d, comp_copr %d\n",
+		panel_dbg("copr_dsi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d, comp_copr %d\n",
 				props->cur_cnt, props->cur_copr, props->avg_copr,
 				props->s_cur_cnt, props->s_avg_copr, props->copr_ready, props->comp_copr);
 	} else if (props->version == COPR_VER_1) {
@@ -546,7 +544,7 @@ static int panel_read_copr_dsi(struct copr_info *copr)
 		props->avg_copr = (buf[4] << 8) | buf[5];
 		props->s_cur_cnt = (buf[6] << 8) | buf[7];
 		props->s_avg_copr = (buf[8] << 8) | buf[9];
-		pr_debug("copr_dsi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d\n",
+		panel_dbg("copr_dsi: cur_cnt %d, cur_copr %d, avg_copr %d, s_cur_cnt %d, s_avg_copr %d, copr_ready %d\n",
 				props->cur_cnt, props->cur_copr, props->avg_copr,
 				props->s_cur_cnt, props->s_avg_copr, props->copr_ready);
 	} else {
@@ -572,14 +570,13 @@ static int panel_get_copr(struct copr_info *copr)
 
 	ktime_get_ts(&cur_ts);
 	if (props->state != COPR_REG_ON) {
-		pr_debug("%s copr reg is not on state %d\n",
-				__func__, props->state);
+		panel_dbg("copr reg is not on state %d\n", props->state);
 		ret = -EINVAL;
 		goto get_copr_error;
 	}
 
 	if (atomic_read(&copr->stop)) {
-		panel_warn("%s copr_stop\n", __func__);
+		panel_warn("copr_stop\n");
 		ret = -EINVAL;
 		goto get_copr_error;
 	}
@@ -594,9 +591,8 @@ static int panel_get_copr(struct copr_info *copr)
 
 	delta_ts = timespec_sub(last_ts, cur_ts);
 	elapsed_usec = timespec_to_ns(&delta_ts) / 1000;
-	pr_debug("%s elapsed_usec %lld usec (%lld.%lld %lld.%lld)\n",
-			__func__, elapsed_usec,
-			timespec_to_ns(&cur_ts) / 1000000000,
+	panel_dbg("elapsed_usec %lld usec (%lld.%lld %lld.%lld)\n",
+			elapsed_usec, timespec_to_ns(&cur_ts) / 1000000000,
 			(timespec_to_ns(&cur_ts) % 1000000000) / 1000,
 			timespec_to_ns(&last_ts) / 1000000000,
 			(timespec_to_ns(&last_ts) % 1000000000) / 1000);
@@ -649,20 +645,19 @@ int copr_update_average(struct copr_info *copr)
 		return -ENODEV;
 
 	if (!copr_is_enabled(copr)) {
-		panel_dbg("%s copr disabled\n", __func__);
+		panel_dbg("copr disabled\n");
 		return -EIO;
 	}
 
 	ktime_get_ts(&cur_ts);
 	if (props->state == COPR_UNINITIALIZED) {
 		panel_set_copr(copr);
-		panel_info("%s copr register updated\n", __func__);
+		panel_info("copr register updated\n");
 	}
 
 	ret = panel_get_copr(copr);
 	if (ret < 0) {
-		panel_err("%s failed to get copr (ret %d)\n",
-				__func__, ret);
+		panel_err("failed to get copr (ret %d)\n", ret);
 		return -EINVAL;
 	}
 
@@ -672,7 +667,7 @@ int copr_update_average(struct copr_info *copr)
 #ifdef CONFIG_SUPPORT_COPR_AVG
 		ret = panel_clear_copr(copr);
 		if (unlikely(ret < 0))
-			pr_err("%s, failed to reset copr\n", __func__);
+			panel_err("failed to reset copr\n");
 		cur_copr = props->avg_copr;
 		timenval_update_average(&copr->res, cur_copr, cur_ts);
 #else
@@ -698,20 +693,19 @@ int copr_get_value(struct copr_info *copr)
 
 	mutex_lock(&copr->lock);
 	if (!copr_is_enabled(copr)) {
-		panel_dbg("%s copr disabled\n", __func__);
+		panel_dbg("copr disabled\n");
 		mutex_unlock(&copr->lock);
 		return -EIO;
 	}
 
 	if (props->state == COPR_UNINITIALIZED) {
 		panel_set_copr(copr);
-		panel_info("%s copr register updated\n", __func__);
+		panel_info("copr register updated\n");
 	}
 
 	ret = panel_get_copr(copr);
 	if (ret < 0) {
-		panel_err("%s failed to get copr (ret %d)\n",
-				__func__, ret);
+		panel_err("failed to get copr (ret %d)\n", ret);
 		mutex_unlock(&copr->lock);
 		return -EINVAL;
 	}
@@ -737,19 +731,18 @@ int copr_iter_roi_get_value(struct copr_info *copr, struct copr_roi *roi, int si
 	mutex_lock(&copr->lock);
 	ret = copr_update_average(copr);
 	if (ret < 0) {
-		panel_err("%s failed to update average(ret %d)\n",
-				__func__, ret);
+		panel_err("failed to update average(ret %d)\n", ret);
 		mutex_unlock(&copr->lock);
 		return ret;
 	}
 
 	if (!copr_is_enabled(copr)) {
-		panel_dbg("%s copr disabled\n", __func__);
+		panel_dbg("copr disabled\n");
 		mutex_unlock(&copr->lock);
 		return -EIO;
 	}
 
-	pr_debug("%s set roi\n", __func__);
+	panel_dbg("set roi\n");
 	memcpy(&reg, &copr->props.reg, sizeof(reg));
 	SET_COPR_REG_GAMMA(copr, false);
 	if (copr->props.version == COPR_VER_2) {
@@ -760,8 +753,7 @@ int copr_iter_roi_get_value(struct copr_info *copr, struct copr_roi *roi, int si
 			panel_set_copr(copr);
 			ret = panel_get_copr(copr);
 			if (ret < 0) {
-				panel_err("%s failed to get copr (ret %d)\n",
-						__func__, ret);
+				panel_err("failed to get copr (ret %d)\n", ret);
 				/* restore r/g/b efficiency & roi */
 				memcpy(&copr->props.reg, &reg, sizeof(copr->props.reg));
 				mutex_unlock(&copr->lock);
@@ -775,8 +767,7 @@ int copr_iter_roi_get_value(struct copr_info *copr, struct copr_roi *roi, int si
 			panel_set_copr(copr);
 			ret = panel_get_copr(copr);
 			if (ret < 0) {
-				panel_err("%s failed to get copr (ret %d)\n",
-						__func__, ret);
+				panel_err("failed to get copr (ret %d)\n", ret);
 				/* restore r/g/b efficiency & roi */
 				memcpy(&copr->props.reg, &reg, sizeof(copr->props.reg));
 				mutex_unlock(&copr->lock);
@@ -798,8 +789,7 @@ int copr_iter_roi_get_value(struct copr_info *copr, struct copr_roi *roi, int si
 				panel_set_copr(copr);
 				ret = panel_get_copr(copr);
 				if (ret < 0) {
-					panel_err("%s failed to get copr (ret %d)\n",
-							__func__, ret);
+					panel_err("failed to get copr (ret %d)\n", ret);
 					/* restore r/g/b efficiency & roi */
 					memcpy(&copr->props.reg, &reg, sizeof(copr->props.reg));
 					mutex_unlock(&copr->lock);
@@ -817,7 +807,7 @@ int copr_iter_roi_get_value(struct copr_info *copr, struct copr_roi *roi, int si
 		copr->props.version == COPR_VER_1) {
 		ret = panel_do_copr_seqtbl_by_index(copr, COPR_CLR_CNT_ON_SEQ);
 		if (unlikely(ret < 0))
-			pr_err("%s, failed to do seqtbl\n", __func__);
+			panel_err("failed to do seqtbl\n");
 		msleep(34);
 	}
 #endif
@@ -825,13 +815,12 @@ int copr_iter_roi_get_value(struct copr_info *copr, struct copr_roi *roi, int si
 	msleep(34);
 	ret = panel_get_copr(copr);
 	if (ret < 0) {
-		panel_err("%s failed to get copr (ret %d)\n",
-				__func__, ret);
+		panel_err("failed to get copr (ret %d)\n", ret);
 		mutex_unlock(&copr->lock);
 		return -EINVAL;
 	}
 
-	pr_debug("%s restore roi\n", __func__);
+	panel_dbg("restore roi\n");
 
 	/*
 	 * exclude elapsed time of copr roi snapshot reading
@@ -855,7 +844,7 @@ int copr_cur_roi_get_value(struct copr_info *copr, struct copr_roi *roi, int siz
 
 	mutex_lock(&copr->lock);
 	if (!copr_is_enabled(copr)) {
-		panel_dbg("%s copr disabled\n", __func__);
+		panel_dbg("copr disabled\n");
 		mutex_unlock(&copr->lock);
 		return -EIO;
 	}
@@ -863,13 +852,12 @@ int copr_cur_roi_get_value(struct copr_info *copr, struct copr_roi *roi, int siz
 	if (props->state == COPR_UNINITIALIZED) {
 		SET_COPR_REG_ROI(copr, roi, (int)min(size, max_size));
 		panel_set_copr(copr);
-		panel_info("%s copr register updated\n", __func__);
+		panel_info("copr register updated\n");
 	}
 
 	ret = panel_get_copr(copr);
 	if (ret < 0) {
-		panel_err("%s failed to get copr (ret %d)\n",
-				__func__, ret);
+		panel_err("failed to get copr (ret %d)\n", ret);
 		mutex_unlock(&copr->lock);
 		return -EINVAL;
 	}
@@ -889,7 +877,7 @@ int copr_roi_set_value(struct copr_info *copr, struct copr_roi *roi, int size)
 		return -ENODEV;
 
 	if (!copr_is_enabled(copr)) {
-		panel_dbg("%s copr disabled\n", __func__);
+		panel_dbg("copr disabled\n");
 		return -EIO;
 	}
 
@@ -963,11 +951,11 @@ static int set_spi_gpios(struct panel_device *panel, int en)
 	struct copr_spi_gpios *gpio_info = &panel->spi_gpio;
 
 	if (!spi) {
-		pr_debug("%s:spi is null\n", __func__);
+		panel_dbg("spi is null\n");
 		return 0;
 	}
 
-	panel_info("%s en : %d\n", __func__, en);
+	panel_info("en : %d\n", en);
 	if (en) {
 		if (gpio_direction_output(gpio_info->gpio_sck, 0))
 			goto set_exit;
@@ -1002,7 +990,7 @@ static int set_spi_gpios(struct panel_device *panel, int en)
 	return 0;
 
 set_exit:
-	panel_err("%s : failed to gpio : %d\n", __func__, err_num);
+	panel_err("failed to gpio:%d\n", err_num);
 	return -EIO;
 }
 
@@ -1014,37 +1002,37 @@ static int get_spi_gpios_dt(struct panel_device *panel)
 	struct copr_spi_gpios *gpio_info = &panel->spi_gpio;
 
 	if (!spi) {
-		panel_err("%s:spi or gpio_info is null\n", __func__);
+		panel_err("spi or gpio_info is null\n");
 		goto error_dt;
 	}
 
 	np = spi->master->dev.of_node;
 	if (!np) {
-		panel_err("%s:dev_of_node is null\n", __func__);
+		panel_err("dev_of_node is null\n");
 		goto error_dt;
 	}
 
 	gpio_info->gpio_sck = of_get_named_gpio(np, "gpio-sck", 0);
 	if (gpio_info->gpio_sck < 0) {
-		panel_err("%s failed to get gpio_sck from dt\n", __func__);
+		panel_err("failed to get gpio_sck from dt\n");
 		goto error_dt;
 	}
 
 	gpio_info->gpio_miso = of_get_named_gpio(np, "gpio-miso", 0);
 	if (gpio_info->gpio_miso < 0) {
-		panel_err("%s failed to get miso from dt\n", __func__);
+		panel_err("failed to get miso from dt\n");
 		goto error_dt;
 	}
 
 	gpio_info->gpio_mosi = of_get_named_gpio(np, "gpio-mosi", 0);
 	if (gpio_info->gpio_mosi < 0) {
-		panel_err("%s failed to get mosi from dt\n", __func__);
+		panel_err("failed to get mosi from dt\n");
 		goto error_dt;
 	}
 
 	gpio_info->gpio_cs = of_get_named_gpio(np, "cs-gpios", 0);
 	if (gpio_info->gpio_cs < 0) {
-		panel_err("%s failed to get cs from dt\n", __func__);
+		panel_err("failed to get cs from dt\n");
 		goto error_dt;
 	}
 
@@ -1063,14 +1051,14 @@ int copr_enable(struct copr_info *copr)
 		return -ENODEV;
 
 	if (copr_is_enabled(copr)) {
-		pr_info("%s already enabled\n", __func__);
+		panel_info("already enabled\n");
 		return 0;
 	}
 
 	if (set_spi_gpios(panel, 1))
-		panel_err("%s:failed to set spio gpio\n", __func__);
+		panel_err("failed to set spio gpio\n");
 
-	pr_info("%s +\n", __func__);
+	panel_info("+\n");
 	atomic_set(&copr->stop, 0);
 	mutex_lock(&copr->lock);
 	copr->props.enable = true;
@@ -1091,14 +1079,14 @@ int copr_enable(struct copr_info *copr)
 			copr->props.version == COPR_VER_5) {
 			ret = panel_clear_copr(copr);
 			if (unlikely(ret < 0))
-				pr_err("%s, failed to reset copr\n", __func__);
+				panel_err("failed to reset copr\n");
 		}
 #endif
 		copr_update_average(copr);
 	}
 	mutex_unlock(&copr->lock);
 
-	pr_info("%s -\n", __func__);
+	panel_info("-\n");
 
 	return 0;
 }
@@ -1112,11 +1100,11 @@ int copr_disable(struct copr_info *copr)
 		return -ENODEV;
 
 	if (!copr_is_enabled(copr)) {
-		pr_info("%s already disabled\n", __func__);
+		panel_info("already disabled\n");
 		return 0;
 	}
 
-	pr_info("%s +\n", __func__);
+	panel_info("+\n");
 	atomic_set(&copr->stop, 1);
 	mutex_lock(&copr->lock);
 	if (copr->props.options.check_avg) {
@@ -1129,8 +1117,8 @@ int copr_disable(struct copr_info *copr)
 	}
 	mutex_unlock(&copr->lock);
 	if (set_spi_gpios(panel, 0))
-		panel_err("%s:failed to set spio gpio\n", __func__);
-	pr_info("%s -\n", __func__);
+		panel_err("failed to set spio gpio\n");
+	panel_info("-\n");
 
 	return 0;
 }
@@ -1177,7 +1165,7 @@ static int copr_create_thread(struct copr_info *copr)
 
 	copr->wq.thread = kthread_run(copr_thread, copr, "copr-thread");
 	if (IS_ERR_OR_NULL(copr->wq.thread)) {
-		panel_err("%s failed to run copr thread\n", __func__);
+		panel_err("failed to run copr thread\n");
 		copr->wq.thread = NULL;
 		return PTR_ERR(copr->wq.thread);
 	}
@@ -1207,7 +1195,7 @@ static int copr_fb_notifier_callback(struct notifier_block *self,
 	copr = container_of(self, struct copr_info, fb_notif);
 
 	fb_blank = *(int *)evdata->data;
-	pr_debug("%s: %d\n", __func__, fb_blank);
+	panel_dbg("fb_blank:%d\n", fb_blank);
 
 	if (evdata->info->node != 0)
 		return 0;
@@ -1221,7 +1209,7 @@ static int copr_register_fb(struct copr_info *copr)
 {
 	memset(&copr->fb_notif, 0, sizeof(copr->fb_notif));
 	copr->fb_notif.notifier_call = copr_fb_notifier_callback;
-	return decon_register_notifier(&copr->fb_notif);
+	return fb_register_client(&copr->fb_notif);
 }
 
 int copr_probe(struct panel_device *panel, struct panel_copr_data *copr_data)
@@ -1230,8 +1218,7 @@ int copr_probe(struct panel_device *panel, struct panel_copr_data *copr_data)
 	int i;
 
 	if (!panel || !copr_data) {
-		pr_err("%s panel(%p) or copr_data(%p) not exist\n",
-				__func__, panel, copr_data);
+		panel_err("panel(%p) or copr_data(%p) not exist\n", panel, copr_data);
 		return -EINVAL;
 	}
 
@@ -1271,7 +1258,7 @@ int copr_probe(struct panel_device *panel, struct panel_copr_data *copr_data)
 	}
 	mutex_unlock(&copr->lock);
 
-	pr_info("%s registered successfully\n", __func__);
+	panel_info("registered successfully\n");
 
 	return 0;
 }

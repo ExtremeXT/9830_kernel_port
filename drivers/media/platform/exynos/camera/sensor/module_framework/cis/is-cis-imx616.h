@@ -145,8 +145,8 @@
  **  Others
  ***/
 /* Related EEPROM CAL */
-#define SENSOR_IMX616_QUAD_SENS_CAL_BASE_FRONT		(0x1620)
-#define SENSOR_IMX616_QUAD_SENS_CAL_SIZE		(1560)
+#define SENSOR_IMX616_QSC_CAL_INDEX				(0)
+#define SENSOR_IMX616_LSC_CAL_INDEX				(1)
 #define SENSOR_IMX616_QUAD_SENS_REG_ADDR		(0xC500)
 
 #define SENSOR_IMX616_QSC_DUMP_NAME               "/data/vendor/camera/IMX616_QSC_DUMP.bin"
@@ -154,7 +154,7 @@
 /* Related Function Option */
 #define SENSOR_IMX616_SENSOR_CAL_FOR_REMOSAIC		(1)
 #define SENSOR_IMX616_CAL_DEBUG				(0)
-#define SENSOR_IMX616_DEBUG_INFO			(0)
+#define SENSOR_IMX616_DEBUG_INFO			(1)
 #define SENSOR_IMX616_EBD_LINE_DISABLE		(1)
 
 /* 3HDR */
@@ -201,8 +201,8 @@
  * -. QBC HDR
  *    [ 15 ] REG_S : QBCHDR Seamless 3264x2448 24fps  : QBCHDR seamless (4:3)        ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
  *    [ 16 ] REG_W : QBCHDR Seamless 3264x1836 30fps  : QBCHDR seamless (16:9)       ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
- *    [ 17 ] REG_X : 2x2Bin Seamless 3264x1836 30fps  : 2X2Bin seamless (4:3)        ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
- *    [ 18 ] REG_Z : 2x2Bin Seamless 3264x2448 24fps  : 2X2Bin seamless (16:9)       ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
+ *    [ 17 ] REG_X : 2x2Bin Seamless 3264x1836 30fps  : 2X2Bin seamless (16:9)       ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
+ *    [ 18 ] REG_Z : 2x2Bin Seamless 3264x2448 24fps  : 2X2Bin seamless (4:3)        ,  MIPI lane: 4, MIPI data rate(Mbps/lane): 2218
  *
  */
 

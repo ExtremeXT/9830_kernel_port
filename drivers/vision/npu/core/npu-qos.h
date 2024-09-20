@@ -15,50 +15,64 @@
 #include <linux/pm_qos.h>
 #include <linux/mutex.h>
 #include <linux/list.h>
+#include <linux/notifier.h>
+#include <soc/samsung/bts.h>
+#define NPU_QOS_DEFAULT_VALUE   (INT_MAX)
+
+struct npu_qos_freq_lock {
+	u32	npu_freq_maxlock;
+	u32	dnc_freq_maxlock;
+};
 
 struct npu_qos_setting {
 	struct mutex		npu_qos_lock;
-	struct platform_device	*dvfs_npu_dev;
-	struct platform_device	*dvfs_dnc_dev;
 
 	struct pm_qos_request	npu_qos_req_dnc;
 	struct pm_qos_request	npu_qos_req_npu;
 	struct pm_qos_request	npu_qos_req_mif;
 	struct pm_qos_request	npu_qos_req_int;
+	struct pm_qos_request	npu_qos_req_dnc_max;
+	struct pm_qos_request	npu_qos_req_npu_max;
+	struct pm_qos_request	npu_qos_req_mif_max;
+	struct pm_qos_request	npu_qos_req_int_max;
 	struct pm_qos_request	npu_qos_req_cpu_cl0;
 	struct pm_qos_request	npu_qos_req_cpu_cl1;
 	struct pm_qos_request	npu_qos_req_cpu_cl2;
 
-	s32		default_freq_npu;
-	s32		request_freq_npu;
-	s32		current_freq_npu;
-
-	s32		default_freq_dnc;
-	s32		request_freq_dnc;
-	s32		current_freq_dnc;
-
-
 	s32		req_cl0_freq;
 	s32		req_cl1_freq;
 	s32		req_cl2_freq;
-
 	s32		req_npu_freq;
 	s32		req_dnc_freq;
 	s32		req_mif_freq;
 	s32		req_int_freq;
+
+	s32		req_mo_scen;
+	u32		req_cpu_aff;
+
+	u32		dsp_type;
+	u32		dsp_max_freq;
+	u32		npu_max_freq;
+
+	struct notifier_block npu_qos_max_nb;
+	struct notifier_block npu_qos_dsp_min_nb;
+
+	struct npu_scheduler_info *info;
 };
 
 struct npu_session_qos_req {
 	s32		sessionUID;
 	s32		req_freq;
+	s32		req_mo_scen;
 	__u32		eCategory;
 	struct list_head list;
 };
 
+struct npu_system;
 int npu_qos_probe(struct npu_system *system);
 int npu_qos_release(struct npu_system *system);
-int npu_qos_start(struct npu_system *system);
-int npu_qos_stop(struct npu_system *system);
+int npu_qos_open(struct npu_system *system);
+int npu_qos_close(struct npu_system *system);
 npu_s_param_ret npu_qos_param_handler(struct npu_session *sess,
 	struct vs4l_param *param, int *retval);
 

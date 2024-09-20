@@ -133,6 +133,7 @@ unsigned int idx_ewf;
 extern struct is_sysfs_debug sysfs_debug;
 extern int is_sensor_runtime_suspend(struct device *dev);
 extern int is_sensor_runtime_resume(struct device *dev);
+extern void is_vendor_resource_clean(void);
 
 static int is_resourcemgr_allocmem(struct is_resourcemgr *resourcemgr)
 {
@@ -282,14 +283,6 @@ static int is_resourcemgr_allocmem(struct is_resourcemgr *resourcemgr)
 	}
 	minfo->total_size += minfo->pb_vra->size;
 #endif
-#if defined (ENABLE_VRA_NETARRAY)
-	minfo->pb_vra_netarray = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, VRA_NET_SIZE, NULL, 0);
-	if (IS_ERR_OR_NULL(minfo->pb_vra_netarray)) {
-		err("failed to allocate buffer for VRA network array");
-		return -ENOMEM;
-	}
-	minfo->total_size += minfo->pb_vra_netarray->size;
-#endif
 
 #if defined (ENABLE_DNR_IN_MCSC)
 	minfo->pb_mcsc_dnr = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx, MCSC_DNR_DMA_SIZE, NULL, 0);
@@ -434,14 +427,6 @@ static int is_resourcemgr_initmem(struct is_resourcemgr *resourcemgr)
 #else
 	resourcemgr->minfo.dvaddr_vra = 0;
 	resourcemgr->minfo.kvaddr_vra = 0;
-#endif
-
-#if defined(ENABLE_VRA_NETARRAY)
-	resourcemgr->minfo.dvaddr_vra_netarray = CALL_BUFOP(minfo->pb_vra_netarray, dvaddr, minfo->pb_vra_netarray);
-	resourcemgr->minfo.kvaddr_vra_netarray = CALL_BUFOP(minfo->pb_vra_netarray, kvaddr, minfo->pb_vra_netarray);
-#else
-	resourcemgr->minfo.dvaddr_vra_netarray = 0;
-	resourcemgr->minfo.kvaddr_vra_netarray = 0;
 #endif
 
 #if defined(ENABLE_DNR_IN_MCSC)
@@ -672,15 +657,9 @@ static int is_resourcemgr_alloc_secure_mem(struct is_resourcemgr *resourcemgr)
 
 	/* ME/DRC buffer */
 #if (MEDRC_DMA_SIZE > 0)
-#if defined(SECURE_CAMERA_USE_EXT_HEAP)
-	minfo->pb_medrc_s = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx,
-			MEDRC_DMA_SIZE, "secure_camera_heap_drc",
-			ION_FLAG_CACHED | ION_FLAG_PROTECTED);
-#else
 	minfo->pb_medrc_s = CALL_PTR_MEMOP(mem, alloc, mem->default_ctx,
 				MEDRC_DMA_SIZE, "secure_camera_heap",
 				ION_FLAG_CACHED | ION_FLAG_PROTECTED);
-#endif
 	if (IS_ERR_OR_NULL(minfo->pb_medrc_s)) {
 		CALL_VOID_BUFOP(minfo->pb_taaisp_s, free, minfo->pb_taaisp_s);
 		err("failed to allocate buffer for ME_DRC_S");
@@ -744,7 +723,7 @@ static int is_resourcemgr_deinit_secure_mem(struct is_resourcemgr *resourcemgr)
 static struct vm_struct is_lib_vm;
 static struct vm_struct is_heap_vm;
 static struct vm_struct is_heap_rta_vm;
-#ifdef CONFIG_RKP
+#if (defined CONFIG_UH_RKP || defined CONFIG_FASTUH_RKP)
 static struct vm_struct is_lib_vm_for_rkp;
 #endif
 #if defined(RESERVED_MEM_IN_DT)
@@ -770,7 +749,7 @@ static int __init is_reserved_mem_setup(struct reserved_mem *rmem)
 	const __be32 *prop;
 	u64 kbase;
 	int len;
-#ifdef CONFIG_RKP
+#ifdef CONFIG_UH_RKP
 	rkp_dynamic_load_t rkp_dyn;
 	int ret;
 #endif
@@ -795,19 +774,22 @@ static int __init is_reserved_mem_setup(struct reserved_mem *rmem)
 
 	BUG_ON(rmem->size < LIB_SIZE);
 
-#ifdef CONFIG_RKP
+#if (defined CONFIG_UH_RKP || defined CONFIG_FASTUH_RKP)
 	memcpy(&is_lib_vm_for_rkp, &is_lib_vm, sizeof(struct vm_struct));
 
 	is_lib_vm_for_rkp.addr = (void *)rounddown((u64)is_lib_vm_for_rkp.addr, SECTION_SIZE);
 	is_lib_vm_for_rkp.size = (u64)roundup(is_lib_vm_for_rkp.size, SECTION_SIZE);
 
+#ifdef CONFIG_UH_RKP
 	rkp_dyn.binary_base = is_lib_vm.phys_addr;
 	rkp_dyn.binary_size = LIB_SIZE;
 	rkp_dyn.type = RKP_DYN_COMMAND_BREAKDOWN_BEFORE_INIT;
-	ret = uh_call(UH_APP_RKP, RKP_DYNAMIC_LOAD, RKP_DYN_COMMAND_BREAKDOWN_BEFORE_INIT,(u64)&rkp_dyn, 0, 0);
+	uh_call(UH_APP_RKP, RKP_DYNAMIC_LOAD, RKP_DYN_COMMAND_BREAKDOWN_BEFORE_INIT, (u64)&rkp_dyn,
+			(u64)&ret, 0);
 	if (ret) {
 		err_lib("fail to break-before-init FIMC in EL2");
 	}
+#endif
 	vm_area_add_early(&is_lib_vm_for_rkp);
 #else
 	vm_area_add_early(&is_lib_vm);
@@ -831,7 +813,7 @@ RESERVEDMEM_OF_DECLARE(is_lib, "exynos,is_lib", is_reserved_mem_setup);
 static int __init is_lib_mem_alloc(char *str)
 {
 	ulong addr = 0;
-#ifdef CONFIG_RKP
+#ifdef CONFIG_UH_RKP
 	rkp_dynamic_load_t rkp_dyn;
 	int ret;
 #endif
@@ -848,19 +830,22 @@ static int __init is_lib_mem_alloc(char *str)
 	is_lib_vm.phys_addr = memblock_alloc(LIB_SIZE, SZ_2M);
 	is_lib_vm.addr = (void *)addr;
 	is_lib_vm.size = LIB_SIZE + PAGE_SIZE;
-#ifdef CONFIG_RKP
+#if (defined CONFIG_UH_RKP || defined CONFIG_FASTUH_RKP)
 	memcpy(&is_lib_vm_for_rkp, &is_lib_vm, sizeof(struct vm_struct));
 
 	is_lib_vm_for_rkp.addr = (void *)rounddown((u64)is_lib_vm_for_rkp.addr, SECTION_SIZE);
 	is_lib_vm_for_rkp.size = (u64)roundup(is_lib_vm_for_rkp.size, SECTION_SIZE);
 
+#ifdef CONFIG_UH_RKP
 	rkp_dyn.binary_base = is_lib_vm.phys_addr;
 	rkp_dyn.binary_size = LIB_SIZE;
 	rkp_dyn.type = RKP_DYN_COMMAND_BREAKDOWN_BEFORE_INIT;
-	ret = uh_call(UH_APP_RKP, RKP_DYNAMIC_LOAD, RKP_DYN_COMMAND_BREAKDOWN_BEFORE_INIT, (u64)&rkp_dyn, 0, 0);
+	uh_call(UH_APP_RKP, RKP_DYNAMIC_LOAD, RKP_DYN_COMMAND_BREAKDOWN_BEFORE_INIT, (u64)&rkp_dyn,
+			(u64)&ret, 0);
 	if (ret) {
 		err_lib("fail to break-before-init FIMC in EL2");
 	}
+#endif
 	vm_area_add_early(&is_lib_vm_for_rkp);
 	// vm_area_add_early(&is_lib_vm);
 #else
@@ -895,7 +880,7 @@ static int is_lib_mem_map(void)
 	struct page **pages;
 	pgprot_t prot;
 
-#ifdef CONFIG_RKP
+#ifdef CONFIG_UH_RKP
 	prot = PAGE_KERNEL_RKP_RO;
 #else
 	prot = PAGE_KERNEL;
@@ -1793,9 +1778,9 @@ static int is_resource_phy_power(struct is_core *core, int id, int on)
 	csi = (struct is_device_csi *)v4l2_get_subdevdata(subdev);
 
 	if (on)
-	        ret = phy_power_on(csi->phy);
+		ret = phy_power_on(csi->phy);
 	else
-	        ret = phy_power_off(csi->phy);
+		ret = phy_power_off(csi->phy);
 
 	if (ret)
 		err("fail to phy power on/off(%d)", on);
@@ -1885,7 +1870,7 @@ int is_resource_get(struct is_resourcemgr *resourcemgr, u32 rsc_type)
 		core->dual_info.mode = IS_DUAL_MODE_NOTHING;
 		core->dual_info.pre_mode = IS_DUAL_MODE_NOTHING;
 		core->dual_info.tick_count = 0;
-#if defined(CONFIG_VENDER_MCD) || defined(CONFIG_VENDER_MCD_V2)
+#ifdef CONFIG_VENDER_MCD
 		core->vender.opening_hint = IS_OPENING_HINT_NONE;
 #endif
 
@@ -1908,9 +1893,9 @@ int is_resource_get(struct is_resourcemgr *resourcemgr, u32 rsc_type)
 			goto p_err;
 		}
 #endif
-#if defined(CONFIG_EXYNOS_BCM_DBG_AUTO) || defined(CONFIG_EXYNOS_BCM_DBG_GNR)
+
 		exynos_bcm_dbg_start();
-#endif
+
 #ifdef DISABLE_BTS_CALC
 		bts_calc_disable(1);
 #endif
@@ -1932,6 +1917,7 @@ int is_resource_get(struct is_resourcemgr *resourcemgr, u32 rsc_type)
 			id = rsc_type - RESOURCE_TYPE_SENSOR0;
 			is_resource_phy_power(core, id, 1);
 #ifdef CONFIG_PM
+			is_resource_phy_power(core, rsc_type, 1);
 			pm_runtime_get_sync(&resource->pdev->dev);
 #else
 			is_sensor_runtime_resume(&resource->pdev->dev);
@@ -2074,7 +2060,7 @@ int is_resource_put(struct is_resourcemgr *resourcemgr, u32 rsc_type)
 		case RESOURCE_TYPE_SENSOR3:
 		case RESOURCE_TYPE_SENSOR4:
 		case RESOURCE_TYPE_SENSOR5:
-			id = rsc_type - RESOURCE_TYPE_SENSOR0;
+		id = rsc_type - RESOURCE_TYPE_SENSOR0;
 #if defined(CONFIG_PM)
 			pm_runtime_put_sync(&resource->pdev->dev);
 #else
@@ -2139,9 +2125,7 @@ int is_resource_put(struct is_resourcemgr *resourcemgr, u32 rsc_type)
 	if (atomic_read(&core->rsccount) == 1) {
 		u32 current_min, current_max;
 
-#if defined(CONFIG_EXYNOS_BCM_DBG_AUTO) || defined(CONFIG_EXYNOS_BCM_DBG_GNR)
 		exynos_bcm_dbg_stop(CAMERA_DRIVER);
-#endif
 #ifdef DISABLE_BTS_CALC
 		bts_calc_disable(0);
 #endif
@@ -2193,7 +2177,7 @@ int is_resource_put(struct is_resourcemgr *resourcemgr, u32 rsc_type)
 #ifdef CONFIG_CMU_EWF
 		set_cmuewf(idx_ewf, 0);
 #endif
-#if defined(CONFIG_VENDER_MCD) || defined(CONFIG_VENDER_MCD_V2)
+#ifdef CONFIG_VENDER_MCD
 		core->vender.closing_hint = IS_CLOSING_HINT_NONE;
 #endif
 
@@ -2207,6 +2191,8 @@ int is_resource_put(struct is_resourcemgr *resourcemgr, u32 rsc_type)
 		pm_relax(&core->pdev->dev);
 
 		clear_bit(IS_RM_POWER_ON, &resourcemgr->state);
+
+		is_vendor_resource_clean();
 	}
 
 	atomic_dec(&resource->rsccount);
@@ -2393,6 +2379,7 @@ int is_resource_update_lic_sram(struct is_resourcemgr *resourcemgr, void *device
 	FIMC_BUG(!device);
 
 	/* TODO: DT flag for LIC use */
+
 
 	sensor = ischain->sensor;
 	FIMC_BUG(!sensor);

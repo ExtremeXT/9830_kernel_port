@@ -51,6 +51,7 @@
 /* TODO: remove AA_SCENE_MODE_REMOSAIC */
 #define CHK_MODECHANGE_SCN(captureIntent)	\
 	(((captureIntent == AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_SINGLE) \
+	|| (captureIntent == AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_SINGLE_FLASH) \
 	|| (captureIntent == AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_DYNAMIC_SHOT) \
 	|| (captureIntent == AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_MFHDR_DYNAMIC_SHOT)	\
 	|| (captureIntent == AA_CAPTURE_INTENT_STILL_CAPTURE_REMOSAIC_EXPOSURE_DYNAMIC_SHOT)) ? 1 : 0)
@@ -88,7 +89,7 @@ struct is_fast_ctl {
 	uint32_t		lens_pos;
 };
 
-#define MAX_NUM_FAST_CTL	5
+#define MAX_NUM_FAST_CTL	9
 struct fast_control_mgr {
 	u32			fast_capture_count;
 
@@ -398,12 +399,6 @@ extern const struct is_queue_ops is_ischain_subdev_ops;
 
 int is_itf_power_down(struct is_interface *interface);
 int is_ischain_power(struct is_device_ischain *this, int on);
-
-int is_ischain_s_sensor_size(struct is_device_ischain *device,
-	struct is_frame *frame,
-	u32 *lindex,
-	u32 *hindex,
-	u32 *indexes);
 
 #define IS_EQUAL_COORD(i, o)				\
 	(((i)[0] != (o)[0]) || ((i)[1] != (o)[1]) ||	\

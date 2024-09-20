@@ -15,6 +15,9 @@
 #include "decon.h"
 #include "dpp.h"
 #include "dsim.h"
+#if defined(CONFIG_EXYNOS_DECON_DQE)
+#include "dqe.h"
+#endif
 
 static void win_update_adjust_region(struct decon_device *decon,
 		struct decon_win_config *win_config,
@@ -72,10 +75,8 @@ static void win_update_adjust_region(struct decon_device *decon,
 	r2.bottom = div_h * decon->win_up.rect_h - 1;
 
 	/* TODO: Now, 4 slices must be used. This will be modified */
-	if (decon->lcd_info->dsc.en) {
-		r2.left = 0;
-		r2.right = decon->lcd_info->xres - 1;
-	}
+	r2.left = 0;
+	r2.right = decon->lcd_info->xres - 1;
 
 	memcpy(&regs->up_region, &r2, sizeof(struct decon_rect));
 
@@ -105,12 +106,24 @@ static void win_update_check_limitation(struct decon_device *decon,
 	int sz_align = 1;
 	int adj_src_x = 0, adj_src_y = 0;
 
-	memset(&ch_res, 0, sizeof(struct dpp_ch_restriction));
+	/*
+	 * 'readback/fence/tui + window update' is not a HW limitation,
+	 * the update region is changed to full
+	 */
+	if (decon->win_up.force_full) {
+		DPU_DEBUG_WIN("Full size update flag is set!\n");
+		DPU_FULL_RECT(&regs->up_region, decon->lcd_info);
+		decon->win_up.force_full = false;
+		return;;
+	}
 
 	for (i = 0; i < decon->dt.max_win; i++) {
 		config = &win_config[i];
 		if (config->state == DECON_WIN_STATE_DISABLED)
 			continue;
+
+		if (config->state == DECON_WIN_STATE_CURSOR)
+			goto change_full;
 
 		r.left = config->dst.x;
 		r.top = config->dst.y;
@@ -161,6 +174,9 @@ static void win_update_check_limitation(struct decon_device *decon,
 		}
 	}
 
+	if (is_decon_rect_empty(&regs->up_region))
+		decon_warn("%s: up_region is empty\n", __func__);
+
 	return;
 
 change_full:
@@ -169,6 +185,7 @@ change_full:
 			config->dst.x, config->dst.y,
 			config->dst.w, config->dst.h);
 	DPU_FULL_RECT(&regs->up_region, decon->lcd_info);
+	return;
 }
 
 static void win_update_reconfig_coordinates(struct decon_device *decon,
@@ -244,15 +261,137 @@ static void win_update_reconfig_coordinates(struct decon_device *decon,
 	}
 }
 
+static int dpu_find_display_mode(struct decon_device *decon,
+		u32 w, u32 h, u32 vrr_fps)
+{
+	struct exynos_display_mode_info *supported_mode;
+	int i;
+
+	for (i = 0; i < decon->lcd_info->display_mode_count; i++) {
+		supported_mode = &decon->lcd_info->display_mode[i];
+		if ((supported_mode->mode.width == w) &&
+			(supported_mode->mode.height == h) &&
+			(supported_mode->mode.fps == vrr_fps))
+			break;
+	}
+
+	if (i == decon->lcd_info->display_mode_count)
+		return -EINVAL;
+
+	return i;
+}
+
+static unsigned int dpu_get_maximum_fps_by_mres(struct decon_device *decon, u32 w, u32 h)
+{
+	struct exynos_display_mode_info *supported_mode;
+	unsigned int fps = 0;
+	int i;
+
+	for (i = 0; i < decon->lcd_info->display_mode_count; i++) {
+		supported_mode = &decon->lcd_info->display_mode[i];
+		if ((supported_mode->mode.width == w) &&
+			(supported_mode->mode.height == h))
+			fps = max(fps, supported_mode->mode.fps);
+	}
+
+	return fps;
+}
+
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+static int dpu_find_panel_display_mode(struct decon_device *decon,
+		u32 w, u32 h, u32 vrr_fps, u32 vrr_mode)
+{
+	struct panel_display_modes *panel_modes;
+	struct panel_display_mode *supported_mode;
+	int i;
+
+	panel_modes = decon->lcd_info->panel_modes;
+	for (i = 0; i < panel_modes->num_modes; i++) {
+		supported_mode = panel_modes->modes[i];
+		if ((supported_mode->width == w) &&
+			(supported_mode->height == h) &&
+			(supported_mode->refresh_rate == vrr_fps) &&
+			(supported_mode->refresh_mode == vrr_mode))
+			break;
+	}
+
+	if (i == panel_modes->num_modes)
+		return -EINVAL;
+
+	return i;
+}
+
+/*
+ * best display ext mode will be found by priority
+ * searching priority : resolution > vrr_mode > vrr_fps
+ */
+static int dpu_find_best_panel_display_mode(struct decon_device *decon,
+		u32 w, u32 h, u32 vrr_fps, u32 vrr_mode)
+{
+	struct panel_display_modes *panel_modes;
+	struct panel_display_mode *supported_mode;
+	struct exynos_panel_info *lcd_info;
+	int index;
+
+	lcd_info = decon->lcd_info;
+	panel_modes = lcd_info->panel_modes;
+	if (!panel_modes)
+		return -EINVAL;
+
+	/*
+	 * check if requested mres and vrr is available
+	 */
+	index = dpu_find_panel_display_mode(decon,
+			w, h, vrr_fps, vrr_mode);
+	if (index >= 0)
+		return index;
+
+	/*
+	 * check if requested mres and vrr_mode and less than vrr_fps
+	 */
+	for (index = 0; index < panel_modes->num_modes; index++) {
+		supported_mode = panel_modes->modes[index];
+		if ((supported_mode->width == w) &&
+			(supported_mode->height == h) &&
+			(supported_mode->refresh_rate <= vrr_fps) &&
+			(supported_mode->refresh_mode == vrr_mode))
+			break;
+	}
+
+	if (index != panel_modes->num_modes)
+		return index;
+
+	/*
+	 * check if requested mres and less than vrr_fps
+	 */
+	for (index = 0; index < panel_modes->num_modes; index++) {
+		supported_mode = panel_modes->modes[index];
+		if ((supported_mode->width == w) &&
+			(supported_mode->height == h) &&
+			(supported_mode->refresh_rate <= vrr_fps))
+			break;
+	}
+
+	if (index != panel_modes->num_modes)
+		return index;
+
+	DPU_DEBUG_MRES("best display mode not found(%dx%d@%d%s)\n",
+			w, h, vrr_fps,
+			(vrr_mode == EXYNOS_PANEL_VRR_NS_MODE) ? "NS" : "HS");
+
+	return -EINVAL;
+}
+#endif
+
 static bool dpu_need_mres_config(struct decon_device *decon,
 		struct decon_win_config *win_config,
 		struct decon_reg_data *regs)
 {
 	struct decon_win_config *mres_config = &win_config[DECON_WIN_UPDATE_IDX];
-	struct lcd_res_info *supported_res;
-	int i;
+	int mode_idx;
+	unsigned int fps, max_fps;
 
-	regs->mres_update = false;
+	regs->mode_update = false;
 
 	if (!decon->mres_enabled) {
 		DPU_DEBUG_MRES("multi-resolution feature is disabled\n");
@@ -269,7 +408,7 @@ static bool dpu_need_mres_config(struct decon_device *decon,
 		goto end;
 	}
 
-	if (!(mres_config->state & DECON_WIN_STATE_MRESOL))
+	if (!(mres_config->state == DECON_WIN_STATE_MRESOL))
 		goto end;
 
 	/* requested LCD resolution */
@@ -284,24 +423,30 @@ static bool dpu_need_mres_config(struct decon_device *decon,
 		goto end;
 	}
 
-	/* match supported and requested LCD resolution */
-	for (i = 0; i < decon->lcd_info->mres.number; i++) {
-		supported_res = &decon->lcd_info->mres.res_info[i];
-		if ((supported_res->width == regs->lcd_width) &&
-			(supported_res->height == regs->lcd_height)) {
-			regs->mres_update = true;
-			regs->mres_idx = i;
-			break;
-		}
+	max_fps = dpu_get_maximum_fps_by_mres(decon,
+			regs->lcd_width, regs->lcd_height);
+	fps = min(decon->lcd_info->fps, max_fps);
+
+	/* match supported and requested display mode(resolution & fps) */
+	mode_idx = dpu_find_display_mode(decon,
+			regs->lcd_width, regs->lcd_height, fps);
+	if (mode_idx < 0) {
+		DPU_ERR_MRES("%s:could not find display mode(%dx%d@%d)\n",
+				__func__, regs->lcd_width, regs->lcd_height, fps);
+		goto end;
 	}
 
-	DPU_DEBUG_MRES("update(%d), mode(%d), resolution(%d %d -> %d %d)\n",
-			regs->mres_update, regs->mres_idx,
+	regs->mode_update = true;
+	regs->mode_idx = mode_idx;
+
+	DPU_DEBUG_MRES("update(%d), mode idx(%d), mode(%dx%d@%d -> %dx%d@%d)\n",
+			regs->mode_update, regs->mode_idx,
 			decon->lcd_info->xres, decon->lcd_info->yres,
-			regs->lcd_width, regs->lcd_height);
+			decon->lcd_info->fps,
+			regs->lcd_width, regs->lcd_height, fps);
 
 end:
-	return regs->mres_update;
+	return regs->mode_update;
 }
 
 void dpu_prepare_win_update_config(struct decon_device *decon,
@@ -341,7 +486,6 @@ void dpu_prepare_win_update_config(struct decon_device *decon,
 		regs->need_update = true;
 	else
 		regs->need_update = false;
-
 	/*
 	 * If partial update region is requested, source and destination
 	 * coordinates are needed to change if overlapped with update region.
@@ -361,29 +505,125 @@ void dpu_prepare_win_update_config(struct decon_device *decon,
 		win_update_reconfig_coordinates(decon, win_config, regs);
 }
 
-void dpu_set_mres_config(struct decon_device *decon, struct decon_reg_data *regs)
+static int dpu_check_mres_condition(struct decon_device *decon,
+		bool mode_update)
 {
-	struct dsim_device *dsim = get_dsim_drvdata(0);
-	struct lcd_mres_info *mres_info = &dsim->panel->lcd_info.mres;
-	struct decon_param p;
-	int idx;
-
 	if (!decon->mres_enabled) {
 		DPU_DEBUG_MRES("multi-resolution feature is disabled\n");
-		return;
+		return -EPERM;
 	}
 
 	if (decon->dt.out_type != DECON_OUT_DSI) {
 		DPU_DEBUG_MRES("multi resolution only support DSI path\n");
-		return;
+		return -EPERM;
 	}
 
 	if (!decon->lcd_info->mres.en) {
 		DPU_DEBUG_MRES("panel doesn't support multi-resolution\n");
-		return;
+		return -EPERM;
 	}
 
-	if (!regs->mres_update)
+	if (!mode_update)
+		return -EPERM;
+
+	return 0;
+}
+
+static int dpu_update_display_mode(struct decon_device *decon,
+		int mode_idx, int vrr_mode)
+{
+	struct dsim_device *dsim = get_dsim_drvdata(0);
+	struct exynos_display_mode_info *display_mode;
+	struct exynos_panel_info *lcd_info;
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+	struct panel_display_modes *panel_modes;
+	int panel_mode_idx;
+#endif
+
+	if (IS_ERR_OR_NULL(dsim)) {
+		DPU_ERR_MRES("%s: dsim device ptr is invalid\n", __func__);
+		return -EINVAL;
+	}
+
+	lcd_info = &dsim->panel->lcd_info;
+	display_mode = lcd_info->display_mode;
+	if (mode_idx >= lcd_info->display_mode_count)
+		return -EINVAL;
+
+	lcd_info->cur_mode_idx = mode_idx;
+	lcd_info->xres = display_mode[mode_idx].mode.width;
+	lcd_info->yres = display_mode[mode_idx].mode.height;
+	lcd_info->dsc.en = display_mode[mode_idx].dsc_en;
+	lcd_info->dsc.slice_h = display_mode[mode_idx].dsc_height;
+	lcd_info->dsc.enc_sw = display_mode[mode_idx].dsc_enc_sw;
+	lcd_info->dsc.dec_sw = display_mode[mode_idx].dsc_dec_sw;
+
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+	panel_modes = dsim->panel->lcd_info.panel_modes;
+	/* update fps, vrr_mode using panel_display_mode */
+	panel_mode_idx =
+		dpu_find_best_panel_display_mode(decon,
+				dsim->panel->lcd_info.xres,
+				dsim->panel->lcd_info.yres,
+				display_mode[mode_idx].mode.fps, vrr_mode);
+	if (panel_mode_idx < 0) {
+		DPU_ERR_MRES("could not find panel display mode(%dx%d@%d%s)\n",
+				dsim->panel->lcd_info.xres,
+				dsim->panel->lcd_info.yres,
+				dsim->panel->lcd_info.fps,
+				REFRESH_MODE_STR(dsim->panel->lcd_info.vrr_mode));
+		return -EPERM;
+	}
+	lcd_info->fps =
+		panel_modes->modes[panel_mode_idx]->panel_refresh_rate;
+	lcd_info->vrr_mode =
+		panel_modes->modes[panel_mode_idx]->panel_refresh_mode;
+	lcd_info->panel_te_sw_skip_count =
+		panel_modes->modes[panel_mode_idx]->panel_te_sw_skip_count;
+	lcd_info->panel_te_hw_skip_count =
+		panel_modes->modes[panel_mode_idx]->panel_te_hw_skip_count;
+#else
+	dsim->panel->lcd_info.fps =
+		display_mode[mode_idx].mode.fps;
+#endif
+
+#if defined(CONFIG_DECON_VRR_MODULATION)
+	/*
+	 * update refresh-rate s/w modulation count
+	 */
+	decon->vsync.div_count =
+		exynos_panel_div_count(lcd_info);
+#endif
+
+#if defined(CONFIG_DECON_BTS_VRR_ASYNC)
+	/*
+	 * lcd_info's fps is used in bts calculation.
+	 * To prevent underrun, update fps first
+	 * if target fps is bigger than previous fps.
+	 */
+	if (lcd_info->fps > decon->bts.next_fps) {
+		decon->bts.next_fps = lcd_info->fps;
+		decon->bts.next_fps_vsync_count = 0;
+		DPU_DEBUG_BTS("\tupdate next_fps(%d) next_fps_vsync_count(%llu)\n",
+				decon->bts.next_fps, decon->bts.next_fps_vsync_count);
+	}
+#endif
+
+	DPU_DEBUG_MRES("changed display_mode(%d:%dx%d@%d%s) dsc enc/dec sw(%d %d)\n",
+			mode_idx, lcd_info->xres, lcd_info->yres,
+			lcd_info->fps, REFRESH_MODE_STR(lcd_info->vrr_mode),
+			lcd_info->dsc.enc_sw, lcd_info->dsc.dec_sw);
+
+	return 0;
+}
+
+void dpu_update_mres_lcd_info(struct decon_device *decon,
+		struct decon_reg_data *regs)
+{
+	struct dsim_device *dsim = get_dsim_drvdata(0);
+	int ret;
+
+	if (dpu_check_mres_condition(decon, regs->mode_update))
 		return;
 
 	if (IS_ERR_OR_NULL(dsim)) {
@@ -391,26 +631,123 @@ void dpu_set_mres_config(struct decon_device *decon, struct decon_reg_data *regs
 		return;
 	}
 
+	/* fps will be update at actual operation part */
+	/* backup current LCD resolution information to previous one */
+	ret = dpu_update_display_mode(decon, regs->mode_idx,
+			dsim->panel->lcd_info.vrr_mode);
+	if (ret < 0) {
+		DPU_ERR_MRES("%s: could not update display_mode(%d)\n",
+				__func__, regs->mode_idx);
+		return;
+	}
+}
+
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+static int dpu_set_panel_display_mode(struct decon_device *decon, int panel_mode_idx)
+{
+	struct dsim_device *dsim = get_dsim_drvdata(0);
+	struct panel_display_modes *panel_modes;
+	struct exynos_panel_info *lcd_info;
+	int ret;
+
+	if (decon->dt.out_type != DECON_OUT_DSI)
+		return -EPERM;
+
+	if (IS_ERR_OR_NULL(dsim)) {
+		DPU_ERR_MRES("%s: dsim device ptr is invalid\n", __func__);
+		return -EINVAL;
+	}
+
+	lcd_info = &dsim->panel->lcd_info;
+	panel_modes = lcd_info->panel_modes;
+	if (!panel_modes) {
+		DPU_ERR_MRES("%s: panel_modes not prepared\n", __func__);
+		return -EINVAL;
+	}
+
+	ret = dsim_call_panel_ops(dsim,
+			EXYNOS_PANEL_IOC_SET_DISPLAY_MODE, &panel_mode_idx);
+	if (ret < 0)
+		return ret;
+
+	DPU_INFO_MRES("set panel_display_mode(%d:%dx%d@%d%s_%d%s)\n",
+			panel_mode_idx,
+			panel_modes->modes[panel_mode_idx]->width,
+			panel_modes->modes[panel_mode_idx]->height,
+			panel_modes->modes[panel_mode_idx]->refresh_rate,
+			REFRESH_MODE_STR(panel_modes->modes[panel_mode_idx]->refresh_mode),
+			panel_modes->modes[panel_mode_idx]->panel_refresh_rate,
+			REFRESH_MODE_STR(panel_modes->modes[panel_mode_idx]->panel_refresh_mode));
+
+	return 0;
+}
+#endif
+
+static int dpu_set_panel_mres(struct decon_device *decon, int mode_idx)
+{
+	struct dsim_device *dsim = get_dsim_drvdata(0);
+	struct exynos_panel_info *lcd_info;
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+	int panel_mode_idx;
+#endif
+	int ret;
+
+	if (decon->dt.out_type != DECON_OUT_DSI)
+		return -EPERM;
+
+	if (IS_ERR_OR_NULL(dsim)) {
+		DPU_ERR_MRES("%s: dsim device ptr is invalid\n", __func__);
+		return -EINVAL;
+	}
+
+	lcd_info = &dsim->panel->lcd_info;
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+	/* change exynos display mode to panel display mode index */
+	panel_mode_idx = dpu_find_best_panel_display_mode(decon,
+			lcd_info->display_mode[mode_idx].mode.width,
+			lcd_info->display_mode[mode_idx].mode.height,
+			lcd_info->display_mode[mode_idx].mode.fps,
+			lcd_info->vrr_mode);
+	if (panel_mode_idx < 0) {
+		DPU_ERR_MRES("could not find panel display mode(%dx%d@%d%s)\n",
+				lcd_info->display_mode[mode_idx].mode.width,
+				lcd_info->display_mode[mode_idx].mode.height,
+				lcd_info->display_mode[mode_idx].mode.fps,
+				REFRESH_MODE_STR(lcd_info->vrr_mode));
+		return -EPERM;
+	}
+
+	ret = dpu_set_panel_display_mode(decon, panel_mode_idx);
+	if (ret < 0) {
+		DPU_ERR_MRES("%s:failed to set display_mode(%d) ret(%d)\n",
+				__func__, mode_idx, ret);
+		return ret;
+	}
+#else
+	ret = dsim_call_panel_ops(dsim, EXYNOS_PANEL_IOC_MRES, &mode_idx);
+	if (ret < 0)
+		return ret;
+#endif
+
+	return 0;
+}
+
+void dpu_set_mres_config(struct decon_device *decon, struct decon_reg_data *regs)
+{
+	struct dsim_device *dsim = get_dsim_drvdata(0);
+	struct decon_param p;
+
+	if (dpu_check_mres_condition(decon, regs->mode_update))
+		return;
+
 	/*
 	 * Before LCD resolution is changed, previous frame data must be
 	 * finished to transfer.
 	 */
 	decon_reg_wait_idle_status_timeout(decon->id, IDLE_WAIT_TIMEOUT);
 
-	/* backup current LCD resolution information to previous one */
-	dsim->panel->lcd_info.xres = regs->lcd_width;
-	dsim->panel->lcd_info.yres = regs->lcd_height;
-	dsim->panel->lcd_info.mres_mode = regs->mres_idx;
-	idx = regs->mres_idx;
-	dsim->panel->lcd_info.dsc.en = mres_info->res_info[idx].dsc_en;
-	dsim->panel->lcd_info.dsc.slice_h = mres_info->res_info[idx].dsc_height;
-	dsim->panel->lcd_info.dsc.enc_sw =
-		dsim->panel->lcd_info.dsc_slice.dsc_enc_sw[idx];
-	dsim->panel->lcd_info.dsc.dec_sw =
-		dsim->panel->lcd_info.dsc_slice.dsc_dec_sw[idx];
-
 	/* transfer LCD resolution change commands to panel */
-	dsim_call_panel_ops(dsim, EXYNOS_PANEL_IOC_MRES, &regs->mres_idx);
+	dpu_set_panel_mres(decon, regs->mode_idx);
 
 	/* DECON and DSIM are reconfigured by changed LCD resolution */
 	dsim_reg_set_mres(dsim->id, &dsim->panel->lcd_info);
@@ -419,13 +756,121 @@ void dpu_set_mres_config(struct decon_device *decon, struct decon_reg_data *regs
 
 	/* If LCD resolution is changed, initial partial size is also changed */
 	dpu_init_win_update(decon);
-
-	DPU_DEBUG_MRES("changed LCD resolution(%d %d), dsc enc/dec sw(%d %d)\n",
-			decon->lcd_info->xres, decon->lcd_info->yres,
-			dsim->panel->lcd_info.dsc.enc_sw,
-			dsim->panel->lcd_info.dsc.dec_sw);
 }
 
+void dpu_update_vrr_lcd_info(struct decon_device *decon,
+		struct vrr_config_data *vrr_config)
+{
+	struct dsim_device *dsim = get_dsim_drvdata(0);
+	struct exynos_panel_info *lcd_info;
+	int ret, mode_idx, cur_mode_idx;
+	unsigned int fps, max_fps;
+
+	if (IS_ERR_OR_NULL(dsim)) {
+		DPU_ERR_MRES("%s: dsim device ptr is invalid\n", __func__);
+		return;
+	}
+
+	lcd_info = &dsim->panel->lcd_info;
+	cur_mode_idx = lcd_info->cur_mode_idx;
+
+	max_fps = dpu_get_maximum_fps_by_mres(decon,
+				lcd_info->display_mode[cur_mode_idx].mode.width,
+				lcd_info->display_mode[cur_mode_idx].mode.height);
+	fps = min(vrr_config->fps, max_fps);
+
+	/* find exynos_display_mode with new fps */
+	mode_idx = dpu_find_display_mode(decon,
+			lcd_info->display_mode[cur_mode_idx].mode.width,
+			lcd_info->display_mode[cur_mode_idx].mode.height, fps);
+	if (mode_idx < 0) {
+		DPU_ERR_MRES("%s:could not find display mode(%dx%d@%d)\n",
+				__func__, lcd_info->display_mode[cur_mode_idx].mode.width,
+				lcd_info->display_mode[cur_mode_idx].mode.height, fps);
+		return;
+	}
+
+	/* backup current LCD refresh-rate information to previous one */
+	ret = dpu_update_display_mode(decon, mode_idx, vrr_config->mode);
+	if (ret < 0) {
+		DPU_ERR_MRES("%s: could not update display_mode(%d)\n",
+				__func__, mode_idx);
+		return;
+	}
+}
+
+static int dpu_set_panel_vrr(struct decon_device *decon,
+		struct vrr_config_data *vrr_config)
+{
+	struct dsim_device *dsim = get_dsim_drvdata(0);
+	int ret;
+#if defined(CONFIG_PANEL_DISPLAY_MODE)
+	struct exynos_panel_info *lcd_info;
+	int panel_mode_idx;
+	int mode_idx, cur_mode_idx;
+	unsigned int fps, max_fps;
+
+	lcd_info = &dsim->panel->lcd_info;
+	cur_mode_idx = lcd_info->cur_mode_idx;
+
+	max_fps = dpu_get_maximum_fps_by_mres(decon,
+			lcd_info->display_mode[cur_mode_idx].mode.width,
+			lcd_info->display_mode[cur_mode_idx].mode.height);
+	fps = min(vrr_config->fps, max_fps);
+
+	/* find exynos_display_mode with new fps */
+	mode_idx = dpu_find_display_mode(decon,
+			lcd_info->display_mode[cur_mode_idx].mode.width,
+			lcd_info->display_mode[cur_mode_idx].mode.height, fps);
+	if (mode_idx < 0) {
+		DPU_ERR_MRES("%s:could not find display mode(%dx%d@%d)\n",
+				__func__, lcd_info->display_mode[cur_mode_idx].mode.width,
+				lcd_info->display_mode[cur_mode_idx].mode.height, fps);
+		return -EPERM;
+	}
+
+	/* change exynos display mode to panel display mode index */
+	panel_mode_idx = dpu_find_best_panel_display_mode(decon,
+			lcd_info->display_mode[mode_idx].mode.width,
+			lcd_info->display_mode[mode_idx].mode.height,
+			vrr_config->fps, vrr_config->mode);
+	if (panel_mode_idx < 0) {
+		DPU_ERR_MRES("could not find panel display mode(%dx%d@%d%s)\n",
+			lcd_info->display_mode[mode_idx].mode.width,
+			lcd_info->display_mode[mode_idx].mode.height,
+			vrr_config->fps, REFRESH_MODE_STR(vrr_config->mode));
+		return -EPERM;
+	}
+
+	ret = dpu_set_panel_display_mode(decon, panel_mode_idx);
+	if (ret < 0) {
+		DPU_ERR_MRES("%s:failed to set display_mode(%d) ret(%d)\n",
+				__func__, mode_idx, ret);
+		return ret;
+	}
+#else
+	ret = dsim_call_panel_ops(dsim,
+			EXYNOS_PANEL_IOC_SET_VREFRESH, vrr_config);
+	if (ret < 0)
+		return ret;
+#endif
+
+	return 0;
+}
+
+void dpu_set_vrr_config(struct decon_device *decon,
+		struct vrr_config_data *vrr_config)
+{
+	int ret;
+
+	ret = dpu_set_panel_vrr(decon, vrr_config);
+	if (ret < 0)
+		DPU_ERR_MRES("%s:failed to set vrr(%d%s)\n",
+				__func__, vrr_config->fps,
+				REFRESH_MODE_STR(vrr_config->mode));
+}
+
+#if !defined(CONFIG_EXYNOS_COMMON_PANEL)
 static int win_update_send_partial_command(struct dsim_device *dsim,
 		struct decon_rect *rect)
 {
@@ -472,6 +917,18 @@ static int win_update_send_partial_command(struct dsim_device *dsim,
 
 	return 0;
 }
+#else
+static int win_update_send_partial_command(struct dsim_device *dsim,
+		struct decon_rect *rect)
+{
+	DPU_DEBUG_WIN("SET: [%d %d %d %d]\n", rect->left, rect->top,
+			rect->right - rect->left + 1, rect->bottom - rect->top + 1);
+
+	dsim_call_panel_ops(dsim, EXYNOS_PANEL_IOC_SETAREA, rect);
+
+	return 0;
+}
+#endif
 
 static void win_update_find_included_slice(struct exynos_panel_info *lcd,
 		struct decon_rect *rect, bool in_slice[])
@@ -504,6 +961,9 @@ static void win_update_set_partial_size(struct decon_device *decon,
 	struct dsim_device *dsim = get_dsim_drvdata(0);
 	bool in_slice[MAX_DSC_SLICE_CNT];
 
+	if (is_decon_rect_empty(rect))
+		decon_warn("%s: rect is empty\n", __func__);
+
 	memcpy(&lcd_info, decon->lcd_info, sizeof(struct exynos_panel_info));
 	lcd_info.xres = rect->right - rect->left + 1;
 	lcd_info.yres = rect->bottom - rect->top + 1;
@@ -518,6 +978,9 @@ static void win_update_set_partial_size(struct decon_device *decon,
 	decon_reg_set_partial_update(decon->id, decon->dt.dsi_mode,
 			decon->lcd_info, in_slice,
 			lcd_info.xres, lcd_info.yres);
+#if defined(CONFIG_EXYNOS_DECON_DQE)
+	dqe_reg_start(decon->id, &lcd_info);
+#endif
 	DPU_DEBUG_WIN("SET: vfp %d vbp %d vsa %d hfp %d hbp %d hsa %d w %d h %d\n",
 			lcd_info.vfp, lcd_info.vbp, lcd_info.vsa,
 			lcd_info.hfp, lcd_info.hbp, lcd_info.hsa,

@@ -19,6 +19,9 @@
 
 #include "mfc_common.h"
 
+#define MFC_OTF_DEFAULT_SCRATCH_SIZE	81920
+#define MFC_OTF_DEFAULT_DPB_COUNT	3
+
 extern struct mfc_dev *g_mfc_dev;
 
 int mfc_otf_create(struct mfc_ctx *ctx);

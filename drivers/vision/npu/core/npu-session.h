@@ -23,6 +23,7 @@
 #include "npu-queue.h"
 #include "npu-config.h"
 #include "npu-common.h"
+#include "npu-scheduler.h"
 #include "npu-if-session-protodrv.h"
 #include "ncp_header.h"
 #include "drv_usr_if.h"
@@ -75,6 +76,8 @@ struct npu_session {
 
 	// dynamic allocation, free is required, for ion alloc memory
 	struct npu_memory_buffer *ncp_mem_buf;
+	struct npu_memory_buffer *ncp_hdr_buf;
+	struct npu_memory_buffer *ncp_payload;
 	struct npu_memory_buffer *IOFM_mem_buf; // VISION_MAX_CONTAINERLIST * VISION_MAX_BUFFER
 	struct npu_memory_buffer *IMB_mem_buf; // IMB_cnt
 
@@ -89,6 +92,8 @@ struct npu_session {
 
 	u32 FIRMWARE_DRAM_TRANSFER; // dram transfer or sram transfer for firmware
 
+	struct npu_nw_sched_param sched_param;/* For NW priority and boundness */
+
 	struct nw_result nw_result;
 	wait_queue_head_t wq;
 
@@ -100,6 +105,11 @@ struct npu_session {
 	struct ion_info *imb_ion_info;
 
 	pid_t	pid;
+
+	u32 address_vector_offset;
+	u32 address_vector_cnt;
+	u32 memory_vector_offset;
+	u32 memory_vector_cnt;
 };
 
 typedef int (*session_cb)(struct npu_session *);
@@ -121,6 +131,9 @@ int npu_session_open(struct npu_session **session, void *cookie, void *memory);
 int npu_session_close(struct npu_session *session);
 int npu_session_s_graph(struct npu_session *session, struct vs4l_graph *info);
 int npu_session_param(struct npu_session *session, struct vs4l_param_list *plist);
+int npu_session_nw_sched_param(struct npu_session *session, struct vs4l_sched_param *param);
+void npu_session_ion_sync_for_device(struct npu_memory_buffer *pbuf, off_t offset, size_t size,
+					enum dma_data_direction dir);
 int npu_session_NW_CMD_LOAD(struct npu_session *session);
 int npu_session_NW_CMD_UNLOAD(struct npu_session *session);
 int npu_session_NW_CMD_STREAMON(struct npu_session *session);

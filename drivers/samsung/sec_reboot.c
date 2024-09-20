@@ -19,7 +19,7 @@
 
 #include "./debug/sec_debug_internal.h"
 #ifdef CONFIG_BATTERY_SAMSUNG
-#include "../battery/common/sec_battery.h"
+#include "../battery_v2/include/sec_battery.h"
 #endif
 #include <linux/sec_batt.h>
 

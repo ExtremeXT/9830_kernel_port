@@ -89,4 +89,7 @@ obj-$(CONFIG_EXYNOS_GNSS_IF) += gnssif/
 # Exynos CPU Performance
 obj-$(CONFIG_EXYNOS_CPU_PERF)	+= exynos_cpu_perf/
 
+# Exynos S2MPU
+obj-$(CONFIG_EXYNOS_S2MPU)     += exynos-s2mpu.o
+
 obj-$(CONFIG_EXYNOS_DEBUG_FREQ)	+= exynos_debug_freq.o

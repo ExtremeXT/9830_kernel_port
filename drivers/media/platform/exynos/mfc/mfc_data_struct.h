@@ -211,6 +211,7 @@ enum mfc_vb_flag {
 	MFC_FLAG_DISP_RES_CHANGE	= 7,
 	MFC_FLAG_UNCOMP			= 8,
 	MFC_FLAG_FRAMERATE_CH		= 9,
+	MFC_FLAG_ENC_SRC_UNCOMP		= 28,
 	MFC_FLAG_CSD			= 29,
 	MFC_FLAG_EMPTY_DATA		= 30,
 	MFC_FLAG_LAST_FRAME		= 31,
@@ -226,6 +227,12 @@ enum mfc_idle_mode {
 	MFC_IDLE_MODE_RUNNING	= 1,
 	MFC_IDLE_MODE_IDLE	= 2,
 	MFC_IDLE_MODE_CANCEL	= 3,
+};
+
+enum mfc_enc_src {
+	MFC_ENC_SRC_SBWC_NO	= 0,
+	MFC_ENC_SRC_SBWC_OFF	= 1,
+	MFC_ENC_SRC_SBWC_ON	= 2,
 };
 
 enum mfc_nal_q_stop_cause {
@@ -253,6 +260,39 @@ enum mfc_nal_q_stop_cause {
 	NALQ_EXCEPTION_ERROR		= 31,
 };
 
+enum mfc_color_primaries {
+	MFC_COLORSPACE_UNSPECIFICED	= 0,
+	MFC_COLORSPACE_BT601		= 1,
+	MFC_COLORSPACE_BT709		= 2,
+	MFC_COLORSPACE_SMPTE_170	= 3,
+	MFC_COLORSPACE_SMPTE_240	= 4,
+	MFC_COLORSPACE_BT2020		= 5,
+	MFC_COLORSPACE_RESERVED		= 6,
+	MFC_COLORSPACE_SRGB		= 7,
+};
+
+enum mfc_transfer_characteristics {
+	MFC_TRANSFER_RESERVED		= 0,
+	MFC_TRANSFER_BT709		= 1,
+	MFC_TRANSFER_UNSPECIFIED	= 2,
+	/* RESERVED			= 3, */
+	MFC_TRANSFER_GAMMA_22		= 4,
+	MFC_TRANSFER_GAMMA_28		= 5,
+	MFC_TRANSFER_SMPTE_170M		= 6,
+	MFC_TRANSFER_SMPTE_240M		= 7,
+	MFC_TRANSFER_LINEAR		= 8,
+	MFC_TRANSFER_LOGARITHMIC	= 9,
+	MFC_TRANSFER_LOGARITHMIC_S	= 10,
+	MFC_TRANSFER_XvYCC		= 11,
+	MFC_TRANSFER_BT1361		= 12,
+	MFC_TRANSFER_SRGB		= 13,
+	MFC_TRANSFER_BT2020_1		= 14,
+	MFC_TRANSFER_BT2020_2		= 15,
+	MFC_TRANSFER_ST2084		= 16,
+	MFC_TRANSFER_ST428		= 17,
+	MFC_TRANSFER_HLG		= 18,
+};
+
 struct mfc_ctx;
 
 enum mfc_debug_cause {
@@ -278,6 +318,18 @@ enum mfc_debug_cause {
 	MFC_LAST_INFO_POWER                     = 29,
 	MFC_LAST_INFO_SHUTDOWN                  = 30,
 	MFC_LAST_INFO_DRM                       = 31,
+};
+
+enum mfc_real_time {
+	/* real-time */
+	MFC_RT                  = 0,
+	/* low-priority real-time */
+	MFC_RT_LOW              = 1,
+	/* constrained real-time */
+	MFC_RT_CON              = 2,
+	/* non real-time */
+	MFC_NON_RT              = 3,
+	MFC_RT_UNDEFINED        = 4,
 };
 
 struct mfc_debug {
@@ -569,7 +621,6 @@ struct mfc_platdata {
 	unsigned int axid_mask;
 	unsigned int mfc_fault_num;
 	unsigned int trans_info_offset;
-	unsigned int sysmmu_passes_axid;
 	/* Default 10bit format for decoding and dithering for display */
 	unsigned int P010_decoding;
 	unsigned int dithering_enable;
@@ -613,6 +664,8 @@ struct mfc_platdata {
 	struct mfc_feature wait_fw_status;
 	struct mfc_feature wait_nalq_status;
 	struct mfc_feature drm_switch_predict;
+	struct mfc_feature sbwc_enc_src_ctrl;
+	struct mfc_feature enc_ts_delta;
 
 	/* Encoder default parameter */
 	unsigned int enc_param_num;
@@ -698,7 +751,12 @@ typedef struct __EncoderInputStr {
 	int WeightUpper;
 	int RcMode;
 	int St2094_40sei[30];
-} EncoderInputStr; /* 81*4 = 324 bytes */
+	int SourcePlaneStride[3];
+	int SourcePlane2BitStride[2];
+	int MVHorRange;
+	int MVVerRange;
+	int TimeStampDelta;
+} EncoderInputStr; /* 89*4 = 356 bytes */
 
 typedef struct __DecoderOutputStr {
 	int StartCode; /* 0xAAAAAAAA; Decoder output structure marker */
@@ -987,6 +1045,7 @@ struct mfc_dev {
 #endif
 	struct mutex qos_mutex;
 	int mfc_freq_by_bps;
+	int last_mfc_freq;
 	struct mfc_bitrate_table bitrate_table[MAX_NUM_MFC_FREQ];
 	int bps_ratio;
 
@@ -1290,6 +1349,8 @@ struct mfc_enc_params {
 	u32 display_primaries_0;
 	u32 display_primaries_1;
 	u32 display_primaries_2;
+	u32 chroma_qp_offset_cb; /* H.264, HEVC */
+	u32 chroma_qp_offset_cr; /* H.264, HEVC */
 
 	union {
 		struct mfc_h264_enc_params h264;
@@ -1378,8 +1439,7 @@ struct mfc_ctrls_ops {
 			struct list_head *head, EncoderInputStr *pInStr);
 	int (*get_buf_ctrls_val_nal_q_enc) (struct mfc_ctx *ctx,
 			struct list_head *head, EncoderOutputStr *pOutStr);
-	int (*recover_buf_ctrls_nal_q) (struct mfc_ctx *ctx,
-			struct list_head *head);
+	int (*restore_buf_ctrls) (struct mfc_ctx *ctx, struct list_head *head);
 };
 
 struct temporal_layer_info {
@@ -1591,6 +1651,7 @@ struct mfc_enc {
 	unsigned int buf_full;
 
 	int sbwc_option;
+	struct mfc_fmt *uncomp_fmt;
 
 	int stored_tag;
 	int roi_index;
@@ -1626,6 +1687,9 @@ struct mfc_ctx {
 	int int_condition;
 	int int_reason;
 	unsigned int int_err;
+
+	int prio;
+	enum mfc_real_time rt;
 
 	struct mfc_fmt *src_fmt;
 	struct mfc_fmt *dst_fmt;
@@ -1698,6 +1762,7 @@ struct mfc_ctx {
 
 	unsigned long framerate;
 	unsigned long last_framerate;
+	unsigned long operating_framerate;
 	unsigned int qos_ratio;
 	bool update_framerate;
 

@@ -37,16 +37,19 @@
 #ifdef CONFIG_OF
 #include <linux/of_device.h>
 #endif
-#include "../../base/base.h"
-#if defined(CONFIG_USB_PORT_POWER_OPTIMIZATION)
 #include "usb_power_notify.h"
-#endif
 
 #define OTG_NO_CONNECT		0
 #define OTG_CONNECT_ONLY	1
 #define OTG_DEVICE_CONNECT	2
+#define LINK_DEBUG_L		(0x0C)
+#define LINK_DEBUG_H		(0x10)
+#define BUS_ACTIVITY_CHECK	(0x3F << 16)
+#define READ_TRANS_OFFSET	10
 
 struct dwc3 *g_dwc;
+extern int exynos_usbdrd_pipe3_enable(struct phy *phy);
+extern int exynos_usbdrd_pipe3_disable(struct phy *phy);
 
 /* -------------------------------------------------------------------------- */
 #if defined(CONFIG_TYPEC_DEFAULT)
@@ -217,6 +220,32 @@ static void dwc3_otg_drv_vbus(struct otg_fsm *fsm, int on)
 						on ? "on" : "off");
 }
 
+void dwc3_otg_check_bus_act(struct dwc3 *dwc)
+{
+	u32 reg;
+	u32 xm_wtran, xm_rtran, xm_ch_status;
+	int retries = 300;
+
+	reg = dwc3_readl(dwc->regs, DWC3_GDBGLSPMUX);
+	reg |= BUS_ACTIVITY_CHECK;
+	dwc3_writel(dwc->regs, DWC3_GDBGLSPMUX, reg);
+
+	do {
+		reg = readl(phycon_base_addr + LINK_DEBUG_L);
+		xm_ch_status = reg & 0x3FF;
+		xm_rtran = (reg >> READ_TRANS_OFFSET) & 0x3FFFFF;
+		reg = readl(phycon_base_addr + LINK_DEBUG_H);
+		xm_wtran = reg & 0x3FFFFF;
+
+		if (!xm_rtran && !xm_wtran)
+			break;
+		mdelay(1);
+	} while (--retries);
+
+	pr_info("%s %s: retries = %d\n", __func__,
+		retries ? "clear" : "timeout", retries);
+}
+
 int exynos_usbdrd_inform_dp_use(int use, int lane_cnt)
 {
 	int ret = 0;
@@ -249,14 +278,28 @@ static void dwc3_int_lock_qos_work(struct work_struct *data)
 			pm_qos_update_request(&dotg->pm_qos_int_req, 266000);
 		} else if (dwc->level_val == 1) {
 			dev_info(dev, "lock QOS...(Super speed : Lock 400Mhz)");
-			/* pm_qos_update_request(&dotg->pm_qos_int_req, 400000); */
+			pm_qos_update_request(&dotg->pm_qos_int_req, 400000);
 		} else if (dwc->level_val == 0) {
-			dev_info(dev, "lock QOS...(Super speed PLUS : Lock 400Mhz)");
-			/* pm_qos_update_request(&dotg->pm_qos_int_req, 533000); */
+			dev_info(dev, "lock QOS...(Super speed PLUS : Lock 533Mhz)");
+			pm_qos_update_request(&dotg->pm_qos_int_req, 533000);
 		} else {
 			dev_err(dev, "Unsupported QOS lock level!!!!");
 		}
 	}
+
+	dwc3_exynos_set_bus_clock(dwc->dev->parent, dwc->level_val);
+}
+
+static void dwc3_otg_qos_lock_delayed_work(struct work_struct *wk)
+{
+	struct delayed_work *delay_work =
+		container_of(wk, struct delayed_work, work);
+	struct dwc3 *dwc = container_of(delay_work, struct dwc3, usb_qos_lock_delayed_work);
+	struct dwc3_otg	*dotg = dwc->dotg;
+	struct device *dev = dotg->dwc->dev;
+
+	dev_info(dev, "%s\n", __func__);
+	dwc3_exynos_set_bus_clock(dwc->dev->parent, -1);
 }
 
 void dwc3_otg_qos_lock(struct dwc3 *dwc, int level)
@@ -269,6 +312,67 @@ void dwc3_otg_qos_lock(struct dwc3 *dwc, int level)
     owner 0 - USB
     owner 1 - DP
 */
+static void usb3_phy_control(struct dwc3_otg	*dotg,
+		int owner, int on)
+{
+	struct dwc3	*dwc = dotg->dwc;
+	struct device	*dev = dwc->dev;
+
+	dev_info(dev, "%s, USB3.0 PHY %s\n", __func__, on ? "on" : "off");
+
+	if (on) {
+		dwc3_core_susphy_set(dwc, 0);
+		exynos_usbdrd_pipe3_enable(dwc->usb3_generic_phy);
+		dwc3_core_susphy_set(dwc, 1);
+	} else {
+		dwc3_core_susphy_set(dwc, 0);
+		exynos_usbdrd_pipe3_disable(dwc->usb3_generic_phy);
+		dwc3_core_susphy_set(dwc, 1);
+	}
+}
+
+void usb_power_notify_control(int owner, int on)
+{
+	struct dwc3_otg	*dotg;
+	struct device	*dev;
+	u8 owner_bit = 0;
+
+	if (g_dwc && g_dwc->dotg && g_dwc->dev) {
+		dotg = g_dwc->dotg;
+		dev = g_dwc->dev;
+	} else {
+		pr_err("%s g_dwc or dotg or dev NULL\n", __func__);
+		goto err;
+	}
+
+	dev_info(dev, "%s, combo phy = %d, owner= %d, on = %d\n",
+			__func__, dotg->combo_phy_control, owner, on);
+
+	mutex_lock(&dotg->lock);
+
+	owner_bit = (1 << owner);
+
+	if (on) {
+		if (dotg->combo_phy_control) {
+			dotg->combo_phy_control |= owner_bit;
+			goto out;
+		} else {
+			usb3_phy_control(dotg, owner, on);
+			dotg->combo_phy_control |= owner_bit;
+		}
+	} else {
+		dotg->combo_phy_control &= ~(owner_bit);
+
+		if (dotg->combo_phy_control == 0)
+			usb3_phy_control(dotg, owner, on);
+	}
+out:
+	mutex_unlock(&dotg->lock);
+err:
+	return;
+}
+EXPORT_SYMBOL(usb_power_notify_control);
+
 int dwc3_otg_phy_enable(struct otg_fsm *fsm, int owner, bool on)
 {
 	struct usb_otg	*otg = fsm->otg;
@@ -280,8 +384,9 @@ int dwc3_otg_phy_enable(struct otg_fsm *fsm, int owner, bool on)
 
 	mutex_lock(&dotg->lock);
 
-	dev_info(dev, "%s phy control=%d owner=%d (usb:0 dp:1) on=%d\n",
-			__func__, dotg->combo_phy_control, owner, on);
+	dev_info(dev, "%s combo phy=%d usb2 phy=%d owner=%d (usb:0 dp:1) on=%d\n",
+			__func__, dotg->combo_phy_control, dotg->usb2_phy_control,
+				owner, on);
 
 	if (owner > 1)
 		goto out;
@@ -289,16 +394,33 @@ int dwc3_otg_phy_enable(struct otg_fsm *fsm, int owner, bool on)
 	owner_bit = (1 << owner);
 
 	if (on) {
-		if (dotg->combo_phy_control) {
+		if (dotg->combo_phy_control && dotg->usb2_phy_control) {
 			dotg->combo_phy_control |= owner_bit;
+			dotg->usb2_phy_control |= owner_bit;
 			goto out;
-		} else {
+		} else if (dotg->usb2_phy_control == 0) {
+			/*
+			 * dwc3_otg_phy_enable function enables
+			 * both combo phy and usb2 phy
+			 */
 			phy_conn(dwc->usb2_generic_phy, 1);
 
 			if (dotg->pm_qos_int_val)
 				pm_qos_update_request(&dotg->pm_qos_int_req,
 						dotg->pm_qos_int_val);
-			pm_runtime_get_sync(dev);
+
+			ret = pm_runtime_get_sync(dev);
+			if (ret)
+				dev_info(dwc->dev, "%s: runtime_get device ret %d\n",
+						__func__, ret);
+
+			dwc3_exynos_set_bus_clock(dwc->dev->parent, 1);
+
+			dev_info(dwc->dev, "usb2_generic_phy -> init_count : %d power_count : %d\n",
+				dwc->usb2_generic_phy->init_count, dwc->usb2_generic_phy->power_count);
+			dev_info(dwc->dev, "usb3_generic_phy -> init_count : %d power_count : %d\n",
+				dwc->usb3_generic_phy->init_count, dwc->usb3_generic_phy->power_count);
+
 			ret = dwc3_core_init(dwc);
 			if (ret) {
 				dev_err(dwc->dev, "%s: failed to reinitialize core\n",
@@ -306,31 +428,45 @@ int dwc3_otg_phy_enable(struct otg_fsm *fsm, int owner, bool on)
 				goto err;
 			}
 			dotg->combo_phy_control |= owner_bit;
+			dotg->usb2_phy_control |= owner_bit;
+		} else { /* dotg->combo_phy_control == 0 */
+			usb3_phy_control(dotg, owner, on);
+			dotg->combo_phy_control |= owner_bit;
 		}
 	} else {
 		dotg->combo_phy_control &= ~(owner_bit);
+		dotg->usb2_phy_control &= ~(owner_bit);
 
-		if (dotg->combo_phy_control == 0) {
-			dwc3_core_exit(dwc);
-err:
-			pm_runtime_put_sync_suspend(dev);
-			if (dotg->pm_qos_int_val)
-				pm_qos_update_request(&dotg->pm_qos_int_req, 0);
-			phy_conn(dwc->usb2_generic_phy, 0);
+		if (dotg->usb2_phy_control == 0
+				&& dotg->combo_phy_control == 0) {
+
 			/*
 			 * Need to check why phy init_count has mismatch.
 			 * Phy_init is called from usb_phy_roothub_init() in
 			 * usb_add_hcd function(usb/core/hcd.c)
 			 */
-			dwc->usb2_generic_phy->init_count = 0;
-			dwc->usb3_generic_phy->init_count = 0;
+			dwc->usb2_generic_phy->init_count = 1;
+			dwc->usb3_generic_phy->init_count = 1;
+			dwc->usb2_generic_phy->power_count = 1;
+			dwc->usb3_generic_phy->power_count = 1;
+
+			dwc3_core_exit(dwc);
+err:
+			/* Cancel Delayed work */
+			cancel_delayed_work_sync(&dwc->usb_qos_lock_delayed_work);
+			dwc3_exynos_set_bus_clock(dwc->dev->parent, -1);
+			dwc3_otg_check_bus_act(dwc);
+			pm_runtime_put_sync_suspend(dev);
+			if (dotg->pm_qos_int_val)
+				pm_qos_update_request(&dotg->pm_qos_int_req, 0);
+			phy_conn(dwc->usb2_generic_phy, 0);
 		}
 	}
 out:
 	mutex_unlock(&dotg->lock);
 	return ret;
 }
-int list_clear = 0;
+
 static int dwc3_otg_start_host(struct otg_fsm *fsm, int on)
 {
 	struct usb_otg	*otg = fsm->otg;
@@ -347,6 +483,10 @@ static int dwc3_otg_start_host(struct otg_fsm *fsm, int on)
 
 	dev_info(dev, "Turn %s host\n", on ? "on" : "off");
 	if (on) {
+		if (otg_connection == 1) {
+			dev_info(dev, "Host is already recognized!\n");
+			return -EINVAL;
+		}
 		otg_connection = 1;
 		ret = dwc3_otg_phy_enable(fsm, 0, on);
 		if (ret) {
@@ -367,8 +507,6 @@ static int dwc3_otg_start_host(struct otg_fsm *fsm, int on)
 		}
 
 		dwc3_otg_set_host_mode(dotg);
-		if (list_clear == 1)
-			INIT_LIST_HEAD(&dwc->xhci->dev.links.needs_suppliers);
 		ret = platform_device_add(dwc->xhci);
 		if (ret) {
 			dev_err(dev, "%s: cannot add xhci\n", __func__);
@@ -381,6 +519,10 @@ static int dwc3_otg_start_host(struct otg_fsm *fsm, int on)
 		usbpd_set_host_on(dotg->man, on);
 #endif
 	} else {
+		if (otg_connection == 0) {
+			dev_info(dev, "Host is already unrecognized!\n");
+			return -EINVAL;
+		}
 		otg_connection = 0;
 #if defined(CONFIG_IF_CB_MANAGER)
 		usbpd_set_host_on(dotg->man, on);
@@ -396,8 +538,6 @@ static int dwc3_otg_start_host(struct otg_fsm *fsm, int on)
 		}
 
 		platform_device_del(dwc->xhci);
-		dwc->xhci->dev.p->dead = 0;
-		list_clear = 1;
 
 err2:
 		ret = dwc3_otg_phy_enable(fsm, 0, on);
@@ -424,6 +564,7 @@ static int dwc3_otg_start_gadget(struct otg_fsm *fsm, int on)
 
 	if (on) {
 		wake_lock(&dotg->wakelock);
+		dwc->vbus_state = true;
 		ret = dwc3_otg_phy_enable(fsm, 0, on);
 		if (ret) {
 			dev_err(dwc->dev, "%s: failed to reinitialize core\n",
@@ -440,6 +581,7 @@ static int dwc3_otg_start_gadget(struct otg_fsm *fsm, int on)
 		}
 
 	} else {
+		dwc->vbus_state = false;
 		if (dwc->is_not_vbus_pad)
 			dwc3_gadget_disconnect_proc(dwc);
 		/* avoid missing disconnect interrupt */
@@ -690,10 +832,61 @@ dwc3_otg_store_id(struct device *dev,
 static DEVICE_ATTR(id, S_IWUSR | S_IRUSR | S_IRGRP,
 	dwc3_otg_show_id, dwc3_otg_store_id);
 
+static ssize_t
+dwc3_otg_show_usb_perf(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	int len = 0;
+
+	len += snprintf(buf + len, PAGE_SIZE, "Set USB performance mode\n");
+	len += snprintf(buf + len, PAGE_SIZE,
+			"==> (1 : Performance Mode, 0 : Normal Mode)\n");
+
+	return len;
+}
+
+static ssize_t
+dwc3_otg_store_usb_perf(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t n)
+{
+	struct dwc3 *dwc = dev_get_drvdata(dev);
+	u32 reg;
+	int op;
+
+	if (sscanf(buf, "%d", &op) != 1)
+		return -EINVAL;
+
+	if (op == 1) {
+		pr_info("Set MAX performance for throughput test\n");
+		/* Disable U1U2 */
+		reg = dwc3_readl(dwc->regs, DWC3_DCTL);
+		reg &= ~(DWC3_DCTL_INITU1ENA | DWC3_DCTL_ACCEPTU1ENA |
+				DWC3_DCTL_INITU2ENA | DWC3_DCTL_ACCEPTU2ENA);
+		dwc3_writel(dwc->regs, DWC3_DCTL, reg);
+
+		/* Set MAX Performance */
+		dwc3_otg_qos_lock(dwc, 0);
+	} else {
+		/* Enable U1U2 */
+		reg = dwc3_readl(dwc->regs, DWC3_DCTL);
+		reg |= (DWC3_DCTL_INITU1ENA | DWC3_DCTL_ACCEPTU1ENA |
+				DWC3_DCTL_INITU2ENA | DWC3_DCTL_ACCEPTU2ENA);
+		dwc3_writel(dwc->regs, DWC3_DCTL, reg);
+
+		dwc3_otg_qos_lock(dwc, dwc->level_val);
+	}
+
+	return n;
+}
+
+static DEVICE_ATTR(usb_perf, S_IWUSR | S_IRUSR | S_IRGRP,
+	dwc3_otg_show_usb_perf, dwc3_otg_store_usb_perf);
+
 static struct attribute *dwc3_otg_attributes[] = {
 	&dev_attr_id.attr,
 	&dev_attr_b_sess.attr,
 	&dev_attr_state.attr,
+	&dev_attr_usb_perf.attr,
 	NULL
 };
 
@@ -793,6 +986,57 @@ u32 get_speed_and_disu1u2(void)
 }
 EXPORT_SYMBOL_GPL(get_speed_and_disu1u2);
 
+int get_idle_ip_index(void)
+{
+	if (g_dwc == NULL) {
+		pr_info("Idle ip index will be set next time.(g_dwc==NULL)\n");
+		return -ENODEV;
+	}
+	return dwc3_exynos_get_idle_ip_index(g_dwc->dev->parent);
+
+}
+EXPORT_SYMBOL_GPL(get_idle_ip_index);
+
+struct work_struct recovery_reconn_work;
+static void dwc3_recovery_reconnection(struct work_struct *w)
+{
+	struct dwc3_otg *dotg = g_dwc->dotg;
+	struct otg_fsm	*fsm = &dotg->fsm;
+	int ret = 0;
+
+	pr_err("Recovery Host Reconnection\n");
+	/* Lock to avoid real cable insert/remove operation. */
+	mutex_lock(&fsm->lock);
+
+	/* To ignore PHY disable */
+	dwc3_otg_phy_enable(fsm, DWC3_PHY_OWNER_EMEG, 1);
+	ret = dwc3_otg_start_host(fsm, 0);
+	if (ret < 0) {
+		pr_err("Cable was already disconnected!!\n");
+		goto emeg_out;
+	}
+	msleep(50);
+	dwc3_otg_start_host(fsm, 1);
+
+emeg_out:
+	dwc3_otg_phy_enable(fsm, DWC3_PHY_OWNER_EMEG, 0);
+
+	mutex_unlock(&fsm->lock);
+}
+
+int exynos_usb_recovery_reconn(void)
+{
+	if (g_dwc == NULL) {
+		pr_err("WARNING : g_dwc is NULL\n");
+		return -ENODEV;
+	}
+
+	schedule_work(&recovery_reconn_work);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(exynos_usb_recovery_reconn);
+
 static int dwc3_otg_pm_notifier(struct notifier_block *nb,
 		unsigned long action, void *nb_data)
 {
@@ -837,6 +1081,7 @@ int dwc3_otg_init(struct dwc3 *dwc)
 		return 0;
 
 	g_dwc = dwc;
+	INIT_WORK(&recovery_reconn_work, dwc3_recovery_reconnection);
 
 	/* Allocate and init otg instance */
 	dotg = devm_kzalloc(dwc->dev, sizeof(struct dwc3_otg), GFP_KERNEL);
@@ -937,6 +1182,8 @@ int dwc3_otg_init(struct dwc3 *dwc)
 
 	dwc->int_qos_lock_wq = create_singlethread_workqueue("usb_int_qos_wq");
 	INIT_WORK(&dwc->int_qos_work, dwc3_int_lock_qos_work);
+	INIT_DELAYED_WORK(&dwc->usb_qos_lock_delayed_work,
+					dwc3_otg_qos_lock_delayed_work);
 #if defined(CONFIG_IF_CB_MANAGER)
 	usb_d = kzalloc(sizeof(struct usb_dev), GFP_KERNEL);
 	if (!usb_d)

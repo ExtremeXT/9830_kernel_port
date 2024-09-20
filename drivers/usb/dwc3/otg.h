@@ -78,7 +78,8 @@ struct dwc3_otg {
 	int			dwc3_suspended;
 
 	struct mutex lock;
-	u32 combo_phy_control;
+	u16 combo_phy_control;
+	u16 usb2_phy_control;
 #if defined(CONFIG_IF_CB_MANAGER)
 	struct usb_dev 	*usb_d;
 	struct if_cb_manager	*man;
@@ -123,12 +124,8 @@ static inline int dwc3_ext_otg_stop(struct dwc3_otg *dotg)
 	return 0;
 }
 
-bool dwc3_exynos_rsw_available(struct device *dev);
-int dwc3_exynos_rsw_setup(struct device *dev, struct otg_fsm *fsm);
-void dwc3_exynos_rsw_exit(struct device *dev);
-int dwc3_exynos_rsw_start(struct device *dev);
-void dwc3_exynos_rsw_stop(struct device *dev);
 void dwc3_otg_qos_lock(struct dwc3 *dwc, int level);
+void usb_power_notify_control(int owner, int on);
 extern int xhci_portsc_set(int on);
 #if defined(CONFIG_USB_PORT_POWER_OPTIMIZATION)
 extern int xhci_port_power_set(u32 on, u32 prt);

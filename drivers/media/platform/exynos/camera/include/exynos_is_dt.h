@@ -19,6 +19,7 @@
 #define F1_8	180
 #define F1_9	190
 #define F2_0	200
+#define F2_1	210
 #define F2_2	220
 #define F2_4	240
 #define F2_45	245
@@ -67,6 +68,7 @@
 #define PIN_REGULATOR	5
 #define PIN_I2C		6
 #define PIN_MCLK	7
+#define PIN_REGULATOR_OPTION	8
 
 #define MATCH_ENTRY_MAX	3
 #define MATCH_GROUP_MAX	5
@@ -192,10 +194,12 @@
 #define	EX_3DHDR		6
 #define	EX_PDSTAT_OFF		7
 #define	EX_AEB			8
-#define	EX_SEAMLESS_TETRA	9
-#define	EX_CROP_ZOOM		10
+#define EX_SEAMLESS_TETRA	9
 #define	EX_REMOSAIC_CAL		11
-#define	EX_LOW_RES_TETRA	12		/* For EXTEND_SENSOR_MODE_CROPPED_REMOSAIC */
+#define	EX_LOW_RES_TETRA	12
+
+/* EX_OPTION 32 = 0x20 */
+#define	EX_OPTION_VIDEO		32
 
 /* LRTE */
 #define LRTE_DISABLE		0
@@ -205,10 +209,7 @@
 #define SENSOR_RETENTION_UNSUPPORTED	0
 #define SENSOR_RETENTION_INACTIVE	1
 #define SENSOR_RETENTION_ACTIVATED	2
-
-/* sensor_module_tyoe */
-#define SENSOR_TYPE_RGB			0
-#define SENSOR_TYPE_MONO		1
+#define SENSOR_RETENTION_REOPEN		3 /* if retention unsupported use this for fake retention */
 
 /* Sensor ID */
 #define SENSOR_NAME_NOTHING		0
@@ -280,7 +281,6 @@
 #define SENSOR_NAME_S5K3M5_FOLD		66
 #define SENSOR_NAME_S5KGD1_TELE		67
 #define SENSOR_NAME_S5KGW1_CPD1914_2	68
-#define SENSOR_NAME_S5KJN1		72
 
 /* 101~200: SONY sensors */
 #define SENSOR_NAME_IMX135		101
@@ -307,8 +307,6 @@
 #define SENSOR_NAME_IMX518		122
 #define SENSOR_NAME_IMX686		123
 #define SENSOR_NAME_IMX682		124
-#define SENSOR_NAME_IMX355		125
-
 /* 201~255: Other vendor sensors */
 #define SENSOR_NAME_SR261		201
 #define SENSOR_NAME_OV5693		202
@@ -327,11 +325,6 @@
 #define SENSOR_NAME_HI846		215
 #define SENSOR_NAME_OV02A10		216
 #define SENSOR_NAME_HI847		217
-#define SENSOR_NAME_GC08A3		219
-#define SENSOR_NAME_SC201		220
-#define SENSOR_NAME_HI556		221
-#define SENSOR_NAME_GC02M2		222
-#define SENSOR_NAME_SC501		223
 
 /* 256~: currently not used */
 #define SENSOR_NAME_CUSTOM		301
@@ -353,14 +346,5 @@
 #define MODULE_SEL_NONE		0
 #define MODULE_SEL_CIS		1
 #define MODULE_SEL_EEPROM	2
-
-/* define for Power Name */
-#define MCLK_GPIO		"MCLK"			/* MCLK_GPIO  */
-#define MCLK_FUNC		"pin"				/* MCLK_PIN_FUNCTION  */
-#define SEN_RST_LOW		"sen_rst low"		/* SENSOR_RST LOW  */
-#define SEN_RST_HIGH		"sen_rst high"		/* SENSOR_RST HIGH */
-#define I2C_ON			"on_i2c"			/* I2C_ON  */
-#define I2C_OFF			"off_i2c"			/* I2C_OFF  */
-#define DELAY			"delay"			/* delay  */
 
 #endif

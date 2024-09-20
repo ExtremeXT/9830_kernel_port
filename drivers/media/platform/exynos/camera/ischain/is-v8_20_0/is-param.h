@@ -862,8 +862,7 @@ struct param_sensor_config {
 	u32	calibrated_width; /* sensor cal size */
 	u32	calibrated_height;
 	u32	early_config_lock;
-	u32	mono_mode;	/* use mono sensor */
-	u32	reserved[PARAMETER_MAX_MEMBER-18];
+	u32	reserved[PARAMETER_MAX_MEMBER-17];
 	u32	err;
 };
 
@@ -1452,13 +1451,6 @@ struct nfd_info {
 	u32		crop_h;			/* crop height size */
 };
 
-struct seamless_mode_change_info {
-	int	width;
-	int	height;
-	int	fps;
-	int	ex_mode;
-};
-
 struct is_region {
 	struct is_param_region	parameter;
 	struct is_tune_region	tune;
@@ -1542,15 +1534,6 @@ struct is_debug_control {
 	u32 dis_frame_drop;	/* Frame Drop Count.*/
 	u32 fd_frame_drop;
 };
-
-#if defined(CONVERT_BUFFER_SECURE_TO_NON_SECURE)
-struct secure_buffer_convert_info {
-	int secure_buffer_fd;
-	int secure_buffer_size;
-	int non_secure_buffer_fd;
-	int non_secure_buffer_size;
-};
-#endif
 
 static inline enum dma_input_order change_to_input_order(enum dma_output_order output_order)
 {

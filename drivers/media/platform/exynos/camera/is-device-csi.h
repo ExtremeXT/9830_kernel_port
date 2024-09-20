@@ -148,7 +148,7 @@ struct is_device_csi {
 	spinlock_t			dma_seq_slock;
 
 	wait_queue_head_t		dma_flush_wait_q;
-	bool                            crc_flag;
+	bool					crc_flag;
 };
 
 struct is_device_csi_dma {

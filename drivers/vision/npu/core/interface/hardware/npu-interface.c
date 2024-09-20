@@ -134,7 +134,6 @@ void dbg_print_error(void)
 		buf[0] = '\0';
 	}
 	mutex_unlock(&interface.lock);
-
 }
 
 void dbg_print_ncp_header(struct ncp_header *nhdr)
@@ -153,7 +152,6 @@ void dbg_print_ncp_header(struct ncp_header *nhdr)
 	npu_info("addr_vector_offset \t: 0X%X\n", nhdr->address_vector_offset);
 	npu_info("addr_vector_cnt \t: 0X%X\n", nhdr->address_vector_cnt);
 	npu_info("magic_number2 \t: 0X%X\n", nhdr->magic_number2);
-
 }
 
 void dbg_print_interface(void)
@@ -244,31 +242,16 @@ I_ERR:
 	return ret;
 }
 
-static ssize_t get_ncp_hdr_size(const struct npu_nw *nw)
-{
-	struct ncp_header *ncp_header;
-
-	BUG_ON(!nw);
-
-	if (nw->ncp_addr.vaddr == NULL) {
-		npu_err("not specified in ncp_addr.kvaddr");
-		return -EINVAL;
-	}
-
-	ncp_header = (struct ncp_header *)nw->ncp_addr.vaddr;
-	//dbg_print_ncp_header(ncp_header);
-	if (ncp_header->magic_number1 != NCP_MAGIC1) {
-		npu_info("invalid MAGIC of NCP header (0x%08x) at (%pK)", ncp_header->magic_number1, ncp_header);
-		return -EINVAL;
-	}
-	return ncp_header->hdr_size;
-}
-
 int npu_interface_probe(struct device *dev, void *regs)
 {
 	int ret = 0;
 
 	BUG_ON(!dev);
+	if (!regs) {
+		probe_err("fail in %s\n", __func__);
+		ret = -EINVAL;
+		return ret;
+	}
 
 	interface.sfr = (volatile struct mailbox_sfr *)regs;
 	mutex_init(&interface.lock);
@@ -330,10 +313,18 @@ err_exit:
 	npu_err("EMERGENCY_RECOVERY is triggered.\n");
 	return ret;
 }
+
 int npu_interface_close(struct npu_system *system)
 {
 	int wptr, rptr;
-	struct device *dev = &system->pdev->dev;
+	struct device *dev;
+
+	if (!system) {
+		npu_err("fail in %s\n", __func__);
+		return -EINVAL;
+	}
+
+	dev = &system->pdev->dev;
 
 	queue_work(wq, &work_report);
 	if ((wq) && (interface.mbox_hdr)) {
@@ -368,12 +359,30 @@ int register_msgid_get_type(int (*msgid_get_type_func)(int))
 	return 0;
 }
 
+static u32 config_npu_load_payload(struct npu_nw *nw)
+{
+	struct npu_session *session = nw->session;
+	struct cmd_load_payload *payload = session->ncp_payload->vaddr;
+
+	payload[COMMAND_LOAD_USER_NCP].addr = nw->ncp_addr.daddr;
+	payload[COMMAND_LOAD_USER_NCP].size = nw->ncp_addr.size;
+	payload[COMMAND_LOAD_USER_NCP].id = COMMAND_LOAD_USER_NCP;
+
+	payload[COMMAND_LOAD_HDR_COPY].addr = session->ncp_hdr_buf->daddr;
+	payload[COMMAND_LOAD_HDR_COPY].size = session->ncp_hdr_buf->size;
+	payload[COMMAND_LOAD_HDR_COPY].id = COMMAND_LOAD_HDR_COPY;
+
+	npu_session_ion_sync_for_device(session->ncp_payload, 0, session->ncp_payload->size,
+					DMA_TO_DEVICE);
+
+	return session->ncp_payload->daddr;
+}
+
 int nw_req_manager(int msgid, struct npu_nw *nw)
 {
 	int ret = 0;
 	struct command cmd = {};
 	struct message msg = {};
-	ssize_t hdr_size;
 
 	switch (nw->cmd) {
 	case NPU_NW_CMD_BASE:
@@ -381,16 +390,9 @@ int nw_req_manager(int msgid, struct npu_nw *nw)
 		break;
 	case NPU_NW_CMD_LOAD:
 		cmd.c.load.oid = nw->uid;
-		cmd.c.load.tid = NPU_MAILBOX_DEFAULT_TID;
-		hdr_size = get_ncp_hdr_size(nw);
-		if (hdr_size <= 0) {
-			npu_info("fail in get_ncp_hdr_size: (%zd)", hdr_size);
-			ret = FALSE;
-			goto nw_req_err;
-		}
-
-		cmd.length = (u32)hdr_size;
-		cmd.payload = nw->ncp_addr.daddr;
+		cmd.c.load.tid = nw->bound_id;
+		cmd.length = sizeof(struct cmd_load_payload) * 2;
+		cmd.payload = config_npu_load_payload(nw);
 		msg.command = COMMAND_LOAD;
 		msg.length = sizeof(struct command);
 		break;
@@ -465,6 +467,17 @@ int fr_req_manager(int msgid, struct npu_frame *frame)
 	case NPU_FRAME_CMD_Q:
 		cmd.c.process.oid = frame->uid;
 		cmd.c.process.fid = frame->frame_id;
+		cmd.c.process.priority = frame->priority;
+		cmd.length = frame->mbox_process_dat.address_vector_cnt;
+		cmd.payload = frame->mbox_process_dat.address_vector_start_daddr;
+		msg.command = COMMAND_PROCESS;
+		msg.length = sizeof(struct command);
+		break;
+	case NPU_FRAME_CMD_PROFILER:
+		cmd.c.process.oid = frame->uid;
+		cmd.c.process.fid = frame->frame_id;
+		cmd.c.process.priority = frame->priority;
+		cmd.c.process.profiler_ctrl = (u32)frame->output->timestamp[5].tv_sec;
 		cmd.length = frame->mbox_process_dat.address_vector_cnt;
 		cmd.payload = frame->mbox_process_dat.address_vector_start_daddr;
 		msg.command = COMMAND_PROCESS;
@@ -492,9 +505,9 @@ void makeStructToString(struct cmd_done *done)
 
 	memset(&fwProfile, 0, sizeof(struct fw_profile_info));
 	fwProfile.info_cnt = sizeof(struct cmd_done) / sizeof(u32);
-	for (i = 0; i < fwProfile.info_cnt; i++) {
+	for (i = 0; i < (int)fwProfile.info_cnt; i++) {
 		memset(tempbuf, 0, sizeof(tempbuf));
-		val = *(((u32 *)done + (i * sizeof(u32 *))));
+		val = ((u32*)done)[i];
 		sprintf(tempbuf, "%d", val);
 
 		memcpy(fwProfile.data + fwProfile.buf_size, strArr[i], strlen(strArr[i]));
@@ -574,7 +587,10 @@ int fr_rslt_manager(int *ret_msgid, struct npu_frame *frame)
 		return FALSE;
 
 	if (msg.command == COMMAND_DONE) {
-		npu_info("COMMAND_DONE for mid: (%d)\n", msg.mid);
+		npu_dbg("COMMAND_DONE for mid: (%d)\n", msg.mid);
+		if (cmd.c.done.duration > 0) {
+			frame->duration	= cmd.c.done.duration;
+		}
 		frame->result_code = NPU_ERR_NO_ERROR;
 		makeStructToString(&(cmd.c.done));
 	} else if (msg.command == COMMAND_NDONE) {
@@ -594,7 +610,8 @@ int fr_rslt_manager(int *ret_msgid, struct npu_frame *frame)
 //Print log which was written with last 128 byte.
 int npu_check_unposted_mbox(int nCtrl)
 {
-	int pos, ret;
+	int pos;
+	int ret = TRUE;
 	char *base;
 	u32 nSize, wptr, rptr, sgmt_len;
 	u32 *buf, *strOut;
@@ -610,7 +627,8 @@ int npu_check_unposted_mbox(int nCtrl)
 	}
 	buf = kzalloc(LENGTHOFEVIDENCE, GFP_ATOMIC);
 	if (!buf) {
-		kfree(strOut);
+		if (strOut)
+			kfree(strOut);
 		ret = -ENOMEM;
 		goto err_exit;
 	}
@@ -661,9 +679,10 @@ int npu_check_unposted_mbox(int nCtrl)
 	if (!in_interrupt())
 		mutex_unlock(&interface.lock);
 
-	ret = TRUE;
-	kfree(buf);
-	kfree(strOut);
+	if (buf)
+		kfree(buf);
+	if (strOut)
+		kfree(strOut);
 err_exit:
 	return ret;
 }

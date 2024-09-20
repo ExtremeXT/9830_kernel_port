@@ -41,6 +41,10 @@ unsigned int pm_wakeup_irq __read_mostly;
 /* If greater than 0 and the system is suspending, terminate the suspend. */
 static atomic_t pm_abort_suspend __read_mostly;
 
+#ifdef CONFIG_SEC_PM_DEBUG
+bool pm_system_wakeup_without_irq_num;
+#endif /* CONFIG_SEC_PM_DEBUG */
+
 /*
  * Combined counters of registered wakeup events and wakeup events in progress.
  * They need to be modified together atomically, so it's better to use one
@@ -957,29 +961,39 @@ void pm_system_cancel_wakeup(void)
 void pm_wakeup_clear(bool reset)
 {
 	pm_wakeup_irq = 0;
+#ifdef CONFIG_SEC_PM_DEBUG
+        pm_system_wakeup_without_irq_num = false;
+#endif /* CONFIG_SEC_PM_DEBUG */
 	if (reset)
 		atomic_set(&pm_abort_suspend, 0);
 }
 
 void pm_system_irq_wakeup(unsigned int irq_number)
 {
-	if (pm_wakeup_irq == 0) {
-		struct irq_desc *desc;
-		const char *name = "null";
+#ifdef CONFIG_SEC_PM_DEBUG
+        struct irq_desc *desc = irq_to_desc(irq_number);
+#endif /* CONFIG_SEC_PM_DEBUG */
 
-		desc = irq_to_desc(irq_number);
-		if (desc == NULL)
-			name = "stray irq";
-		else if (desc->action && desc->action->name)
-			name = desc->action->name;
+        if (pm_wakeup_irq == 0) {
+                pm_wakeup_irq = irq_number;
+                pm_system_wakeup();
+#ifdef CONFIG_SEC_PM_DEBUG
+                if (desc && desc->action && desc->action->name)
+                        pr_info("PM: %s: %u(%s)\n", __func__, irq_number,
+                                        desc->action->name);
+                else
+                        pr_info("PM: %s: %u\n", __func__, irq_number);
 
-		log_irq_wakeup_reason(irq_number);
-		pr_warn("%s: %d triggered %s\n", __func__, irq_number, name);
-
-		pm_wakeup_irq = irq_number;
-		pm_system_wakeup();
-		log_wakeup_reason(irq_number);
-	}
+                if (pm_system_wakeup_without_irq_num) {
+                        pm_system_wakeup_without_irq_num = false;
+#ifdef CONFIG_SUSPEND
+                        log_wakeup_reason(irq_number);
+#endif
+                }
+#else
+                log_wakeup_reason(irq_number);
+#endif /* CONFIG_SEC_PM_DEBUG */
+        }
 }
 
 /**

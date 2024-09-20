@@ -9,6 +9,7 @@
  * published by the Free Software Foundation.
 */
 
+#include <linux/debug-snapshot.h>
 #include "scaler.h"
 
 static void show_crop(struct v4l2_rect *rect)
@@ -55,4 +56,25 @@ void sc_ctx_dump(struct sc_ctx *ctx)
 		show_frame("Internal", &ctx->i_frame->frame);
 		show_int_frame(ctx->i_frame);
 	}
+}
+
+void sc_print_dbg_snapshot(struct sc_ctx *ctx)
+{
+	struct sc_frame *s_frame, *d_frame;
+
+	if (ctx->context_type == SC_CTX_EXT_TYPE) {
+		dbg_snapshot_printk("MSCL : this job is EXT\n");
+		return;
+	}
+
+	s_frame = &ctx->s_frame;
+	d_frame = &ctx->d_frame;
+
+	dbg_snapshot_printk("MSCL : src([%s], [%dx%d], [%dx%d@%dx%d])-dst([%s], [%dx%d], [%dx%d@%dx%d])\n",
+			s_frame->sc_fmt->name, s_frame->width, s_frame->height,
+			s_frame->crop.width, s_frame->crop.height,
+			s_frame->crop.left, s_frame->crop.top,
+			d_frame->sc_fmt->name, d_frame->width, d_frame->height,
+			d_frame->crop.width, d_frame->crop.height,
+			d_frame->crop.left, d_frame->crop.top);
 }

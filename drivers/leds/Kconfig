@@ -118,13 +118,6 @@ config LEDS_CR0014114
 	  To compile this driver as a module, choose M here: the module
 	  will be called leds-cr0014114.
 
-config LEDS_ET6034A
-	tristate "LED driver for ET6034A"
-	depends on I2C
-	help
-	  This option enables support for the LEDs connected to the ET6034A
-	  ET6034A uses the I2C BUS structure,
-
 config LEDS_LM3530
 	tristate "LCD Backlight driver for LM3530"
 	depends on LEDS_CLASS
@@ -647,16 +640,6 @@ config LEDS_MENF21BMC
 	  This driver can also be built as a module. If so the module
 	  will be called leds-menf21bmc.
 
-config LEDS_KTD2692
-	tristate "LED support for KTD2692 flash LED controller"
-	depends on LEDS_CLASS_FLASH && OF
-	depends on GPIOLIB || COMPILE_TEST
-	help
-	  This option enables support for KTD2692 LED flash connected
-	  through ExpressWire interface.
-
-	  Say Y to enable this driver.
-
 config LEDS_IS31FL319X
 	tristate "LED Support for ISSI IS31FL319x I2C LED controller family"
 	depends on LEDS_CLASS && I2C && OF
@@ -763,33 +746,35 @@ config LEDS_NIC78BX
 	  To compile this driver as a module, choose M here: the module
 	  will be called leds-nic78bx.
 
-config LEDS_S2MU106_FLASH
-	bool "FLASH LED support for the S2MU106"
-    depends on (MFD_S2MU106) && I2C
-	help
-	  If you say yes here you will get support for
-	  for the LEDS_S2MU106_FLASH led chip.
-
-config LEDS_S2MU107_FLASH
-	bool "FLASH LED support for the S2MU107"
-    depends on (MFD_S2MU107) && I2C
-	help
-	  If you say yes here you will get support for
-	  for the LEDS_S2MU107_FLASH led chip.
-
-config LEDS_SM5714
-	bool "LED support for the LEDS_SM5714"
+config LEDS_S2MPB02
+	bool "LED support for the S2MPB02"
 	depends on LEDS_CLASS
 	help
-	  This option enables support for the LEDs on the SM5714.
+	  This option enables support for the LEDs on the S2MPB02.
 
-config LEDS_AW36518
-	bool "LED support for the LEDS_AW36518"
+config LEDS_KTD2692
+	bool "LED support for the KTD2692"
 	help
-	  This option enables support for AW36518 LED flash connected
-	  through ExpressWire interface.
+	  If you say yes here you will get support for
+	  for the KTD2692 FLASH led chip.
 
-	  Say Y to enable this driver.
+config LEDS_S2MPB02_MULTI_TORCH_REAR2
+	bool "LED support for second multi flash"
+	help
+	  If you say yes here you will get support for
+	  for second multi flash.
+
+config LEDS_KTD2692_MULTI_TORCH_REAR3
+	bool "LED support for third multi flash"
+	help
+	  If you say yes here you will get support for
+	  for third multi flash.
+
+config LEDS_RT8547
+	bool "LED support for the RT8547"
+	help
+	  If you say yes here you will get support for
+	  for the RT8547 FLASH led chip.
 
 comment "LED Triggers"
 source "drivers/leds/trigger/Kconfig"

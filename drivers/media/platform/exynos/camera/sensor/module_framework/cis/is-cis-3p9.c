@@ -98,9 +98,7 @@ static void sensor_3p9_cis_data_calculation(const struct sensor_pll_info *pll_in
 	cis_data->min_frame_us_time = (pll_info->frame_length_lines * pll_info->line_length_pck
 					/ (vt_pix_clk_hz / (1000 * 1000)));
 	cis_data->cur_frame_us_time = cis_data->min_frame_us_time;
-#ifdef CAMERA_REAR2
 	cis_data->min_sync_frame_us_time = cis_data->min_frame_us_time;
-#endif
 	/* 4. FPS calculation */
 	frame_rate = vt_pix_clk_hz / (pll_info->frame_length_lines * pll_info->line_length_pck);
 	dbg_sensor(1, "frame_rate (%d) = vt_pix_clk_hz(%d) / "
@@ -1252,9 +1250,7 @@ int sensor_3p9_cis_set_frame_rate(struct v4l2_subdev *subdev, u32 min_fps)
 			cis->id, __func__, ret);
 		goto p_err;
 	}
-#ifdef CAMERA_REAR2
 	cis_data->min_frame_us_time = MAX(frame_duration, cis_data->min_sync_frame_us_time);
-#endif
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
 	dbg_sensor(1, "[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
@@ -1786,7 +1782,7 @@ int sensor_3p9_cis_set_factory_control(struct v4l2_subdev *subdev, u32 command)
 		pr_info("[%s] FAC_CTRL_BIT_TEST\n", __func__);
 		ret |= is_sensor_write16(cis->client, 0xFCFC, 0x4000);
 		ret |= is_sensor_write16(cis->client, 0xF44A, 0x01FF); // TG 3.16v
-		msleep(1);
+		usleep_range(1000, 1100);
 		ret |= is_sensor_write16(cis->client, 0xF44A, 0x0004); // TG 2.43v -> 2.14v
 		msleep(50);
 		ret |= is_sensor_write16(cis->client, 0xF44C, 0x0009); // RG 3.61v -> 3.18v

@@ -21,6 +21,7 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/poll.h>
+#include <linux/vmalloc.h>
 
 #include "mfc_common.h"
 
@@ -107,8 +108,7 @@ static void __mfc_deinit_dec_ctx(struct mfc_ctx *ctx)
 	mfc_delete_queue(&ctx->meminfo_inbuf_q);
 
 	mfc_mem_cleanup_user_shared_handle(ctx, &dec->sh_handle_hdr);
-	if (dec->hdr10_plus_info)
-		vfree(dec->hdr10_plus_info);
+	vfree(dec->hdr10_plus_info);
 	kfree(dec);
 }
 
@@ -170,7 +170,12 @@ static int __mfc_init_dec_ctx(struct mfc_ctx *ctx)
 	dec->dpb_table_used = 0;
 	mutex_init(&dec->dpb_mutex);
 
+	/* sh_handle: HDR10+ HEVC SEI meta */
 	dec->sh_handle_hdr.fd = -1;
+	dec->sh_handle_hdr.data_size = sizeof(struct hdr10_plus_meta) * MFC_MAX_BUFFERS;
+	dec->hdr10_plus_info = vmalloc(dec->sh_handle_hdr.data_size);
+	if (!dec->hdr10_plus_info)
+		mfc_err_ctx("[HDR+] failed to allocate HDR10+ information data\n");
 
 	/* Init videobuf2 queue for OUTPUT */
 	ctx->vq_src.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
@@ -454,7 +459,7 @@ static int mfc_open(struct file *file)
 		goto err_no_device;
 	}
 
-	mfc_debug_dev(2, "mfc driver open called\n");
+	mfc_info_dev("mfc driver open called\n");
 
 	if (mutex_lock_interruptible(&dev->mfc_mutex))
 		return -ERESTARTSYS;
@@ -938,11 +943,9 @@ int mfc_sysmmu_fault_handler(struct iommu_domain *iodmn, struct device *device,
 
 	/* If sysmmu is used with other IPs, it should be checked whether it's an MFC fault */
 	if (dev->pdata->share_sysmmu) {
-		if (!dev->pdata->sysmmu_passes_axid)
-			id = MFC_MMU0_READL(trans_info);
-		if ((id & dev->pdata->axid_mask) != dev->pdata->mfc_fault_num) {
-			mfc_err_dev("This is not a MFC page fault:(id = 0x%x from %s)\n",
-					id, dev->pdata->sysmmu_passes_axid ? "iommu" : "SFR read");
+		if ((MFC_MMU0_READL(trans_info) & dev->pdata->axid_mask)
+				!= dev->pdata->mfc_fault_num) {
+			mfc_err_dev("This is not a MFC page fault\n");
 			return 0;
 		}
 	}
@@ -969,7 +972,7 @@ int mfc_sysmmu_fault_handler(struct iommu_domain *iodmn, struct device *device,
 	dev->logging_data->fault_addr = (unsigned int)addr;
 
 	call_dop(dev, dump_info, dev);
-	s3c2410wdt_set_emergency_reset(3, 0);
+	s3c2410wdt_set_emergency_reset(0, 0);
 
 	return 0;
 }
@@ -1013,7 +1016,6 @@ static int __mfc_parse_dt(struct device_node *np, struct mfc_dev *mfc)
 	of_property_read_u32(np, "axid_mask", &pdata->axid_mask);
 	of_property_read_u32(np, "mfc_fault_num", &pdata->mfc_fault_num);
 	of_property_read_u32(np, "trans_info_offset", &pdata->trans_info_offset);
-	of_property_read_u32(np, "sysmmu_passes_axid", &pdata->sysmmu_passes_axid);
 
 	/* LLC(Last Level Cache) */
 	of_property_read_u32(np, "llc", &mfc->has_llc);
@@ -1039,6 +1041,9 @@ static int __mfc_parse_dt(struct device_node *np, struct mfc_dev *mfc)
 			&pdata->wait_nalq_status.support, 2);
 	of_property_read_u32_array(np, "drm_switch_predict",
 			&pdata->drm_switch_predict.support, 2);
+	of_property_read_u32_array(np, "sbwc_enc_src_ctrl",
+			&pdata->sbwc_enc_src_ctrl.support, 2);
+	of_property_read_u32_array(np, "enc_ts_delta", &pdata->enc_ts_delta.support, 2);
 
 	/* Default 10bit format for decoding and dithering for display */
 	of_property_read_u32(np, "P010_decoding", &pdata->P010_decoding);
@@ -1416,7 +1421,7 @@ static int __mfc_itmon_notifier(struct notifier_block *nb, unsigned long action,
 		dev_err(dev->device, "mfc_itmon_notifier: %s -\n", is_mfc_itmon ? "MFC" : "MMCACHE");
 		dev->itmon_notified = 1;
 		ret = NOTIFY_BAD;
-		s3c2410wdt_set_emergency_reset(3, 0);
+		s3c2410wdt_set_emergency_reset(0, 0);
 	}
 	return ret;
 }

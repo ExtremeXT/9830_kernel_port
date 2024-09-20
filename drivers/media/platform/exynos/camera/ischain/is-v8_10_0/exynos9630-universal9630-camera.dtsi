@@ -30,7 +30,7 @@
 	status = "okay";
 
 	af {
-		product_name = <24>; /* ACTUATOR_NAME_DW9808 */
+		product_name = <19>; /* ACTUATOR_NAME_DW9808 */
 	};
 
 	power_seq {

@@ -462,8 +462,10 @@ static int exynos_smfc_open(struct file *filp)
 	v4l2_fh_init(&ctx->fh, smfc->videodev);
 
 	ret = smfc_init_controls(smfc, &ctx->v4l2_ctrlhdlr);
-	if (ret)
+	if (ret) {
+		dev_err(smfc->dev, "Failed(%d) to init controls\n", ret);
 		goto err_control;
+	}
 
 	ctx->fh.ctrl_handler = &ctx->v4l2_ctrlhdlr;
 
@@ -509,6 +511,10 @@ static int exynos_smfc_open(struct file *filp)
 	ctx->restart_interval = 0;
 	ctx->thumb_quality_factor = 50;
 	ctx->enable_hwfc = 0;
+	ctx->stream_id = smfc->stream_count;
+
+	dev_info(smfc->dev, "smfc open, stream(%d)\n", ctx->stream_id);
+	++smfc->stream_count;
 
 	return 0;
 err_clk:
@@ -525,16 +531,20 @@ err_control:
 static int exynos_smfc_release(struct file *filp)
 {
 	struct smfc_ctx *ctx = v4l2_fh_to_smfc_ctx(filp->private_data);
+	struct smfc_dev *smfc = ctx->smfc;
+
+	dev_info(smfc->dev, "smfc release, stream(%d)\n", ctx->stream_id);
+	--smfc->stream_count;
 
 	v4l2_m2m_ctx_release(ctx->fh.m2m_ctx);
 	v4l2_ctrl_handler_free(&ctx->v4l2_ctrlhdlr);
 	v4l2_fh_del(&ctx->fh);
 	v4l2_fh_exit(&ctx->fh);
 
-	if (!IS_ERR(ctx->smfc->clk_gate)) {
-		clk_unprepare(ctx->smfc->clk_gate);
-		if (!IS_ERR(ctx->smfc->clk_gate2))
-			clk_unprepare(ctx->smfc->clk_gate2);
+	if (!IS_ERR(smfc->clk_gate)) {
+		clk_unprepare(smfc->clk_gate);
+		if (!IS_ERR(smfc->clk_gate2))
+			clk_unprepare(smfc->clk_gate2);
 	}
 
 	kfree(ctx->quantizer_tables);
@@ -970,6 +980,8 @@ static int exynos_smfc_probe(struct platform_device *pdev)
 	ret = smfc_find_hw_version(&pdev->dev, smfc);
 	if (ret < 0)
 		goto err_hwver;
+
+	smfc->stream_count = 0;
 
 	spin_lock_init(&smfc->flag_lock);
 

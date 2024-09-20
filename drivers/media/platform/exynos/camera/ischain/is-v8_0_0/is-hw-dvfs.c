@@ -575,8 +575,7 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_PREVIEW_HIGH_SPEED_FPS)
 		(mask == ISS_SUB_SCENARIO_UHD_60FPS) ||
 		(mask == ISS_SUB_SCENARIO_UHD_60FPS_WDR_ON) ||
 		(mask == ISS_SUB_SCENARIO_UHD_60FPS_WDR_AUTO) ||
-		(mask == ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED) ||
-		(mask == ISS_SUB_SCENARIO_FHD_240FPS);
+		(mask == ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED);
 	if (IS_REAR_SENSOR(position) && (fps > 30) && !setfile_flag)
 		return 1;
 	else
@@ -593,8 +592,7 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_PREVIEW_HIGH_SPEED_FPS)
 		(mask == ISS_SUB_SCENARIO_UHD_60FPS) ||
 		(mask == ISS_SUB_SCENARIO_UHD_60FPS_WDR_ON) ||
 		(mask == ISS_SUB_SCENARIO_UHD_60FPS_WDR_AUTO) ||
-		(mask == ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED) ||
-		(mask == ISS_SUB_SCENARIO_FHD_240FPS);
+		(mask == ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED);
 
 	if (IS_FRONT_SENSOR(position) && (fps > 30) && !setfile_flag)
 		return 1;
@@ -871,7 +869,7 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_VIDEO_HIGH_SPEED_120FPS)
 DECLARE_DVFS_CHK_FUNC(IS_SN_VIDEO_HIGH_SPEED_240FPS)
 {
 	u32 mask = (device->setfile & IS_SETFILE_MASK);
-	bool setfile_flag = (mask == ISS_SUB_SCENARIO_FHD_240FPS);
+	bool setfile_flag = (mask == ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED);
 
 	if (IS_REAR_SENSOR(position) && (fps > 120) && setfile_flag)
 		return 1;
@@ -1124,7 +1122,7 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_VT1)
 {
 	if (IS_FRONT_SENSOR(position) &&
 			((device->setfile & IS_SETFILE_MASK) \
-			 == ISS_SUB_SCENARIO_FRONT_VT1))
+			 == ISS_SUB_SCENARIO_VT))
 		return 1;
 	else
 		return 0;
@@ -1135,7 +1133,7 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_VT2)
 {
 	if (IS_FRONT_SENSOR(position) &&
 			((device->setfile & IS_SETFILE_MASK) \
-			 == ISS_SUB_SCENARIO_FRONT_VT2))
+			 == ISS_SUB_SCENARIO_VT))
 		return 1;
 	else
 		return 0;
@@ -1146,7 +1144,7 @@ DECLARE_DVFS_CHK_FUNC(IS_SN_FRONT_VT4)
 {
 	if (IS_FRONT_SENSOR(position) &&
 			((device->setfile & IS_SETFILE_MASK) \
-			 == ISS_SUB_SCENARIO_FRONT_VT4))
+			 == ISS_SUB_SCENARIO_VT))
 		return 1;
 	else
 		return 0;

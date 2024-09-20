@@ -20,6 +20,7 @@
 #include "npu-system.h"
 #include "npu-protodrv.h"
 #include "npu-sessionmgr.h"
+#include "npu-profile.h"
 
 #ifdef CONFIG_NPU_HARDWARE
 //#include "interface/hardware/npu-interface.h"
@@ -32,6 +33,9 @@
 #ifdef CONFIG_EXYNOS_ITMON
 #include <soc/samsung/exynos-itmon.h>
 #endif
+
+#include "npu-core.h"
+#include "npu-scheduler.h"
 
 //#define NPU_MINOR	10
 #define NPU_DEVICE_NAME	"npu-turing"
@@ -68,7 +72,9 @@ struct npu_device {
 #ifdef CONFIG_EXYNOS_ITMON
 	struct notifier_block itmon_nb;
 #endif
+	struct npu_scheduler_info *sched;
 	int magic;
+	struct mutex start_stop_lock;
 };
 
 int npu_device_open(struct npu_device *device);

@@ -1824,7 +1824,8 @@ void is_hw_csi_qchannel_enable_all(bool enable)
 	void __iomem *csi1_regs;
 	void __iomem *csi2_regs;
 	void __iomem *csi3_regs;
-	void __iomem *csi3_1_regs;
+	void __iomem *csi4_regs;
+	void __iomem *csi5_regs;
 
 	u32 reg_val;
 
@@ -1832,7 +1833,8 @@ void is_hw_csi_qchannel_enable_all(bool enable)
 	csi1_regs = ioremap_nocache(CSIS1_QCH_EN_ADDR, SZ_4);
 	csi2_regs = ioremap_nocache(CSIS2_QCH_EN_ADDR, SZ_4);
 	csi3_regs = ioremap_nocache(CSIS3_QCH_EN_ADDR, SZ_4);
-	csi3_1_regs = ioremap_nocache(CSIS3_1_QCH_EN_ADDR, SZ_4);
+	csi4_regs = ioremap_nocache(CSIS4_QCH_EN_ADDR, SZ_4);
+	csi5_regs = ioremap_nocache(CSIS5_QCH_EN_ADDR, SZ_4);
 
 	reg_val = readl(csi0_regs);
 	reg_val &= ~(1 << 20);
@@ -1850,15 +1852,20 @@ void is_hw_csi_qchannel_enable_all(bool enable)
 	reg_val &= ~(1 << 20);
 	writel(enable << 20 | reg_val, csi3_regs);
 
-	reg_val = readl(csi3_1_regs);
+	reg_val = readl(csi4_regs);
 	reg_val &= ~(1 << 20);
-	writel(enable << 20 | reg_val, csi3_1_regs);
+	writel(enable << 20 | reg_val, csi4_regs);
+
+	reg_val = readl(csi5_regs);
+	reg_val &= ~(1 << 20);
+	writel(enable << 20 | reg_val, csi5_regs);
 
 	iounmap(csi0_regs);
 	iounmap(csi1_regs);
 	iounmap(csi2_regs);
 	iounmap(csi3_regs);
-	iounmap(csi3_1_regs);
+	iounmap(csi4_regs);
+	iounmap(csi5_regs);
 }
 #endif
 

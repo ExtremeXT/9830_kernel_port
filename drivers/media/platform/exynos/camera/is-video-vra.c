@@ -34,12 +34,6 @@
 #include "is-metadata.h"
 #include "is-param.h"
 
-#if defined(CONVERT_BUFFER_SECURE_TO_NON_SECURE)
-#include <linux/smc.h>
-#include "../../../../staging/android/ion/ion.h"
-#include "../../../../staging/android/ion/ion_exynos.h"
-#endif
-
 const struct v4l2_file_operations is_vra_video_fops;
 const struct v4l2_ioctl_ops is_vra_video_ioctl_ops;
 const struct vb2_ops is_vra_qops;
@@ -582,19 +576,6 @@ static int is_vra_video_g_ctrl(struct file *file, void *priv,
 	return 0;
 }
 
-#if defined(CONVERT_BUFFER_SECURE_TO_NON_SECURE)
-static struct ion_buffer *ion_buffer_get(struct dma_buf *dmabuf)
-{
-	if (!dmabuf)
-		return ERR_PTR(-EINVAL);
-
-	if (dmabuf->ops != &ion_dma_buf_ops)
-		return ERR_PTR(-EINVAL);
-
-	return (struct ion_buffer *)dmabuf->priv;
-}
-#endif
-
 static int is_vra_video_s_ext_ctrl(struct file *file, void *priv,
 	struct v4l2_ext_controls *ctrls)
 {
@@ -653,105 +634,6 @@ static int is_vra_video_s_ext_ctrl(struct file *file, void *priv,
 			}
 			break;
 #endif
-#if defined(CONVERT_BUFFER_SECURE_TO_NON_SECURE)
-		case V4L2_CID_IS_CONVERT_BUFFER_SECURE_TO_NON_SUCURE:
-		{
-			struct secure_buffer_convert_info info;
-			struct dma_buf *s_dbuf, *n_dbuf;
-			struct ion_buffer *buffer;
-			struct sg_table *table;
-			struct page *page;
-			phys_addr_t s_paddr, n_paddr;
-			unsigned long s_size, n_size;
-
-			ret = copy_from_user(&info, ext_ctrl->ptr, sizeof(struct secure_buffer_convert_info));
-
-			if (ret) {
-				err("fail to copy_from_user, ret(%d)\n", ret);
-				goto p_err;
-			}
-
-			s_dbuf = dma_buf_get(info.secure_buffer_fd);
-			if (IS_ERR_OR_NULL(s_dbuf)) {
-				pr_err("failed to get dmabuf of fd: %d\n", info.secure_buffer_fd);
-				return -EINVAL;
-			}
-
-			buffer = ion_buffer_get(s_dbuf);
-			if (IS_ERR_OR_NULL(buffer)) {
-				pr_err("failed to get buffer of s_dbuf");
-				ret = -EINVAL;
-				goto free_s_dbuf;
-			}
-
-			table = buffer->sg_table;
-			if (IS_ERR_OR_NULL(table)) {
-				pr_err("failed to get table of buffer");
-				ret = -EINVAL;
-				goto free_s_dbuf;
-			}
-
-			page = sg_page(table->sgl);
-			if (IS_ERR_OR_NULL(page)) {
-				pr_err("failed to get page of sgl");
-				ret = -EINVAL;
-				goto free_s_dbuf;
-			}
-
-			s_paddr = PFN_PHYS(page_to_pfn(page));
-			s_size = buffer->size;
-
-			mdbgv_vra("s_ext_ctrl CONVERT BUFFER secure: 0x%08x, size: 0x%08x, size: 0x%08x",
-					vctx, s_paddr, s_size, info.secure_buffer_size);
-
-			n_dbuf = dma_buf_get(info.non_secure_buffer_fd);
-			if (IS_ERR_OR_NULL(n_dbuf)) {
-				pr_err("failed to get dmabuf of fd: %d\n", info.non_secure_buffer_fd);
-				ret = -EINVAL;
-				goto free_s_dbuf;
-			}
-
-			buffer = ion_buffer_get(n_dbuf);
-			if (IS_ERR_OR_NULL(buffer)) {
-				pr_err("failed to get buffer of n_dbuf");
-				ret = -EINVAL;
-				goto free_n_dbuf;
-			}
-
-			table = buffer->sg_table;
-			if (IS_ERR_OR_NULL(table)) {
-				pr_err("failed to get table of buffer");
-				ret = -EINVAL;
-				goto free_n_dbuf;
-			}
-
-			page = sg_page(table->sgl);
-			if (IS_ERR_OR_NULL(page)) {
-				pr_err("failed to get page of sgl");
-				ret = -EINVAL;
-				goto free_n_dbuf;
-			}
-
-			n_paddr = PFN_PHYS(page_to_pfn(page));
-			n_size = buffer->size;
-
-			mdbgv_vra("s_ext_ctrl CONVERT BUFFER non-secure: 0x%08x, size: 0x%08x, size: 0x%08x",
-					vctx, n_paddr, n_size, info.non_secure_buffer_size);
-
-			ret = exynos_smc(SMC_SECCAM_SUPPORT_VRA, n_paddr, s_paddr, n_size);
-			if (ret) {
-				dev_err(is_dev, "[SMC] SMC_SECCAM_SUPPORT_VRA fail(%d)", ret);
-				ret = -EINVAL;
-			}
-
-free_n_dbuf:
-			dma_buf_put(n_dbuf);
-free_s_dbuf:
-			dma_buf_put(s_dbuf);
-			break;
-		}
-#endif
-
 		default:
 			ctrl.id = ext_ctrl->id;
 			ctrl.value = ext_ctrl->value;
@@ -807,7 +689,7 @@ static int is_vra_queue_setup(struct vb2_queue *vbq,
 	struct is_device_ischain *device;
 	struct is_video *video;
 	struct is_queue *queue;
-#if defined(SECURE_CAMERA_FACE) && !defined(CONVERT_BUFFER_SECURE_TO_NON_SECURE)
+#if defined(SECURE_CAMERA_FACE)
 	struct is_core *core =
 		(struct is_core *)dev_get_drvdata(is_dev);
 #endif
@@ -827,12 +709,10 @@ static int is_vra_queue_setup(struct vb2_queue *vbq,
 
 	mdbgv_isp("%s\n", vctx, __func__);
 
-#if defined(SECURE_CAMERA_FACE) && !defined(CONVERT_BUFFER_SECURE_TO_NON_SECURE)
+#if defined(SECURE_CAMERA_FACE)
 	if (core->scenario == IS_SCENARIO_SECURE)
 		set_bit(IS_QUEUE_NEED_TO_REMAP, &queue->state);
 #endif
-
-	set_bit(IS_QUEUE_NEED_TO_KMAP, &queue->state);
 
 	ret = is_queue_setup(queue,
 		video->alloc_ctx,
@@ -935,7 +815,7 @@ static void is_vra_buffer_queue(struct vb2_buffer *vb)
 
 static void is_vra_buffer_finish(struct vb2_buffer *vb)
 {
-	int ret = 0;
+	int ret;
 	struct is_video_ctx *vctx;
 	struct is_device_ischain *device;
 
@@ -948,13 +828,11 @@ static void is_vra_buffer_finish(struct vb2_buffer *vb)
 
 	mvdbgs(3, "%s(%d)\n", vctx, &vctx->queue, __func__, vb->index);
 
-	is_queue_buffer_finish(vb);
-
 	ret = is_ischain_vra_buffer_finish(device, vb->index);
-	if (ret) {
+	if (ret)
 		merr("is_ischain_vra_buffer_finish is fail(%d)", device, ret);
-		return;
-	}
+
+	is_queue_buffer_finish(vb);
 }
 
 const struct vb2_ops is_vra_qops = {

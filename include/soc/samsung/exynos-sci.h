@@ -32,6 +32,35 @@
 #define PM_SCI_CTL				0x140
 #define SCI_SB_LLCSTATUS			0xA0C
 
+#define UcErrSource1				0x94C
+#define UcErrOverrunSource1			0x960
+#define CorrErrSource1				0x918
+#define CorrErrOverrunSource1			0x92C
+
+#define SCI_BIT_GET(value, mask, shift)		((value >> shift) & mask)
+
+#define DBE					30
+#define SBE					21
+#define LLC_ECC_MASK				0x3
+/* UcErrSource1Uc, ErrOverrunSource1,	 *
+ * CorrErrSource1, CorrErrOverrunSource1 */
+#define mpACE_MASK				0xF
+#define mpACE_SHIFT				0
+#define nonSFS_MASK				0x1FF
+#define nonSFS_SHIFT				4
+#define SFS_MASK				0xFF
+#define SFS_SHIFT				13
+/* UcErrSource1Uc, ErrOverrunSource1 only */
+#define PE_MASK					0xF
+#define PE_SHIFT				21
+#define RE_MASK					0xF
+#define RE_SHIFT				26
+/* CorrErrSource1, CorrErrOverrunSource1 only */
+#define SFP_MASK				0x3
+#define SFP_SHIFT				23
+
+
+
 #define LLC_En_Bit				(25)
 #define DisableLlc_Bit				(9)
 
@@ -88,8 +117,11 @@ enum exynos_sci_ipc_dir {
 
 enum exynos_sci_llc_region_index {
 	LLC_REGION_DISABLE = 0,
+	LLC_REGION_CALL,
 	LLC_REGION_LIT_MID_ALL,
+	LLC_REGION_OFFLOAD_PLAY,
 	LLC_REGION_MFC_DISPLAY,
+	LLC_REGION_NPU,
 	LLC_REGION_MAX,
 };
 
@@ -132,6 +164,7 @@ struct exynos_sci_data {
 	unsigned int			initial_llc_region;
 	unsigned int			llc_enable;
 	unsigned int			ret_enable; /* retention */
+	bool				llc_ecc_flag;
 
 	unsigned int			plugin_init_llc_region;
 	unsigned int			llc_region_prio[LLC_REGION_MAX];
@@ -147,6 +180,7 @@ struct exynos_sci_data {
 void llc_invalidate(unsigned int invway);
 void llc_flush(unsigned int invway);
 void llc_region_alloc(unsigned int region_index, bool on);
+void llc_ecc_logging(void);
 void llc_dump(void);
 void sci_error_dump(void);
 #else
@@ -155,6 +189,7 @@ void sci_error_dump(void);
 #define llc_region_alloc(a, b) do {} while (0)
 #define llc_dump() do {} while (0)
 #define sci_error_dump() do {} while (0)
+#define llc_ecc_logging() do {} while (0)
 #endif
 
 #endif	/* __EXYNOS_SCI_H_ */

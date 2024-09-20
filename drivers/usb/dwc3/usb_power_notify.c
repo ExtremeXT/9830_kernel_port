@@ -21,6 +21,7 @@
 #include "usb_power_notify.h"
 #include "../core/hub.h"
 #include "core.h"
+#include "otg.h"
 
 enum usb_port_state {
 	PORT_EMPTY = 0,		/* OTG only */
@@ -33,36 +34,8 @@ enum usb_port_state {
 #define USB_CLASS_BILLBOARD	0x11
 
 static enum usb_port_state port_state;
-static int phy_power_control;
 int is_otg_only;
-
 extern struct dwc3 *g_dwc;
-extern int exynos_usbdrd_pipe3_enable(struct phy *phy);
-extern int exynos_usbdrd_pipe3_disable(struct phy *phy);
-
-static void usb_power_phy_control(int on)
-{
-	pr_info("%s, pre = %d, on = %d\n",
-			__func__, phy_power_control, on);
-
-	if (phy_power_control != on) {
-		phy_power_control = on;
-		if (on) {
-			dwc3_core_susphy_set(g_dwc, 0);
-			exynos_usbdrd_pipe3_enable(g_dwc->usb3_generic_phy);
-			dwc3_core_susphy_set(g_dwc, 1);
-			pr_info("%s, USB3.0 PHY reinit done\n", __func__);
-			xhci_port_power_set(1, 1);
-		} else {
-			xhci_port_power_set(0, 1);
-			dwc3_core_susphy_set(g_dwc, 0);
-			exynos_usbdrd_pipe3_disable(g_dwc->usb3_generic_phy);
-			dwc3_core_susphy_set(g_dwc, 1);
-		}
-	} else
-		pr_info("%s, phy control is same as pre state(%d)\n",
-				__func__, on);
-}
 
 static int check_usb3_hub(struct usb_device *dev, bool on)
 {
@@ -102,15 +75,17 @@ static int check_usb3_hub(struct usb_device *dev, bool on)
 	for (port = 1; port <= hdev->maxchild; port++) {
 		udev = hub->ports[port-1]->child;
 		if (udev && udev->state != USB_STATE_NOTATTACHED) {
+			if (udev->config->interface[0] == NULL)
+				continue;
 			bInterfaceClass	= udev->config->interface[0]
 					->cur_altsetting->desc.bInterfaceClass;
 			if (on) {
-#if defined(CONFIG_USB_HOST_SAMSUNG_FEATURE)
+#ifdef CONFIG_USB_HOST_SAMSUNG_FEATURE
 				if (bInterfaceClass == USB_CLASS_AUDIO) {
 #else
 				if ((bInterfaceClass == USB_CLASS_HID) ||
 						(bInterfaceClass == USB_CLASS_AUDIO)) {
-#endif	
+#endif
 					udev->do_remote_wakeup =
 						(udev->config->desc.bmAttributes &
 						 USB_CONFIG_ATT_WAKEUP) ? 1 : 0;
@@ -156,16 +131,23 @@ skip:
 
 static void set_usb3_port_power(struct usb_device *dev, bool on)
 {
+	cancel_delayed_work_sync(&g_dwc->usb_qos_lock_delayed_work);
+
 	switch (check_usb3_hub(dev, on)) {
 	case PORT_EMPTY:
 		pr_info("Port check empty\n");
 		is_otg_only = 1;
-		usb_power_phy_control(1);
+		usb_power_notify_control(0, 1);
+		xhci_port_power_set(1, 1);
+		dwc3_otg_qos_lock(g_dwc, 1);
 		break;
 	case PORT_USB2:
 		pr_info("Port check usb2\n");
 		is_otg_only = 0;
-		usb_power_phy_control(0);
+		xhci_port_power_set(0, 1);
+		usb_power_notify_control(0, 0);
+		schedule_delayed_work(&g_dwc->usb_qos_lock_delayed_work,
+				msecs_to_jiffies(USB_BUS_CLOCK_DELAY_MS));
 		break;
 	case PORT_USB3:
 		/* xhci_port_power_set(1, 1); */
@@ -209,7 +191,6 @@ void register_usb_power_notify(void)
 {
 	is_otg_only = 1;
 	port_state = PORT_EMPTY;
-	phy_power_control = 1;
 	usb_register_notify(&dev_nb);
 }
 EXPORT_SYMBOL(register_usb_power_notify);

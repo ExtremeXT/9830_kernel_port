@@ -156,7 +156,7 @@ static int is_hw_pdp_set_pdstat_reg(struct is_pdp *pdp)
 		clear_bit(IS_PDP_SET_PARAM_COPY, &pdp->state);
 
 		pdp_hw_s_wdma_init(pdp->base);
-		pdp_hw_s_line_row(pdp->base, pdp->stat_enable, pdp->vc_ext_sensor_mode);
+		pdp_hw_s_line_row(pdp->base, pdp->stat_enable, pdp->vc_ext_sensor_mode, pdp->binning);
 
 		pdp_hw_s_corex_type(pdp->base, COREX_COPY);
 
@@ -369,9 +369,7 @@ static irqreturn_t is_isr_pdp_int1(int irq, void *data)
 		is_hardware_sfr_dump(hw_ip->hardware, hw_ip->id, false);
 
 		if (pdp_hw_is_occured(state, PE_PAF_OVERFLOW)) {
-#ifdef CONFIG_EXYNOS_BCM_DBG_AUTO
-			exynos_bcm_dbg_stop(CAMERA_DRIVER);
-#endif
+			exynos_bcm_dbg_stop(PANIC_HANDLE);
 			print_all_hw_frame_count(hw_ip->hardware);
 			is_hardware_sfr_dump(hw_ip->hardware, DEV_HW_END, false);
 #if defined(USE_SKIP_DUMP_LIC_OVERFLOW)
@@ -381,7 +379,6 @@ static irqreturn_t is_isr_pdp_int1(int irq, void *data)
 				warn("skip to s2d dump");
 				pdp_hw_s_reset(pdp->cmn_base);
 			} else {
-				pdp_hw_dump(pdp->base);
 				is_debug_s2d(true, "LIC overflow");
 			}
 #else
@@ -579,7 +576,7 @@ int pdp_set_param(struct v4l2_subdev *subdev, struct paf_setting_t *regs, u32 re
 		pdp_hw_s_wdma_init(pdp->base);
 
 		if (pdp->stat_enable)
-			pdp_hw_s_line_row(pdp->base, pdp->stat_enable, pdp->vc_ext_sensor_mode);
+			pdp_hw_s_line_row(pdp->base, pdp->stat_enable, pdp->vc_ext_sensor_mode, pdp->binning);
 
 		set_bit(IS_PDP_SET_PARAM, &pdp->state);
 	}
@@ -804,6 +801,7 @@ static int is_hw_pdp_init_config(struct is_hw_ip *hw_ip, u32 instance, struct is
 		pd_mode = sensor_cfg->pd_mode;
 		pdp->vc_ext_sensor_mode =
 			module->vc_extra_info[VC_BUF_DATA_TYPE_GENERAL_STAT1].sensor_mode;
+		pdp->binning = sensor_cfg->binning;
 	}
 
 	enable = pdp_hw_to_sensor_type(pd_mode, &sensor_type);
@@ -957,7 +955,7 @@ static int is_hw_pdp_init_config(struct is_hw_ip *hw_ip, u32 instance, struct is
 	pdp_hw_s_core(pdp, enable, sensor_cfg, img_full_size, img_crop_size, img_comp_size,
 		img_hwformat, img_pixelsize,
 		pd_width, pd_height, pd_hwformat, sensor_type, path, pdp->vc_ext_sensor_mode,
-		fps, en_sdc, en_votf, frame->num_buffers, pdp->freq, position);
+		fps, en_sdc, en_votf, frame->num_buffers, pdp->freq, pdp->binning, position);
 
 	spin_lock_irqsave(&cmn_reg_slock, flags);
 	/* ch0 context */

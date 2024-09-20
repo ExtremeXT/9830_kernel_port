@@ -38,21 +38,12 @@
 #include "is-dt.h"
 #include "is-cis-4ha.h"
 #include "is-cis-4ha-setA.h"
-#include "is-cis-4ha-setB.h"
+/* #include "fimc-is-cis-4ha-setB.h" */
 
 #include "is-helper-i2c.h"
 
-#include "is-vender-specific.h"
-
 #define SENSOR_NAME "S5K4HA"
 /* #define DEBUG_4HA_PLL */
-
-#if defined(CONFIG_VENDER_MCD_V2)
-extern const struct is_vender_rom_addr *vender_rom_addr[SENSOR_POSITION_MAX];
-#ifdef USE_DUALIZED_OTPROM_SENSOR
-extern const struct is_vender_rom_addr *vender_rom_addr_dualized[SENSOR_POSITION_MAX];
-#endif
-#endif
 
 static const struct v4l2_subdev_ops subdev_ops;
 
@@ -214,6 +205,10 @@ int sensor_4ha_cis_init(struct v4l2_subdev *subdev)
 	struct is_cis *cis;
 	u32 setfile_index = 0;
 	cis_setting_info setinfo;
+#ifdef USE_CAMERA_HW_BIG_DATA
+	struct cam_hw_param *hw_param = NULL;
+	struct is_device_sensor_peri *sensor_peri = NULL;
+#endif
 
 	setinfo.param = NULL;
 	setinfo.return_value = 0;
@@ -230,6 +225,20 @@ int sensor_4ha_cis_init(struct v4l2_subdev *subdev)
 	BUG_ON(!cis->cis_data);
 	memset(cis->cis_data, 0, sizeof(cis_shared_data));
 	cis->rev_flag = false;
+
+	ret = sensor_cis_check_rev(cis);
+	if (ret < 0) {
+#ifdef USE_CAMERA_HW_BIG_DATA
+		sensor_peri = container_of(cis, struct is_device_sensor_peri, cis);
+		if (sensor_peri)
+			is_sec_get_hw_param(&hw_param, sensor_peri->module->position);
+		if (hw_param)
+			hw_param->i2c_sensor_err_cnt++;
+#endif
+		warn("sensor_4ha_check_rev is fail when cis init");
+		cis->rev_flag = true;
+		ret = 0;
+	}
 
 	cis->cis_data->cur_width = SENSOR_4HA_MAX_WIDTH;
 	cis->cis_data->cur_height = SENSOR_4HA_MAX_HEIGHT;
@@ -436,7 +445,6 @@ int sensor_4ha_cis_set_global_setting(struct v4l2_subdev *subdev)
 		goto p_err;
 	}
 
-#if 0 // A21s does not use dual mode
 	/* Sensor Dual sync on/off */
 	if(test_bit(IS_SENSOR_OPEN, &(core->sensor[1].state)))
 	{
@@ -452,7 +460,7 @@ int sensor_4ha_cis_set_global_setting(struct v4l2_subdev *subdev)
 		if (ret < 0)
 			err("[%s] sensor_4ha_dualsync_master fail\n", __func__);
 	}
-#endif
+
 	info("[%s] global setting done\n", __func__);
 
 p_err:
@@ -1962,7 +1970,6 @@ static struct is_cis_ops cis_ops = {
 #endif
 	.cis_set_initial_exposure = sensor_cis_set_initial_exposure,
 	.cis_recover_stream_on = sensor_4ha_cis_recover_stream_on,
-	.cis_check_rev_on_init = sensor_cis_check_rev_on_init,
 };
 
 int cis_4ha_probe(struct i2c_client *client,
@@ -1981,11 +1988,6 @@ int cis_4ha_probe(struct i2c_client *client,
 #ifdef USE_CAMERA_MIPI_CLOCK_VARIATION
 	int i;
 	int index;
-#endif
-
-#if defined(CONFIG_VENDER_MCD_V2) || defined(CONFIG_CAMERA_OTPROM_SUPPORT_FRONT) || defined(CONFIG_CAMERA_OTPROM_SUPPORT_REAR)
-	struct is_vender_specific *specific = NULL;
-	u32 rom_position = 0;
 #endif
 
 	BUG_ON(!client);
@@ -2049,47 +2051,6 @@ int cis_4ha_probe(struct i2c_client *client,
 	}
 	cis->cis_ops = &cis_ops;
 
-#if defined(CONFIG_VENDER_MCD_V2)
-	if (of_property_read_bool(dnode, "use_sensor_otp")) {
-		ret = of_property_read_u32(dnode, "rom_position", &rom_position);
-		if (ret) {
-			err("rom_position read is fail(%d)", ret);
-		} else {
-			specific = core->vender.private_data;
-			specific->rom_data[rom_position].rom_type = ROM_TYPE_OTPROM;
-			specific->rom_data[rom_position].rom_valid = true;
-
-			if (cis->id == specific->sensor_id[rom_position]) {
-				specific->rom_client[rom_position] = cis->client;
-
-				if (vender_rom_addr[rom_position]) {
-					specific->rom_cal_map_addr[rom_position] = vender_rom_addr[rom_position];
-					probe_info("%s: rom_id=%d, OTP Registered\n", __func__, rom_position);
-				} else {
-					probe_info("%s: S5K4HA OTP address not defined!\n", __func__);
-				}
-			} 
-#ifdef USE_DUALIZED_OTPROM_SENSOR
-			else if (of_property_read_bool(dnode, "dualized_sensor")) {
-				specific->dualized_rom_client[rom_position] = cis->client;
-				specific->dualized_sensor_id[rom_position] = cis->id;
-
-				if (vender_rom_addr_dualized[rom_position]) {
-					specific->dualized_rom_cal_map_addr[rom_position] = vender_rom_addr_dualized[rom_position];
-					probe_info("%s: [Dualization] rom_id=%d, OTP Registered\n", __func__, rom_position);
-				} else {
-					probe_info("%s: [Dualization] S5K4HA OTP address not defined!\n", __func__);
-				}
-			}
-#endif
-			else {
-				err("%s: sensor id does not match", __func__);
-				goto p_err;
-			}
-		}
-	}
-#endif
-
 	/* belows are depend on sensor cis. MUST check sensor spec */
 	cis->bayer_order = OTF_INPUT_ORDER_BAYER_GR_BG;
 
@@ -2135,6 +2096,7 @@ int cis_4ha_probe(struct i2c_client *client,
 		sensor_4ha_dualsync_master_size = sizeof(sensor_4ha_setfile_A_dualsync_Master) / sizeof(sensor_4ha_setfile_A_dualsync_Master[0]);
 		sensor_4ha_dualsync_slave = sensor_4ha_setfile_A_dualsync_Slave;
 		sensor_4ha_dualsync_slave_size = sizeof(sensor_4ha_setfile_A_dualsync_Slave) / sizeof(sensor_4ha_setfile_A_dualsync_Slave[0]);
+#if 0
 	} else if (strcmp(setfile, "setB") == 0) {
 		probe_info("%s setfile_B\n", __func__);
 		sensor_4ha_global = sensor_4ha_setfile_B_Global;
@@ -2143,6 +2105,7 @@ int cis_4ha_probe(struct i2c_client *client,
 		sensor_4ha_setfile_sizes = sensor_4ha_setfile_B_sizes;
 		sensor_4ha_pllinfos = sensor_4ha_pllinfos_B;
 		sensor_4ha_max_setfile_num = ARRAY_SIZE(sensor_4ha_setfiles_B);
+#endif
 	} else {
 		err("%s setfile index out of bound, take default (setfile_A)", __func__);
 		sensor_4ha_global = sensor_4ha_setfile_A_Global;
